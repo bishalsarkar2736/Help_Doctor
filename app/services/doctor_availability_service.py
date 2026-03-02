@@ -6,11 +6,11 @@ from app.models.doctor import Doctor
 from app.models.doctor_availability import DoctorAvailability
 from app.models.user import User, UserRole
 from app.models import user
-
+from app.try_except.exceptions import ForbiddenError,NotFoundError,BadRequestError
 
 async def _get_doctor_or_403(db: AsyncSession, user: User) -> Doctor:
     if user.role != UserRole.DOCTOR:
-        raise HTTPException(403, "Only doctors allowed")
+        raise ForbiddenError("Only doctors allowed")
 
     result = await db.execute(
         select(Doctor).where(Doctor.user_id == user.id)
@@ -18,18 +18,15 @@ async def _get_doctor_or_403(db: AsyncSession, user: User) -> Doctor:
     doctor = result.scalar_one_or_none()
 
     if not doctor:
-        raise HTTPException(404, "Doctor profile not found")
+        raise NotFoundError("Doctor profile not found")
 
     if not doctor.is_verified:
-        raise HTTPException(403, "Doctor not verified")
+        raise ForbiddenError("Doctor not verified")
     
     if not doctor.user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Doctor account suspended",
-    )
+        raise ForbiddenError("Doctor account suspended")
     if not doctor.user.is_active:
-        raise HTTPException(403, "Doctor account suspended")
+        raise ForbiddenError("Doctor account suspended")
 
 
 
@@ -49,7 +46,7 @@ async def create_availability(
     doctor = await _get_doctor_or_403(db, user)
 
     if start_time >= end_time:
-        raise HTTPException(400, "Invalid time range")
+        raise BadRequestError("Invalid time range")
 
     availability = DoctorAvailability(
         doctor_id=doctor.id,
@@ -59,7 +56,7 @@ async def create_availability(
     )
 
     db.add(availability)
-    await db.commit()
+    await db.flush()
     await db.refresh(availability)
     return availability
 
@@ -116,13 +113,13 @@ async def update_availability(
     availability = result.scalar_one_or_none()
 
     if not availability:
-        raise HTTPException(404, "Availability not found")
+        raise NotFoundError("Availability not found")
 
     for key, value in data.items():
         if value is not None:
             setattr(availability, key, value)
 
-    await db.commit()
+    await db.flush()
     await db.refresh(availability)
     return availability
 
@@ -145,10 +142,11 @@ async def delete_availability(
     availability = result.scalar_one_or_none()
 
     if not availability:
-        raise HTTPException(404, "Availability not found")
+        raise NotFoundError("Availability not found")
 
     await db.delete(availability)
-    await db.commit()
+    await db.flush()
+
 
 
 

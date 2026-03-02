@@ -9,6 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 
 # revision identifiers, used by Alembic.
@@ -16,6 +17,16 @@ revision: str = '7c778950404a'
 down_revision: Union[str, Sequence[str], None] = '898d75bb8bb2'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
+
+appointment_status_enum = postgresql.ENUM(
+    "PENDING",
+    "CONFIRMED",
+    "CANCELLED",
+    "COMPLETED",
+    name="appointmentstatus",
+    create_type=False
+)
+
 
 
 def upgrade() -> None:
@@ -26,7 +37,7 @@ def upgrade() -> None:
     sa.Column('doctor_id', sa.Integer(), nullable=False),
     sa.Column('patient_id', sa.Integer(), nullable=False),
     sa.Column('scheduled_at', sa.DateTime(), nullable=False),
-    sa.Column('status', sa.Enum('PENDING', 'CONFIRMED', 'CANCELLED', 'COMPLETED', name='appointmentstatus'), nullable=False),
+    sa.Column('status',appointment_status_enum, nullable=False),
     sa.Column('notes', sa.String(length=500), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
     sa.Column('cancelled_by', sa.String(length=50), nullable=True),

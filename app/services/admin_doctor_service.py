@@ -1,17 +1,14 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from fastapi import HTTPException, status
 
 from app.models.doctor import Doctor
 from app.models.user import User, UserRole
+from app.try_except.exceptions import NotFoundError,ForbiddenError
 
 
 async def _admin_only(user: User):
     if user.role != UserRole.ADMIN:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin access required",
-        )
+        raise ForbiddenError("Admin access required")
 
 
 async def verify_doctor(
@@ -27,10 +24,11 @@ async def verify_doctor(
     doctor = result.scalar_one_or_none()
 
     if not doctor:
-        raise HTTPException(404, "Doctor not found")
+        raise NotFoundError("Doctor not found")
 
     doctor.is_verified = True
-    await db.commit()
+    await db.flush()
+
 
     return {"message": "Doctor verified successfully"}
 
@@ -48,11 +46,12 @@ async def suspend_doctor(
     doctor = result.scalar_one_or_none()
 
     if not doctor:
-        raise HTTPException(404, "Doctor not found")
+        raise NotFoundError("Doctor not found")
 
     # Suspend via user
     doctor.user.is_active = False
-    await db.commit()
+    await db.flush()
+
 
     return {"message": "Doctor suspended"}
 
@@ -70,10 +69,11 @@ async def unsuspend_doctor(
     doctor = result.scalar_one_or_none()
 
     if not doctor:
-        raise HTTPException(404, "Doctor not found")
+        raise NotFoundError("Doctor not found")
 
     doctor.user.is_active = True
-    await db.commit()
+    await db.flush()
+
 
     return {"message": "Doctor unsuspended"}
 
@@ -91,10 +91,11 @@ async def activate_doctor(
     doctor = result.scalar_one_or_none()
 
     if not doctor:
-        raise HTTPException(404, "Doctor not found")
+        raise NotFoundError("Doctor not found")
 
     doctor.user.is_active = True
-    await db.commit()
+    await db.flush()
+
 
     return {"message": "Doctor activated"}
 

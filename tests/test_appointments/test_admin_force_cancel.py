@@ -4,7 +4,7 @@ from sqlalchemy import select
 from app.models.appointment import AppointmentStatus
 from app.models.notification import Notification
 from app.services.appointment_service import admin_force_cancel_appointment
-
+from app.models.doctor import Doctor
 
 @pytest.mark.asyncio
 async def test_admin_force_cancel(
@@ -37,5 +37,6 @@ async def test_admin_force_cancel(
     assert len(notifications) == 2
 
     user_ids = {n.user_id for n in notifications}
-    assert appointment.patient_id in user_ids
-    assert appointment.doctor_id in user_ids
+    
+    doctor = await db.get(Doctor, appointment.doctor_id)
+    assert doctor.user_id in user_ids

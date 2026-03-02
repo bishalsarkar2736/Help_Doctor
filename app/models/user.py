@@ -1,7 +1,8 @@
 from sqlalchemy import String, Boolean,DateTime,Enum as SQLEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base
-from datetime import datetime,UTC
+from datetime import datetime
+from app.core.time import UTC
 from enum import Enum
 
 
@@ -36,7 +37,7 @@ class User(Base):
     full_name : Mapped[str | None] = mapped_column(String(255))
 
     role : Mapped[UserRole] = mapped_column(
-        SQLEnum(UserRole, name = 'user_roles'),
+        SQLEnum(UserRole, name = 'user_roles',create_type=False),
         default=UserRole.RECEPTIONIST,
         nullable=False
     )
@@ -62,7 +63,7 @@ class User(Base):
     google_id : Mapped[str | None]
   
     auth_provider : Mapped[AuthProvider] = mapped_column(
-        SQLEnum(AuthProvider,name="auth_provider"),
+        SQLEnum(AuthProvider,name="auth_provider",create_type=False),
         default=AuthProvider.LOCAL,
         nullable=False
     )

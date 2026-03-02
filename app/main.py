@@ -1,20 +1,33 @@
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
-from app.config import get_settings
-from app.db.postgres import engine
+from starlette.responses import JSONResponse
 
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
-from starlette.responses import JSONResponse
-from app.api.routes import admin
 
-from app.api.routes import auth
+from app.config import get_settings
+from app.db.postgres import engine
+
+from app.try_except.logging import setup_logging
+
 
 from app.websocket.routes import router as ws_router
 
+from app.errors.handlers import (
+    app_exception_handler,
+    unhandled_exception_handler,
+)
+
+from app.try_except.exceptions import AppException
+from app.try_except.logging import setup_logging
+from app.try_except.middleware import RequestLoggingMiddleware
+
+
+
 from app.api.routes import (
+    admin,
     doctors_router, auth_router,
     doctor_availability_router,
     appointments_router,
@@ -41,6 +54,10 @@ async def lifespan(app:FastAPI):
     
 
 def create_app() -> FastAPI:
+    setup_logging(settings.DEBUG)
+    
+
+
     app = FastAPI(
         title=settings.APP_NAME,
         debug=settings.DEBUG,
@@ -48,10 +65,14 @@ def create_app() -> FastAPI:
         version="1.0.0"
     )
 
+    app.add_middleware(RequestLoggingMiddleware)
+
     limiter = Limiter(key_func=get_remote_address)
     app.state.limiter = limiter
-
     app.add_middleware(SlowAPIMiddleware)
+
+    app.add_exception_handler(AppException, app_exception_handler)
+    app.add_exception_handler(Exception, unhandled_exception_handler)
 
     @app.exception_handler(RateLimitExceeded)
     async def rate_limit_handler(request, exc):
@@ -77,10 +98,7 @@ def create_app() -> FastAPI:
     app.include_router(admin.router)
     app.include_router(ws_router)
     app.include_router(notification_router)
-
-
-
-
+    
 
 
     return app

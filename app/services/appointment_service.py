@@ -1,38 +1,54 @@
-from datetime import datetime, date,UTC
+from datetime import datetime, date, timedelta
+from app.core.time import UTC
+
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_
-from fastapi import HTTPException, status
+from sqlalchemy import select
+
 
 from app.models.appointment import Appointment, AppointmentStatus
 from app.models.doctor import Doctor
 from app.models.doctor_availability import DoctorAvailability
 from app.models.user import User, UserRole
 from app.services.notification_service import notify_user
+from app.try_except.exceptions import ForbiddenError,BadRequestError,NotFoundError
+from app.services.appointment_transition_service import transition_appointment_locked
+from sqlalchemy.exc import IntegrityError
 
 
-# =========================================================
 # Helpers
-# =========================================================
 
-async def _get_verified_doctor(db: AsyncSession, user: User) -> Doctor:
-    if user.role != UserRole.DOCTOR:
-        raise HTTPException(403, "Only doctors allowed")
-
+async def _get_verified_doctor_by_user_id(
+    db: AsyncSession,
+    user_id: int,
+) -> Doctor:
     result = await db.execute(
-        select(Doctor).where(Doctor.user_id == user.id)
+        select(Doctor)
+        .where(
+            Doctor.user_id == user_id,
+            Doctor.is_verified.is_(True),
+        )
     )
     doctor = result.scalar_one_or_none()
 
     if not doctor:
-        raise HTTPException(404, "Doctor profile not found")
-
-    if not doctor.is_verified:
-        raise HTTPException(403, "Doctor not verified")
+        raise ForbiddenError("Doctor not verified")
 
     return doctor
 
 
-async def cancel_appointment(
+async def get_current_verified_doctor(
+    db: AsyncSession,
+    user: User
+) -> Doctor:
+
+    if user.role != UserRole.DOCTOR:
+        raise ForbiddenError("Doctor only")
+
+    return await _get_verified_doctor_by_user_id(db, user.id)
+
+
+
+async def apply_cancellation_side_effects(
     *,
     db: AsyncSession,
     appointment: Appointment,
@@ -41,19 +57,9 @@ async def cancel_appointment(
     notify_patient: bool = False,
     notify_doctor: bool = False,
 ):
-    if appointment.status in (
-        AppointmentStatus.CANCELLED,
-        AppointmentStatus.COMPLETED,
-    ):
-        raise HTTPException(400, "Appointment already closed")
-
-    appointment.status = AppointmentStatus.CANCELLED
-    appointment.cancelled_by = cancelled_by.id
+    # Set metadata only (NO FSM here)
     appointment.cancel_reason = reason
-    appointment.cancelled_at = datetime.now(UTC)
-
-    await db.commit()
-    await db.refresh(appointment)
+    appointment.cancelled_by = cancelled_by.id
 
     if notify_patient:
         await notify_user(
@@ -65,91 +71,114 @@ async def cancel_appointment(
         )
 
     if notify_doctor:
-        await notify_user(
-            db=db,
-            user_id=appointment.doctor_id,
-            title="Appointment Cancelled",
-            message="An appointment was cancelled",
-            appointment_id=appointment.id,
-        )
+        doctor = await db.get(Doctor, appointment.doctor_id)
+
+        if doctor:
+            await notify_user(
+                db=db,
+                user_id=doctor.user_id,
+                title="Appointment Cancelled",
+                message="An appointment was cancelled",
+                appointment_id=appointment.id,
+            )
 
 
-    return appointment
 
-
-# =========================================================
 # Booking
-# =========================================================
+
+
+APPOINTMENT_DURATION_MINUTES = 30
 
 async def book_appointment(
     db: AsyncSession,
     patient: User,
     doctor_id: int,
     scheduled_at: datetime,
-):
-    if patient.role != UserRole.PATIENT:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only patients can book appointments",
-        )
+) -> Appointment:
 
-    result = await db.execute(
-        select(Doctor).where(
-            Doctor.id == doctor_id,
-            Doctor.is_verified.is_(True),
-        )
+    doctor_result = await db.execute(
+        select(Doctor)
+        .where(Doctor.id == doctor_id)
+        #.with_for_update()
     )
-    doctor = result.scalar_one_or_none()
+    doctor = doctor_result.scalar_one_or_none()
+
     if not doctor:
-        raise HTTPException(404, "Doctor not available")
+        raise BadRequestError("Invalid doctor")
+
+    if not doctor.is_verified:
+        raise ForbiddenError("Doctor not verified")
+
+    # 2️⃣ Role check
+    if patient.role != UserRole.PATIENT:
+        raise ForbiddenError("Only patients can book appointments")
+
+    # 3️⃣ Past time check
+    if scheduled_at < datetime.now(UTC):
+        raise BadRequestError("Cannot book appointment in the past")
+
+    # 4️⃣ Availability validation
+    appointment_end = scheduled_at + timedelta(
+        minutes=APPOINTMENT_DURATION_MINUTES
+    )
 
     weekday = scheduled_at.weekday()
-    appointment_time = scheduled_at.time()
+    start_time = scheduled_at.time()
+    end_time = appointment_end.time()
 
-    result = await db.execute(
+    availability_result = await db.execute(
         select(DoctorAvailability).where(
             DoctorAvailability.doctor_id == doctor.id,
-            DoctorAvailability.day_of_week == weekday,
-            DoctorAvailability.start_time <= appointment_time,
-            DoctorAvailability.end_time > appointment_time,
             DoctorAvailability.is_available.is_(True),
         )
     )
-    if not result.scalar_one_or_none():
-        raise HTTPException(400, "Doctor not available at this time")
+    availabilities = availability_result.scalars().all()
 
-    result = await db.execute(
-        select(Appointment).where(
-            and_(
-                Appointment.doctor_id == doctor.id,
-                Appointment.scheduled_at == scheduled_at,
-                Appointment.status != AppointmentStatus.CANCELLED,
-            )
-        )
-    )
-    if result.scalar_one_or_none():
-        raise HTTPException(400, "Time slot already booked")
+    if not availabilities:
+        raise BadRequestError("Doctor has no availability configured")
 
+    if not any(
+        a.day_of_week == weekday
+        and a.start_time <= start_time
+        and a.end_time >= end_time
+        for a in availabilities
+    ):
+        raise BadRequestError("Doctor not available at this time") 
+
+    # 5️⃣ Create appointment
     appointment = Appointment(
         doctor_id=doctor.id,
         patient_id=patient.id,
         scheduled_at=scheduled_at,
+        status=AppointmentStatus.PENDING,
     )
 
     db.add(appointment)
-    await db.commit()
+
+    try:
+        await db.flush()  # triggers exclusion constraint
+    except IntegrityError as e:
+        #await db.rollback()
+        raise BadRequestError(
+            "Doctor already booked for this time slot"
+        ) from e
+
     await db.refresh(appointment)
 
     return appointment
+    
+    
+
+        
 
 
-# =========================================================
+
 # Patient
-# =========================================================
+
 
 async def get_patient_appointments(db: AsyncSession, user: User):
     if user.role != UserRole.PATIENT:
-        raise HTTPException(403, "Only patients allowed")
+        raise ForbiddenError("Only patients allowed")
 
     result = await db.execute(
         select(Appointment)
@@ -173,18 +202,48 @@ async def get_patient_appointments(db: AsyncSession, user: User):
     ]
 
 
-async def patient_cancel_appointment(db: AsyncSession, user: User, appointment_id: int):
-    appointment = await db.get(Appointment, appointment_id)
+async def patient_cancel_appointment(
+    db: AsyncSession,
+    user: User,
+    appointment_id: int,
+):
+    if user.role != UserRole.PATIENT:
+        raise ForbiddenError("Only patients allowed")
+    
+    result = await db.execute(
+        select(Appointment).where(Appointment.id == appointment_id)
+    )
+    appointment = result.scalar_one_or_none()
 
-    if not appointment or appointment.patient_id != user.id:
-        raise HTTPException(403, "Not allowed")
+    if not appointment:
+        raise NotFoundError("Appointment not found")
 
-    return await cancel_appointment(
+    if appointment.patient_id != user.id:
+        raise ForbiddenError("Not your appointment")
+
+
+    appointment = await transition_appointment_locked(
         db=db,
         appointment=appointment,
-        cancelled_by=user,
-        notify_doctor=True,
+        new_status=AppointmentStatus.CANCELLED,
+        changed_by=user.id,
+        actor_role=user.role,
     )
+
+    doctor = await db.get(Doctor, appointment.doctor_id)
+
+    if doctor:
+        await notify_user(
+                db=db,
+                user_id=doctor.user_id,
+                title="Appointment Cancelled",
+                message="Patient cancelled the appointment",
+                appointment_id=appointment.id,
+        )
+
+    return appointment
+
+
 
 
 async def patient_reschedule_appointment(
@@ -193,69 +252,98 @@ async def patient_reschedule_appointment(
     appointment_id: int,
     new_datetime: datetime,
 ):
-    appointment = await db.get(Appointment, appointment_id)
+
+    if user.role != UserRole.PATIENT:
+        raise ForbiddenError("Only patients allowed")
+
+    #async with db.begin():
+    result = await db.execute(
+            select(Appointment)
+            .where(Appointment.id == appointment_id)
+            .with_for_update()
+    )
+    appointment = result.scalar_one_or_none()
 
     if not appointment or appointment.patient_id != user.id:
-        raise HTTPException(403, "Not allowed")
+        raise ForbiddenError("Not allowed")
 
     if appointment.status in (
         AppointmentStatus.CANCELLED,
         AppointmentStatus.COMPLETED,
     ):
-        raise HTTPException(400, "Cannot reschedule closed appointment")
+        raise BadRequestError("Cannot reschedule closed appointment")
 
+    # 🔁 Update schedule (this triggers exclusion constraint safely)
     appointment.scheduled_at = new_datetime
-    appointment.status = AppointmentStatus.PENDING
 
-    await db.commit()
-    await db.refresh(appointment)
+    # 🔁 Transition inside SAME transaction
+    await transition_appointment_locked(
+        db=db,
+        appointment=appointment,
+        new_status=AppointmentStatus.PENDING,
+        changed_by=user.id,
+        actor_role=user.role,
+    )
 
-    await notify_user(
-    db=db,
-    user_id=appointment.doctor_id,
-    title="Appointment Reschedule Request",
-    message="Patient requested appointment reschedule",
-    appointment_id=appointment.id,
-)
+        
 
+    # Notifications after commit
+    doctor = await db.get(Doctor, appointment.doctor_id)
+
+    if doctor:
+        await notify_user(
+            db=db,
+            user_id=doctor.user_id,
+            title="Appointment Reschedule Request",
+            message="Patient requested appointment reschedule",
+            appointment_id=appointment.id,
+        )
 
     return appointment
 
 
-# =========================================================
+
 # Doctor
-# =========================================================
 
 async def doctor_update_appointment_status(
     db: AsyncSession,
-    doctor_user: User,
+    doctor_user_id: int,
     appointment_id: int,
     new_status: AppointmentStatus,
 ):
-    doctor = await _get_verified_doctor(db, doctor_user)
+
+    # Fetch doctor user
+    user_result = await db.execute(
+        select(User).where(User.id == doctor_user_id)
+    )
+    doctor_user = user_result.scalar_one_or_none()
+
+    if not doctor_user:
+        raise BadRequestError("Invalid doctor")
+
+    if doctor_user.role != UserRole.DOCTOR:
+        raise ForbiddenError("Doctor only")
+
+    doctor = await _get_verified_doctor_by_user_id(db, doctor_user.id)
 
     result = await db.execute(
-        select(Appointment).where(
-            Appointment.id == appointment_id,
-            Appointment.doctor_id == doctor.id,
-        )
+        select(Appointment)
+        .where(Appointment.id == appointment_id)
+        .with_for_update()
     )
     appointment = result.scalar_one_or_none()
 
     if not appointment:
-        raise HTTPException(404, "Appointment not found")
+        raise NotFoundError("Appointment not found")
 
-    if appointment.status in (
-        AppointmentStatus.CANCELLED,
-        AppointmentStatus.COMPLETED,
-    ):
-        raise HTTPException(400, "Appointment already closed")
-
-    appointment.status = new_status
-    await db.commit()
-    await db.refresh(appointment)
-
-    return appointment
+    return await transition_appointment_locked(
+        db=db,
+        appointment=appointment,
+        new_status=new_status,
+        changed_by=doctor_user.id,
+        actor_role=doctor_user.role,
+        actor_doctor_id=doctor.id,
+    )
 
 
 async def doctor_cancel_appointment(
@@ -263,25 +351,42 @@ async def doctor_cancel_appointment(
     doctor_user: User,
     appointment_id: int,
 ):
-    doctor = await _get_verified_doctor(db, doctor_user)
+
+    if doctor_user.role != UserRole.DOCTOR:
+        raise ForbiddenError("Doctor only")
+
+    doctor = await _get_verified_doctor_by_user_id(db, doctor_user.id)
 
     result = await db.execute(
-        select(Appointment).where(
-            Appointment.id == appointment_id,
-            Appointment.doctor_id == doctor.id,
-        )
+        select(Appointment)
+        .where(Appointment.id == appointment_id)
+        .with_for_update()
     )
     appointment = result.scalar_one_or_none()
 
     if not appointment:
-        raise HTTPException(404, "Appointment not found")
+        raise NotFoundError("Appointment not found")
 
-    return await cancel_appointment(
+    appointment = await transition_appointment_locked(
         db=db,
         appointment=appointment,
-        cancelled_by=doctor_user,
-        notify_patient=True,
+        new_status=AppointmentStatus.CANCELLED,
+        changed_by=doctor_user.id,
+        actor_role=doctor_user.role,
+        actor_doctor_id=doctor.id,
     )
+
+    await notify_user(
+        db=db,
+        user_id=appointment.patient_id,
+        title="Appointment Cancelled",
+        message="Doctor cancelled your appointment",
+        appointment_id=appointment.id,
+    )
+
+    return appointment
+
+
 
 
 async def doctor_reschedule_appointment(
@@ -290,38 +395,54 @@ async def doctor_reschedule_appointment(
     appointment_id: int,
     new_datetime: datetime,
 ):
-    doctor = await _get_verified_doctor(db, doctor_user)
+
+    if doctor_user.role != UserRole.DOCTOR:
+        raise ForbiddenError("Doctor only")
+
+    doctor = await _get_verified_doctor_by_user_id(db, doctor_user.id)
 
     result = await db.execute(
-        select(Appointment).where(
-            Appointment.id == appointment_id,
-            Appointment.doctor_id == doctor.id,
-        )
+        select(Appointment)
+        .where(Appointment.id == appointment_id)
+        .with_for_update()
     )
     appointment = result.scalar_one_or_none()
 
-    if not appointment:
-        raise HTTPException(404, "Appointment not found")
+    if not appointment or appointment.doctor_id != doctor.id:
+        raise NotFoundError("Appointment not found")
 
-    appointment.scheduled_at = new_datetime
-    appointment.status = AppointmentStatus.CONFIRMED
+    #appointment.scheduled_at = new_datetime
+    try:
+        appointment.scheduled_at = new_datetime
+        await db.flush()
+    except IntegrityError:
+        raise BadRequestError("Doctor already booked for this time slot")
 
-    await db.commit()
-    await db.refresh(appointment)
+    await transition_appointment_locked(
+        db=db,
+        appointment=appointment,
+        new_status=AppointmentStatus.CONFIRMED,
+        changed_by=doctor_user.id,
+        actor_role=doctor_user.role,
+        actor_doctor_id=doctor.id,
+    )
 
     await notify_user(
-    db=db,
-    user_id=appointment.patient_id,
-    title="Appointment Rescheduled",
-    message="Doctor rescheduled your appointment",
-    appointment_id=appointment.id,
+        db=db,
+        user_id=appointment.patient_id,
+        title="Appointment Rescheduled",
+        message="Doctor rescheduled your appointment",
+        appointment_id=appointment.id,
     )
 
     return appointment
 
-
 async def doctor_today_appointments(db: AsyncSession, user: User):
-    doctor = await _get_verified_doctor(db, user)
+    if user.role != UserRole.DOCTOR:
+        raise ForbiddenError("Doctor only")
+
+    doctor = await _get_verified_doctor_by_user_id(db, user.id)
+
     today = date.today()
 
     result = await db.execute(
@@ -336,7 +457,11 @@ async def doctor_today_appointments(db: AsyncSession, user: User):
 
 
 async def doctor_pending_appointments(db: AsyncSession, user: User):
-    doctor = await _get_verified_doctor(db, user)
+
+    if user.role != UserRole.DOCTOR:
+        raise ForbiddenError("Doctor only")
+
+    doctor = await _get_verified_doctor_by_user_id(db, user.id)
 
     result = await db.execute(
         select(Appointment).where(
@@ -349,7 +474,11 @@ async def doctor_pending_appointments(db: AsyncSession, user: User):
 
 
 async def doctor_confirmed_appointments(db: AsyncSession, user: User):
-    doctor = await _get_verified_doctor(db, user)
+
+    if user.role != UserRole.DOCTOR:
+        raise ForbiddenError("Doctor only")
+
+    doctor = await _get_verified_doctor_by_user_id(db, user.id)
 
     result = await db.execute(
         select(Appointment).where(
@@ -361,9 +490,9 @@ async def doctor_confirmed_appointments(db: AsyncSession, user: User):
     return result.scalars().all()
 
 
-# =========================================================
+
 # Admin
-# =========================================================
+
 
 async def admin_force_cancel_appointment(
     db: AsyncSession,
@@ -371,18 +500,53 @@ async def admin_force_cancel_appointment(
     appointment_id: int,
     reason: str,
 ):
+
     if admin.role != UserRole.ADMIN:
-        raise HTTPException(403, "Admin only")
+        raise ForbiddenError("Admin only")
 
-    appointment = await db.get(Appointment, appointment_id)
+    result = await db.execute(
+        select(Appointment)
+        .where(Appointment.id == appointment_id)
+        .with_for_update()
+    )
+    appointment = result.scalar_one_or_none()
+
     if not appointment:
-        raise HTTPException(404, "Appointment not found")
+        raise NotFoundError("Appointment not found")
 
-    return await cancel_appointment(
+    appointment = await transition_appointment_locked(
         db=db,
         appointment=appointment,
-        cancelled_by=admin,
-        reason=reason,
-        notify_patient=True,
-        notify_doctor=True,
+        new_status=AppointmentStatus.CANCELLED,
+        changed_by=admin.id,
+        actor_role=admin.role,
     )
+
+    appointment.cancel_reason = reason
+    appointment.cancelled_by = admin.id
+
+    await notify_user(
+        db=db,
+        user_id=appointment.patient_id,
+        title="Appointment Cancelled by Admin",
+        message="Your appointment was cancelled by admin",
+        appointment_id=appointment.id,
+    )
+
+    doctor = await db.get(Doctor, appointment.doctor_id)
+
+    if doctor:
+        await notify_user(
+            db=db,
+            user_id=doctor.user_id,
+            title="Appointment Cancelled by Admin",
+            message="An appointment was cancelled by admin",
+            appointment_id=appointment.id,
+        )
+
+    return appointment
+
+
+
+
+

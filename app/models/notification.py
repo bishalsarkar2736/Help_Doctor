@@ -1,7 +1,7 @@
 from sqlalchemy import Integer, String, DateTime, ForeignKey, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
-
+from datetime import datetime
 from app.db.base import Base
 
 
@@ -28,3 +28,8 @@ class Notification(Base):
     )
 
     user = relationship("User", lazy="joined")
+
+    read_at: Mapped[DateTime | None] = mapped_column(
+    DateTime(timezone=True),
+    nullable=True,
+)

@@ -1,6 +1,6 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from fastapi import HTTPException,status
+
 
 from app.models.user import User,AuthProvider,UserRole
 from app.schemas.user import UserCreate
@@ -8,11 +8,12 @@ from app.security.jwt import hash_password,verify_password,create_access_token
 from app.security.google_oauth import verify_google_token
 from app.config import get_settings
 
-from datetime import datetime, timedelta,UTC
+from datetime import datetime, timedelta
+from app.core.time import UTC
 from app.models.refresh_token import RefreshToken
 from app.security.jwt import create_access_token
 from app.core.security import create_refresh_token,decode_token
-
+from app.try_except.exceptions import BadRequestError,UnauthorizedError,ForbiddenError
 
 settings = get_settings()
 
@@ -29,10 +30,7 @@ async def register_user(
     existing_user = result.scalar_one_or_none()
 
     if existing_user:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email aleady registerd",
-        )
+        raise BadRequestError("Email aleady registerd")
     
     user = User(
         email = user_in.email,
@@ -43,7 +41,7 @@ async def register_user(
     )
 
     db.add(user)
-    await db.commit()
+    await db.flush()
     await db.refresh(user)
 
     return user
@@ -71,7 +69,7 @@ async def get_or_create_google_user(
     )
 
     db.add(user)
-    await db.commit()
+    await db.flush()
     await db.refresh(user)
 
     return user
@@ -90,16 +88,10 @@ async def authentication_user(
     user = result.scalar_one_or_none()
 
     if not user or not verify_password(password, user.hashed_password):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid email or password",
-        )
+        raise UnauthorizedError("Invalid email or password")
 
     if not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Inactive user",
-        )
+        raise ForbiddenError("Inactive user")
 
     access_token = create_access_token(
         {
@@ -123,7 +115,8 @@ async def authentication_user(
     )
 
     db.add(refresh)
-    await db.commit()
+    await db.flush()
+
 
     return {
         "access_token": access_token,
@@ -140,10 +133,7 @@ async def refresh_tokens(
     payload = decode_token(refresh_token)
 
     if payload.get("type") != "refresh":
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token type",
-        )
+        raise UnauthorizedError("Invalid token type")
 
     user_id = payload.get("sub")
     role = payload.get("role")
@@ -152,16 +142,13 @@ async def refresh_tokens(
         select(RefreshToken).where(
             RefreshToken.token == refresh_token,
             RefreshToken.revoked.is_(False),
-            RefreshToken.expires_at > datetime.utcnow(),
+            RefreshToken.expires_at > datetime.now(UTC),
         )
     )
     db_token = result.scalar_one_or_none()
 
     if not db_token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Refresh token revoked or expired",
-        )
+        raise UnauthorizedError("Refresh token revoked or expired")
 
     #  Rotate token
     db_token.revoked = True
@@ -182,7 +169,8 @@ async def refresh_tokens(
     )
 
     db.add(new_db_token)
-    await db.commit()
+    await db.flush()
+
 
     return {
         "access_token": access_token,
@@ -208,7 +196,7 @@ async def logout_user(
         return {"message": "Logged out"}
 
     db_token.revoked = True
-    await db.commit()
+    await db.flush()
 
     return {"message": "Logged out successfully"}
 

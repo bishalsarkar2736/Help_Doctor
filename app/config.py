@@ -9,11 +9,6 @@ class Settings(BaseSettings):
     DEBUG: bool = False
 
 
-
-    #Database 
-    
-    database_url : str
-
     # PostgreSQL
     POSTGRES_HOST: str
     POSTGRES_PORT: int = 5432
