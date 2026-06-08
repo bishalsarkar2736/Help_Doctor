@@ -5,6 +5,9 @@ from app.models.appointment import AppointmentStatus
 from app.models.notification import Notification
 from app.services.appointment_service import admin_force_cancel_appointment
 from app.models.doctor import Doctor
+from app.workers.outbox_worker import process_outbox   # adjust import
+from app.workers.outbox_worker import process_batch
+from app.models.outbox_event import OutboxEvent
 
 @pytest.mark.asyncio
 async def test_admin_force_cancel(
@@ -19,6 +22,22 @@ async def test_admin_force_cancel(
         appointment_id=appointment.id,
         reason="Violation of policy",
     )
+
+    await db.commit()
+
+    # 🔍 DEBUG HERE (before processing outbox)
+    result = await db.execute(select(OutboxEvent))
+    events = result.scalars().all()
+
+    print("EVENT COUNT:", len(events))
+    for e in events:
+        print("TYPE:", e.event_type)
+        print("PAYLOAD:", e.payload)
+        print("-----")
+
+
+
+    await process_batch(db)
 
     # Assert appointment state
     assert cancelled.status == AppointmentStatus.CANCELLED

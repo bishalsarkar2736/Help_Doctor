@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
-
-from sqlalchemy import String, Boolean, JSON, DateTime, Integer, func
+import sqlalchemy.dialects.postgresql as pg
+from sqlalchemy import String, JSON, DateTime, Integer, func,Index
 from sqlalchemy.orm import Mapped, mapped_column
 from app.db.base import Base
 
@@ -9,7 +9,16 @@ from app.db.base import Base
 class OutboxEvent(Base):
     __tablename__ = "outbox_events"
 
+    __table_args__ = (
+        Index(
+            "ix_outbox_pending_retry",
+            "status",
+            "next_retry_at",
+        ),
+    )
+
     id: Mapped[uuid.UUID] = mapped_column(
+        pg.UUID(as_uuid=True),
         primary_key=True,
         default=uuid.uuid4
     )
@@ -23,15 +32,45 @@ class OutboxEvent(Base):
         JSON
     )
 
-    is_processed: Mapped[bool] = mapped_column(
-        Boolean,
-        default=False,
-        index=True
+    correlation_id: Mapped[str | None] = mapped_column(
+        String(64),
+        nullable=True,
+        index=True,
+    )
+
+    status: Mapped[str] = mapped_column(
+        String(20),
+        default="pending",
+        server_default="pending",
+        index=True,
     )
 
     retry_count: Mapped[int] = mapped_column(
         Integer,
-        default=0
+        default=0,
+    )
+       
+    max_retries: Mapped[int] = mapped_column(
+        Integer,
+        default=5,
+    )
+
+    
+    next_retry_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        index=True,
+    )
+
+    
+    failed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    last_error: Mapped[str | None] = mapped_column(
+        String(500),
+        nullable=True,
     )
 
     created_at: Mapped[datetime] = mapped_column(
@@ -43,6 +82,12 @@ class OutboxEvent(Base):
     processed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True
+    )
+
+    processing_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        index=True,
     )
 
     

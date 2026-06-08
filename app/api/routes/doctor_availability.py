@@ -1,16 +1,16 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
-from datetime import time
 
 from app.db.postgres import get_db
-from app.security.jwt import get_current_user
-from app.models.user import User
+from app.security.rbac import require_roles
+from app.models.user import User, UserRole
 
 from app.schemas.doctor_availability import (
     AvailabilityCreate,
     AvailabilityUpdate,
     AvailabilityOut,
 )
+
 from app.services.doctor_availability_service import (
     create_availability,
     list_availability,
@@ -25,23 +25,23 @@ router = APIRouter(
 )
 
 
-# Doctor creates slot
+# ✅ Doctor creates availability
 @router.post("/", response_model=AvailabilityOut)
 async def add_availability(
     payload: AvailabilityCreate,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
+    doctor: User = Depends(require_roles(UserRole.DOCTOR)),
 ):
     return await create_availability(
         db,
-        user,
+        doctor,
         payload.day_of_week,
         payload.start_time,
         payload.end_time,
     )
 
 
-# Public (patients)
+# ✅ Public endpoint (patients can view)
 @router.get("/{doctor_id}", response_model=list[AvailabilityOut])
 async def get_doctor_availability(
     doctor_id: int,
@@ -50,37 +50,37 @@ async def get_doctor_availability(
     return await list_availability(db, doctor_id)
 
 
-# Doctor: list own
+# ✅ Doctor: view own availability
 @router.get("/", response_model=list[AvailabilityOut])
 async def list_mine(
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
+    doctor: User = Depends(require_roles(UserRole.DOCTOR)),
 ):
-    return await list_my_availability(db, user)
+    return await list_my_availability(db, doctor)
 
 
-# Doctor: update
+# ✅ Doctor: update availability
 @router.patch("/{availability_id}", response_model=AvailabilityOut)
 async def update(
     availability_id: int,
     payload: AvailabilityUpdate,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
+    doctor: User = Depends(require_roles(UserRole.DOCTOR)),
 ):
     return await update_availability(
         db,
-        user,
+        doctor,
         availability_id,
-        payload.dict(),
+        payload.dict(exclude_unset=True),
     )
 
 
-# Doctor: delete
+# ✅ Doctor: delete availability
 @router.delete("/{availability_id}")
 async def remove(
     availability_id: int,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
+    doctor: User = Depends(require_roles(UserRole.DOCTOR)),
 ):
-    await delete_availability(db, user, availability_id)
+    await delete_availability(db, doctor, availability_id)
     return {"detail": "Deleted"}

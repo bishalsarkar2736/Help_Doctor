@@ -1,0 +1,84 @@
+from uuid import UUID
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
+from app.models.doctor import Doctor
+from app.models.prescription import (
+    Prescription,
+    PrescriptionStatus,
+)
+from app.try_except.exceptions import (
+    BadRequestError,
+    NotFoundError,
+)
+
+from app.schemas.prescription_verification import PrescriptionVerificationResponse
+
+
+async def verify_prescription_by_uuid(
+    *,
+    db: AsyncSession,
+    prescription_uuid: UUID,
+):
+
+    result = await db.execute(
+        select(Prescription)
+        .options(
+            selectinload(
+                Prescription.doctor
+            ).selectinload(
+                Doctor.user
+            )
+        )
+        .where(
+            Prescription.uuid
+            == prescription_uuid
+        )
+    )
+
+    prescription = (
+        result.scalar_one_or_none()
+    )
+
+    if not prescription:
+        raise NotFoundError(
+            "Prescription not found"
+        )
+
+    if prescription.status not in [
+        PrescriptionStatus.ISSUED,
+        PrescriptionStatus.SUPERSEDED,
+    ]:
+        raise BadRequestError(
+            "Prescription is not publicly verifiable"
+        )
+
+    doctor_name = (
+        prescription.doctor.user.full_name
+        if (
+            prescription.doctor
+            and prescription.doctor.user
+            and prescription.doctor.user.full_name
+        )
+        else f"Doctor #{prescription.doctor_id}"
+    )
+
+    return PrescriptionVerificationResponse(
+        valid=(
+            prescription.status
+            == PrescriptionStatus.ISSUED
+            and prescription.is_latest_revision
+        ),
+        prescription_uuid=prescription.uuid,
+        prescription_id=prescription.id,
+        appointment_id=prescription.appointment_id,
+        patient_id=prescription.patient_id,
+        doctor_id=prescription.doctor_id,
+        doctor_name=doctor_name,
+        status=prescription.status,
+        issued_at=prescription.issued_at,
+        revision_number=prescription.revision_number,
+        is_latest_revision=prescription.is_latest_revision,
+    )

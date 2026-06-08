@@ -95,6 +95,20 @@ class User(Base):
         back_populates="patient",
     )
 
+    patient_prescriptions = relationship(
+        "Prescription",
+        foreign_keys="[Prescription.patient_id]",
+        back_populates="patient",
+        lazy="selectin",
+    )
+
+    notification_preferences = relationship(
+        "NotificationPreference",
+        back_populates="user",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
+
 
 
 

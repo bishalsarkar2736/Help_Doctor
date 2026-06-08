@@ -3,7 +3,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
 from app.db.base import Base
-
+from app.models.prescription import Prescription
 
 
 class Doctor(Base):
@@ -28,9 +28,32 @@ class Doctor(Base):
         server_default=func.now(),
     )
 
+    qualification: Mapped[str | None] = mapped_column(
+        String(200),
+        nullable=True,
+    )
+
+    medical_registration_number: Mapped[str | None] = mapped_column(
+        String(100),
+        unique=True,
+        nullable=True,
+    )
+
+    signature_file_path: Mapped[str | None] = mapped_column(
+        String(500),
+        nullable=True,
+    )
+
+    signature_uploaded_at: Mapped[DateTime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    
+
     user = relationship(
         "User", 
         back_populates="doctor",
+        lazy="selectin",
     )
     
     availability = relationship(
@@ -40,10 +63,26 @@ class Doctor(Base):
     )
 
     appointments = relationship(
-    "Appointment",
-    back_populates="doctor",
-    cascade="all, delete-orphan",
+        "Appointment",
+        back_populates="doctor",
+        cascade="all, delete-orphan",
     )
+
+    slots = relationship(
+        "DoctorSlot",
+        back_populates="doctor",
+        cascade="all, delete-orphan",
+    )
+
+
+    doctor_prescriptions: Mapped[list["Prescription"]] = relationship(
+        "Prescription",
+        back_populates="doctor",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+
+    
 
 
 

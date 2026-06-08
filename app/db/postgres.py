@@ -1,10 +1,15 @@
+import os
+
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker,create_async_engine
 
 from app.config import get_settings
 from app.db.base import Base
-
+from opentelemetry.instrumentation.sqlalchemy import (
+    SQLAlchemyInstrumentor,
+)
 
 settings = get_settings()
+print("APP CONNECTING TO DB:", settings.POSTGRES_DB)
 
 
 engine = create_async_engine(
@@ -12,8 +17,14 @@ engine = create_async_engine(
     echo = settings.DEBUG,
     pool_size = 10,
     max_overflow = 20,
-    pool_pre_ping = True
+    pool_pre_ping = True,
+    pool_recycle=1800,
 )
+
+if os.getenv("TESTING") != "1":
+    SQLAlchemyInstrumentor().instrument(
+        engine=engine.sync_engine
+    )
 
 
 AsyncSessionLocal = async_sessionmaker(
@@ -26,7 +37,11 @@ AsyncSessionLocal = async_sessionmaker(
 #Dependency for FastAPI
 async def get_db():
     async with AsyncSessionLocal() as session:
-       
-        yield session
+        try:
+            yield session
+            await session.commit()   # ✅ commit here ONLY
+        except Exception:
+            await session.rollback()
+            raise
        
 

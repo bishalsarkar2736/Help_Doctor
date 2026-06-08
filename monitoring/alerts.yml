@@ -1,0 +1,86 @@
+groups:
+- name: outbox_alerts
+
+  rules:
+
+  # =========================
+  # 🟡 QUEUE BACKLOG
+  # =========================
+  - alert: OutboxQueueBacklog
+    expr: outbox_queue_size > 100
+    for: 2m
+    labels:
+      severity: warning
+    annotations:
+      summary: "Outbox queue growing"
+      description: "Queue size > 100 for 2 minutes (worker lagging or stuck)"
+
+  # =========================
+  # 🔴 FAILURE RATE (CRITICAL)
+  # =========================
+  - alert: OutboxHighFailureRate
+    expr: rate(outbox_event_failures_total[5m]) > 1
+    for: 2m
+    labels:
+      severity: critical
+    annotations:
+      summary: "High outbox failure rate"
+      description: "More than 1 failure/sec over 5 minutes"
+
+  # =========================
+  # 🔴 DEAD LETTER (CRITICAL)
+  # =========================
+  - alert: OutboxDeadLetterSpike
+    expr: increase(outbox_dead_letter_total[5m]) > 0
+    for: 1m
+    labels:
+      severity: critical
+    annotations:
+      summary: "Dead letter events detected"
+      description: "Events permanently failed and moved to DLQ"
+
+  # =========================
+  # 🔴 EVENT LAG (CRITICAL)
+  # =========================
+  - alert: OutboxHighLag
+    expr: histogram_quantile(0.95, rate(outbox_event_lag_seconds_bucket[5m])) > 30
+    for: 3m
+    labels:
+      severity: critical
+    annotations:
+      summary: "Outbox processing lag high"
+      description: "95th percentile lag > 30 seconds"
+
+  # =========================
+  # 🟡 WORKER SLOW
+  # =========================
+  - alert: OutboxSlowProcessing
+    expr: histogram_quantile(0.95, rate(outbox_processing_time_seconds_bucket[5m])) > 5
+    for: 3m
+    labels:
+      severity: warning
+    annotations:
+      summary: "Outbox worker slow"
+      description: "Processing time per batch is high"
+
+  # =========================
+  # 🔴 WORKER DOWN (NEW - IMPORTANT)
+  # =========================
+  - alert: OutboxWorkerDown
+    expr: time() - outbox_worker_heartbeat > 30
+    for: 1m
+    labels:
+      severity: critical
+    annotations:
+      summary: "Outbox worker stopped"
+      description: "No heartbeat from worker for 30 seconds"
+
+
+  - alert: OutboxStuckEvents
+    expr: outbox_stuck_events > 0
+    for: 2m
+    labels:
+      severity: critical
+    annotations:
+      summary: "Stuck outbox events detected"
+      description: "Some events exceeded processing timeout"

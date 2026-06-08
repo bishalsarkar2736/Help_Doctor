@@ -4,7 +4,7 @@ from sqlalchemy import select
 
 from app.models.user import User,AuthProvider,UserRole
 from app.schemas.user import UserCreate
-from app.security.jwt import hash_password,verify_password,create_access_token
+from app.security.jwt import hash_password,verify_password
 from app.security.google_oauth import verify_google_token
 from app.config import get_settings
 
@@ -12,8 +12,11 @@ from datetime import datetime, timedelta
 from app.core.time import UTC
 from app.models.refresh_token import RefreshToken
 from app.security.jwt import create_access_token
-from app.core.security import create_refresh_token,decode_token
+from app.core.security import create_refresh_token
 from app.try_except.exceptions import BadRequestError,UnauthorizedError,ForbiddenError
+from app.try_except.audit import log_audit_event
+
+
 
 settings = get_settings()
 
@@ -42,6 +45,7 @@ async def register_user(
 
     db.add(user)
     await db.flush()
+    #await db.commit()
     await db.refresh(user)
 
     return user
@@ -62,7 +66,7 @@ async def get_or_create_google_user(
     user = User(
         email = data["email"],
         full_name = data["full_name"],
-        foogle_id = data["google_id"],
+        google_id = data["google_id"],
         auth_provider = AuthProvider.GOOGLE,
         role = UserRole.PATIENT,
         is_active = True,
@@ -70,6 +74,7 @@ async def get_or_create_google_user(
 
     db.add(user)
     await db.flush()
+    #await db.commit()
     await db.refresh(user)
 
     return user
@@ -93,19 +98,12 @@ async def authentication_user(
     if not user.is_active:
         raise ForbiddenError("Inactive user")
 
+
     access_token = create_access_token(
-        {
-            "sub": user.id,
-            "role": user.role.value,
-        }
+        {"sub": str(user.id), "role": user.role.value}
     )
 
-    refresh_token = create_refresh_token(
-        {
-            "sub": user.id,
-            "role": user.role.value,
-        }
-    )
+    refresh_token = create_refresh_token()
 
     refresh = RefreshToken(
         token=refresh_token,
@@ -116,6 +114,7 @@ async def authentication_user(
 
     db.add(refresh)
     await db.flush()
+    #await db.commit()
 
 
     return {
@@ -125,19 +124,11 @@ async def authentication_user(
     }
 
 
-
 async def refresh_tokens(
     db: AsyncSession,
     refresh_token: str,
 ):
-    payload = decode_token(refresh_token)
-
-    if payload.get("type") != "refresh":
-        raise UnauthorizedError("Invalid token type")
-
-    user_id = payload.get("sub")
-    role = payload.get("role")
-
+    # 1️⃣ Validate refresh token from DB
     result = await db.execute(
         select(RefreshToken).where(
             RefreshToken.token == refresh_token,
@@ -148,35 +139,42 @@ async def refresh_tokens(
     db_token = result.scalar_one_or_none()
 
     if not db_token:
-        raise UnauthorizedError("Refresh token revoked or expired")
+        raise UnauthorizedError("Invalid or expired refresh token")
 
-    #  Rotate token
+    # 2️⃣ Fetch user
+    user = await db.get(User, db_token.user_id)
+    if not user:
+        raise UnauthorizedError("User not found")
+
+    # 3️⃣ Revoke old refresh token (rotation)
     db_token.revoked = True
 
-    new_refresh_token = create_refresh_token(
-        {"sub": user_id, "role": role}
-    )
+    # 4️⃣ Create new refresh token (opaque)
+    new_refresh_token = create_refresh_token()
 
     new_db_token = RefreshToken(
         token=new_refresh_token,
-        user_id=user_id,
+        user_id=user.id,
         expires_at=datetime.now(UTC)
         + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
     )
 
+    db.add(new_db_token)
+
+    # 5️⃣ Create new access token (JWT)
     access_token = create_access_token(
-        {"sub": user_id, "role": role}
+        {"sub": str(user.id), "role": user.role.value}
     )
 
-    db.add(new_db_token)
     await db.flush()
-
 
     return {
         "access_token": access_token,
         "refresh_token": new_refresh_token,
         "token_type": "bearer",
     }
+
+
 
 async def logout_user(
     db: AsyncSession,
@@ -196,7 +194,22 @@ async def logout_user(
         return {"message": "Logged out"}
 
     db_token.revoked = True
+    db_token.revoked_at = datetime.now(UTC)
+
+    await log_audit_event(
+        db=db,
+        event_type="authentication",
+        user_id=db_token.user_id,
+        action="logout",
+        resource="user_account",
+        status="success",
+    )
+
+    #await db.commit()
     await db.flush()
 
     return {"message": "Logged out successfully"}
+
+
+
 

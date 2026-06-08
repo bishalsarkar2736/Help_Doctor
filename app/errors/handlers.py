@@ -15,6 +15,7 @@ def app_exception_handler(request: Request, exc: AppException):
     )
 
     status_map = {
+        "BadRequestError": status.HTTP_400_BAD_REQUEST,
         "NotFoundError": status.HTTP_404_NOT_FOUND,
         "ConflictError": status.HTTP_409_CONFLICT,
         "UnauthorizedError": status.HTTP_401_UNAUTHORIZED,

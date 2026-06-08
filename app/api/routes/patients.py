@@ -1,13 +1,11 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.db.postgres import get_db
-from app.security.jwt import get_current_user
 from app.models.user import UserRole
 from app.security.rbac import require_roles
 from app.schemas.patient import PatientCreate,PatientRead
 from app.services.patient_service import create_patient
-from app.security.jwt import get_current_user
+
 
 
 
@@ -25,7 +23,7 @@ async def create_my_patient_profile(
 ):
     return await create_patient(
         db = db,
-        user_id = current_user["sub"],
+        user_id = current_user.id,
         patient_in = patient_in,
     )
 

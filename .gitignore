@@ -34,3 +34,7 @@ dist/
 
 # ===== Jupyter =====
 .ipynb_checkpoints/
+
+
+media/signatures/*
+!media/signatures/.gitkeep

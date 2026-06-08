@@ -44,6 +44,7 @@ async def test_transition_creates_audit_entry(db, appointment, doctor_user):
         new_status=AppointmentStatus.CONFIRMED,
         changed_by=doctor_user.id,
         actor_role=doctor_user.role,
+        correlation_id="test-correlation-id",
     )
 
     await db.flush()

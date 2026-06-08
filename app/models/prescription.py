@@ -1,0 +1,169 @@
+from __future__ import annotations
+from typing import TYPE_CHECKING
+from datetime import datetime
+from sqlalchemy import ForeignKey, String, Text, Integer, DateTime,Enum,Boolean
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+from app.db.base import Base
+from app.core.time import utc_now
+import uuid
+from sqlalchemy.dialects.postgresql import UUID
+import enum
+
+if TYPE_CHECKING:
+    from app.models.doctor import Doctor
+    from app.models.user import User
+
+    from app.models.appointment import Appointment
+
+
+
+class PrescriptionStatus(str, enum.Enum):
+    DRAFT = "DRAFT"
+    ISSUED = "ISSUED"
+    SUPERSEDED = "SUPERSEDED"
+    REVOKED = "REVOKED"
+
+
+class Prescription(Base):
+    __tablename__ = "prescriptions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    uuid: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        unique=True,
+        nullable=False,
+        default=uuid.uuid4,
+        index=True,
+    )
+
+    parent_prescription_id: Mapped[int | None] = mapped_column(
+        ForeignKey(
+            "prescriptions.id",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
+        index=True,
+    )
+
+    revision_number: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=1,
+    )
+
+    is_latest_revision: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=True,
+    )
+
+    appointment_id: Mapped[int] = mapped_column(
+        ForeignKey("appointments.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    doctor_id: Mapped[int] = mapped_column(
+        ForeignKey("doctors.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    patient_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    notes: Mapped[str | None] = mapped_column(Text)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+    )
+
+    status: Mapped[PrescriptionStatus] = mapped_column(
+        Enum(PrescriptionStatus),
+        default=PrescriptionStatus.DRAFT,
+        nullable=False,
+    )
+
+    issued_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+
+    # ====================================
+    # RELATIONSHIPS
+    # ====================================
+
+    doctor: Mapped["Doctor"] = relationship(
+        "Doctor",
+        foreign_keys=[doctor_id],
+        back_populates="doctor_prescriptions",
+        lazy="selectin",
+    )
+
+    patient: Mapped["User"] = relationship(
+        "User",
+        foreign_keys=[patient_id],
+        back_populates="patient_prescriptions",
+        lazy="selectin",
+    )
+
+    appointment: Mapped["Appointment"] = relationship(
+        "Appointment",
+        foreign_keys=[appointment_id],
+        back_populates="prescription",
+        lazy="selectin",
+    )
+
+    items: Mapped[list["PrescriptionItem"]] = relationship(
+        "PrescriptionItem",
+        back_populates="prescription",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+
+    # ====================================
+    # REVISION RELATIONSHIPS
+    # ====================================
+
+    parent_prescription: Mapped["Prescription | None"] = relationship(
+        "Prescription",
+        remote_side=[id],
+        back_populates="revisions",
+    )
+
+    revisions: Mapped[list["Prescription"]] = relationship(
+        "Prescription",
+        back_populates="parent_prescription",
+    )
+
+
+class PrescriptionItem(Base):
+    __tablename__ = "prescription_items"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    prescription_id: Mapped[int] = mapped_column(
+        ForeignKey("prescriptions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+    medicine_name: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    dosage: Mapped[str | None] = mapped_column(String(100))
+
+    frequency: Mapped[str | None] = mapped_column(String(100))
+
+    duration_days: Mapped[int | None] = mapped_column(Integer)
+
+    instructions: Mapped[str | None] = mapped_column(Text)
+
+    prescription: Mapped["Prescription"] = relationship(
+        "Prescription",
+        back_populates="items",
+    )

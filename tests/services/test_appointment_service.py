@@ -15,6 +15,7 @@ from app.try_except.exceptions import (
     BadRequestError,
     ForbiddenError,
 )
+from tests.conftest import valid_slot
 
 UTC = ZoneInfo("UTC")
 
@@ -25,7 +26,7 @@ async def test_book_appointment_invalid_doctor_id(db, patient_user):
             db=db,
             patient=patient_user,
             doctor_id=999999,
-            scheduled_at=datetime.now(UTC),
+            scheduled_at=valid_slot(datetime.now(UTC) + timedelta(days=1)),
         )
 
 
@@ -33,7 +34,7 @@ async def test_book_appointment_invalid_doctor_id(db, patient_user):
 async def test_book_appointment_in_past(
     db, patient_user, doctor, doctor_availability
 ):
-    past_time = datetime.now(UTC) - timedelta(days=1)
+    past_time = valid_slot(datetime.now(UTC) - timedelta(days=1))
 
     with pytest.raises(BadRequestError):
         await book_appointment(
@@ -49,7 +50,7 @@ async def test_book_appointment_in_past(
 async def test_double_booking_same_slot_not_allowed(
     db, patient_user,doctor,doctor_availability
 ):
-    time_slot = datetime.now(UTC) + timedelta(days=1)
+    time_slot = valid_slot(datetime.now(UTC) + timedelta(days=1))
 
     await book_appointment(db, patient_user, doctor.id, time_slot)
 
@@ -66,7 +67,7 @@ async def test_doctor_cannot_book_appointment(
             db,
             doctor_user,
             doctor.id,
-            datetime.now(UTC),
+            valid_slot(datetime.now(UTC) + timedelta(days=1)),
         )
 
 
@@ -78,12 +79,12 @@ async def test_doctor_can_confirm_appointment(
         db,
         patient_user,
         doctor.id,
-        datetime.now(UTC) + timedelta(days=1),
+        valid_slot(datetime.now(UTC) + timedelta(days=1)),
     )
 
     updated = await doctor_update_appointment_status(
         db,
-        doctor_user.id,
+        doctor_user,
         appt.id,
         AppointmentStatus.CONFIRMED,
     )
@@ -99,12 +100,12 @@ async def test_patient_cancel_confirmed_appointment(
         db,
         patient_user,
         doctor.id,
-        datetime.now(UTC) + timedelta(days=1),
+        valid_slot(datetime.now(UTC) + timedelta(days=1)),
     )
 
     await doctor_update_appointment_status(
         db,
-        doctor_user.id,
+        doctor_user,
         appt.id,
         AppointmentStatus.CONFIRMED,
     )
@@ -133,7 +134,7 @@ async def test_patient_cannot_cancel_others_appointment(
         db,
         patient_user,
         doctor.id,
-        datetime.now(UTC) + timedelta(days=1),
+        valid_slot(datetime.now(UTC) + timedelta(days=1)),
     )
 
     # Patient B tries to cancel Patient A's appointment
@@ -159,7 +160,7 @@ async def test_cannot_book_outside_doctor_availability(
     Doctor has NO availability created.
     Booking should fail.
     """
-    future_time = datetime.now(UTC) + timedelta(days=1)
+    future_time = valid_slot(datetime.now(UTC) + timedelta(days=1))
 
     with pytest.raises(BadRequestError):
         await book_appointment(

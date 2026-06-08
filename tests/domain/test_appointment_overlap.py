@@ -1,8 +1,8 @@
 import asyncio
 import pytest
 from datetime import datetime, timezone,timedelta
-from sqlalchemy.exc import IntegrityError
-from app.models.appointment import Appointment, AppointmentStatus
+from sqlalchemy.exc import IntegrityError,DBAPIError
+from app.models.appointment import Appointment
 from sqlalchemy import select, func
 from app.models.doctor import Doctor
 from app.models.user import User,UserRole
@@ -16,41 +16,6 @@ from datetime import time
 async def test_doctor_overlap_is_prevented_under_concurrency(
     async_session_factory,
 ):
-    # # Step 1: Create committed setup data
-    # async with async_session_factory() as session:
-    #     doctor_user = Doctor(
-    #         user_id=None,  # create user first
-    #         specialization="General",
-    #         experience_years=5,
-    #         bio="Test",
-    #         is_verified=True,
-    #     )
-
-    #     user = User(
-    #         email="concurrency@test.com",
-    #         hashed_password="x",
-    #         role=UserRole.PATIENT,
-    #         is_active=True,
-    #     )
-
-    #     doctor_owner = User(
-    #         email="doc@test.com",
-    #         hashed_password="x",
-    #         role=UserRole.DOCTOR,
-    #         is_active=True,
-    #     )
-
-    #     session.add_all([user, doctor_owner])
-    #     await session.flush()
-
-    #     doctor_user.user_id = doctor_owner.id
-    #     session.add(doctor_user)
-
-    #     await session.commit()
-
-    #     doctor_id = doctor_user.id
-    #     patient_id = user.id
-
     async with async_session_factory() as session:
         patient = User(
             email="concurrency@test.com",
@@ -93,32 +58,13 @@ async def test_doctor_overlap_is_prevented_under_concurrency(
             is_available=True,
         )
 
-        session.add(availability)   # 🔥 YOU MISSED THIS
-        await session.commit()      # 🔥 YOU MISSED THIS
+        session.add(availability)   
+        await session.commit()      
 
         doctor_id = doctor.id
         patient_id = patient.id
 
 
-    # async def create_appointment():
-    #     try:
-    #         async with async_session_factory() as session:
-    #             appt = Appointment(
-    #                 doctor_id=doctor_id,
-    #                 patient_id=patient_id,
-    #                 scheduled_at=start,
-    #                 status=AppointmentStatus.PENDING,
-    #             )
-    #             session.add(appt)
-    #             await session.commit()
-    #             return "success"
-    #     except IntegrityError:
-    #         return "integrity_error"
-
-    # results = await asyncio.gather(
-    #     create_appointment(),
-    #     create_appointment(),
-    # )
     async def create_appointment():
         async with async_session_factory() as session:
             try:
@@ -126,7 +72,7 @@ async def test_doctor_overlap_is_prevented_under_concurrency(
 
                 await book_appointment(
                     db=session,
-                    patient=patient_obj,   # use attached instance
+                    patient=patient_obj,   
                     doctor_id=doctor_id,
                     scheduled_at=start,
                 )
@@ -134,7 +80,7 @@ async def test_doctor_overlap_is_prevented_under_concurrency(
                 await session.commit()
                 return "success"
 
-            except BadRequestError:
+            except (BadRequestError, IntegrityError, DBAPIError):
                 await session.rollback()
                 return "error"
 

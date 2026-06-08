@@ -1,5 +1,5 @@
 from sqlalchemy import (
-    text,Integer, DateTime, Enum, ForeignKey, String, Text,event,func
+    text,Integer, DateTime,Boolean, Enum, ForeignKey, String, Text,event,func
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -17,6 +17,7 @@ from sqlalchemy.dialects.postgresql import Range
 class AppointmentStatus(str, enum.Enum):
     PENDING = "PENDING"
     CONFIRMED = "CONFIRMED"
+    IN_CONSULTATION = "IN_CONSULTATION"
     CANCELLED = "CANCELLED"
     COMPLETED = "COMPLETED"
     SCHEDULED = "SCHEDULED"
@@ -93,6 +94,13 @@ class Appointment(Base):
         nullable=True,
     )
 
+    reminder_sent: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        nullable=False,
+        index=True,
+    )
+
     time_range: Mapped[object] = mapped_column(
         TSTZRANGE,
         nullable=False,
@@ -129,6 +137,13 @@ class Appointment(Base):
         lazy="selectin",
     )
 
+    prescription = relationship(
+        "Prescription",
+        back_populates="appointment",
+        uselist=False,
+        lazy="selectin",
+    )
+
 
     
 @event.listens_for(Appointment, "before_insert")
@@ -147,7 +162,7 @@ from app.core.time import UTC
 
 
 @event.listens_for(Appointment, "before_insert")
-@event.listens_for(Appointment, "before_update")
+#@event.listens_for(Appointment, "before_update")
 def set_status_timestamps(mapper, connection, target):
 
     now = datetime.now(UTC)

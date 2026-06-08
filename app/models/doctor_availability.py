@@ -1,4 +1,4 @@
-from sqlalchemy import Integer, Time, Boolean, ForeignKey
+from sqlalchemy import Integer, Time, Boolean, ForeignKey,Index
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -6,6 +6,10 @@ from app.db.base import Base
 
 class DoctorAvailability(Base):
     __tablename__ = "doctor_availability"
+
+    __table_args__ = (
+        Index("idx_doctor_availability_doctor_id", "doctor_id"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
 

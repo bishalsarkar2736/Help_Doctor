@@ -1,5 +1,5 @@
 from datetime import time
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field,ConfigDict
 
 
 class AvailabilityBase(BaseModel):
@@ -20,8 +20,10 @@ class AvailabilityUpdate(BaseModel):
 
 
 class AvailabilityOut(AvailabilityBase):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     is_available: bool
 
-    class Config:
-        from_attributes = True
+    # class Config:
+    #     from_attributes = True

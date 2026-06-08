@@ -1,12 +1,37 @@
-from sqlalchemy import Integer, String, DateTime, ForeignKey, Text
+from sqlalchemy import String, DateTime, ForeignKey, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 from datetime import datetime
 from app.db.base import Base
-
+from sqlalchemy.dialects.postgresql import UUID
+import uuid
+from sqlalchemy import Index
 
 class Notification(Base):
     __tablename__ = "notifications"
+
+    __table_args__ = (
+        UniqueConstraint(
+            "event_id",
+            "user_id",
+            name="uq_notification_event_user",
+        ),
+
+        Index(
+            "ix_notification_delivery_failed",
+            "delivery_failed_at",
+        ),
+
+        Index(
+            "ix_notification_email_delivered",
+            "email_delivered_at",
+        ),
+
+        Index(
+            "ix_notification_push_delivered",
+            "push_delivered_at",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
 
@@ -27,9 +52,47 @@ class Notification(Base):
         server_default=func.now(),
     )
 
+    read_at: Mapped[DateTime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        )
+
+    delivered_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    push_delivered_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    email_delivered_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    delivery_failed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    delivery_error: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+
+    seen_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    
+    event_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("outbox_events.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
     user = relationship("User", lazy="joined")
 
-    read_at: Mapped[DateTime | None] = mapped_column(
-    DateTime(timezone=True),
-    nullable=True,
-)
+    event = relationship("OutboxEvent")
