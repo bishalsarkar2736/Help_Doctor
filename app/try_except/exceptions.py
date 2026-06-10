@@ -40,6 +40,9 @@ class RateLimitExceededError(AppException):
 class InternalServerError(AppException):
     status_code = 500
 
+class ConfigurationError(AppException):
+    status_code = 500
+
 
 class ServiceUnavailableError(AppException):
     status_code = 503

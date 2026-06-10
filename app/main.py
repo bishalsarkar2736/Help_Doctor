@@ -62,6 +62,10 @@ from app.api.routes import (
     admin_medicine_router,
     admin_medicine_analytics_router,
     admin_medicine_alias_api_router,
+    admin_medicine_ai_router,
+    admin_medicine_ai_logs_router,
+    admin_medicine_ai_analytics_router,
+    admin_medicine_ai_feedback_router,
 )
 
 import logging
@@ -211,6 +215,10 @@ def create_app() -> FastAPI:
     app.include_router(admin_medicine_router)
     app.include_router(admin_medicine_analytics_router)
     app.include_router(admin_medicine_alias_api_router)
+    app.include_router(admin_medicine_ai_router)
+    app.include_router(admin_medicine_ai_logs_router)
+    app.include_router(admin_medicine_ai_analytics_router)
+    app.include_router(admin_medicine_ai_feedback_router)
     app.include_router(admin_doctors_router)
     app.include_router(ws_router)
     app.include_router(notification_router)

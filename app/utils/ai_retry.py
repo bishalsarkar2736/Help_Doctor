@@ -24,6 +24,7 @@ async def with_ai_retry(
                 "(attempt %s/%s)",
                 attempt + 1,
                 MAX_AI_RETRIES,
+                str(e),
             )
 
             await asyncio.sleep(
