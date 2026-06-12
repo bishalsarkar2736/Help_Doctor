@@ -1,16 +1,18 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 import logging
-
 from app.db.postgres import get_db
-from app.services.payment_service import mark_payment_success
+from app.services.payment_service import (
+    mark_payment_success,
+    create_payment,
+)
 from app.services.payment_audit_service import create_payment_audit_log
 from app.integrations.bkash.bkash_service import BkashService
-
+from app.security.rbac import require_roles
 from app.schemas.payment_webhook import (
     BkashWebhookSchema,
 )
-from sqlalchemy.exc import IntegrityError
+from app.models.user import User,UserRole
 
 # ✅ Idempotency
 from app.services.idempotency_service import (
@@ -153,3 +155,45 @@ async def bkash_webhook(
         # ❗ retry remains safe
 
         raise
+
+
+
+@router.post("/bkash/initiate")
+async def initiate_bkash_payment(
+    appointment_id: int,
+    amount: float,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(
+        require_roles(
+            UserRole.PATIENT
+        )
+    ),
+):
+
+    payment = await create_payment(
+        db=db,
+        appointment_id=appointment_id,
+        patient_id=current_user.id,
+        amount=amount,
+        method="bkash",
+    )
+
+    bkash = BkashService()
+
+    response = await bkash.create_payment(
+        amount=payment.amount,
+        invoice_id=str(payment.id),
+    )
+
+    payment.gateway_payment_id = (
+        response["paymentID"]
+    )
+
+    await db.flush()
+
+    return {
+        "payment_id": payment.id,
+        "bkash_url": response[
+            "bkashURL"
+        ],
+    }

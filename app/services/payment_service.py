@@ -63,11 +63,67 @@ async def create_payment(
                 method,
             )
 
+            result = await db.execute(
+                select(Appointment).where(
+                    Appointment.id == appointment_id
+                )
+            )
+
+            appointment = result.scalar_one_or_none()
+
+            if not appointment:
+                raise NotFoundError(
+                    "Appointment not found"
+                )
+            
+            if appointment.patient_id != patient_id:
+                raise BadRequestError(
+                    "Appointment does not belong to patient"
+                )
+            
+            # Duplicate payment protection
+            existing_payment_result = (
+                await db.execute(
+                    select(Payment).where(
+                        Payment.appointment_id
+                        == appointment_id
+                    )
+                )
+            )
+
+            existing_payment = (
+                existing_payment_result
+                .scalar_one_or_none()
+            )
+
+            if existing_payment:
+
+                logger.warning(
+                    "payment_already_exists",
+                    extra={
+                        "appointment_id": (
+                            appointment_id
+                        ),
+                        "payment_id": (
+                            existing_payment.id
+                        ),
+                        "patient_id": (
+                            patient_id
+                        ),
+                    },
+                )
+
+                raise BadRequestError(
+                    "Payment already exists"
+                )
+
+
             payment = Payment(
                 appointment_id=appointment_id,
                 patient_id=patient_id,
                 amount=amount,
                 method=method,
+                clinic_id=appointment.clinic_id,
                 status="PENDING",
             )
 

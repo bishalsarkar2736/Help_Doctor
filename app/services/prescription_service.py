@@ -51,6 +51,7 @@ from app.schemas.prescription import (
 
 
 
+
 async def create_prescription(
     db: AsyncSession,
     doctor: Doctor,
@@ -99,6 +100,7 @@ async def create_prescription(
         appointment_id=appointment_id,
         doctor_id=doctor_id,
         patient_id=appointment.patient_id,
+        clinic_id=appointment.clinic_id,
         notes=data.notes,
         status=PrescriptionStatus.DRAFT,
     )

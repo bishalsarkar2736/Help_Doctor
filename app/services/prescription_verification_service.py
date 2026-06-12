@@ -13,9 +13,15 @@ from app.try_except.exceptions import (
     BadRequestError,
     NotFoundError,
 )
+from app.services.clinic_context_service import (
+    get_current_clinic,
+)
 
 from app.schemas.prescription_verification import PrescriptionVerificationResponse
 
+
+VERIFICATION_VALID = "VALID"
+VERIFICATION_SUPERSEDED = "SUPERSEDED"
 
 async def verify_prescription_by_uuid(
     *,
@@ -65,18 +71,42 @@ async def verify_prescription_by_uuid(
         else f"Doctor #{prescription.doctor_id}"
     )
 
+    is_valid = (
+        prescription.status
+        == PrescriptionStatus.ISSUED
+        and prescription.is_latest_revision
+    )
+
+    verification_status = (
+        VERIFICATION_VALID
+        if is_valid
+        else VERIFICATION_SUPERSEDED
+    )
+
+    clinic = await get_current_clinic(db)
+
     return PrescriptionVerificationResponse(
-        valid=(
-            prescription.status
-            == PrescriptionStatus.ISSUED
-            and prescription.is_latest_revision
-        ),
+        valid=is_valid,
+        verification_status=verification_status,
         prescription_uuid=prescription.uuid,
         prescription_id=prescription.id,
         appointment_id=prescription.appointment_id,
         patient_id=prescription.patient_id,
         doctor_id=prescription.doctor_id,
         doctor_name=doctor_name,
+
+        clinic_name=(
+            clinic.name
+            if clinic
+            else None
+        ),
+
+        clinic_logo_url=(
+            clinic.logo_url
+            if clinic
+            else None
+        ),
+
         status=prescription.status,
         issued_at=prescription.issued_at,
         revision_number=prescription.revision_number,

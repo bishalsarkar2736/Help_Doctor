@@ -112,6 +112,21 @@ class Appointment(Base):
         default="1",
     )
 
+    clinic_id: Mapped[int | None] = mapped_column(
+        ForeignKey(
+            "clinics.id",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
+        index=True,
+    )
+
+    clinic = relationship(
+        "Clinic",
+        back_populates="appointments",
+        lazy="selectin",
+    )
+
     __mapper_args__ = {
         "version_id_col": version
     }

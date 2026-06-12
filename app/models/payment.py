@@ -77,6 +77,21 @@ class Payment(Base):
         onupdate=func.now(),
     )
 
+    clinic_id: Mapped[int | None] = mapped_column(
+        ForeignKey(
+            "clinics.id",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
+        index=True,
+    )
+
+    clinic = relationship(
+        "Clinic",
+        back_populates="payments",
+        lazy="selectin",
+    )
+
     appointment = relationship("Appointment")
     patient = relationship("User")
 

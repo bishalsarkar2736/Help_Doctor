@@ -173,6 +173,7 @@ async def create_prescription_revision(
         appointment_id=prescription.appointment_id,
         doctor_id=prescription.doctor_id,
         patient_id=prescription.patient_id,
+        clinic_id=prescription.clinic_id,
         notes=data.notes,
         status=PrescriptionStatus.ISSUED,
         issued_at=datetime.now(UTC),

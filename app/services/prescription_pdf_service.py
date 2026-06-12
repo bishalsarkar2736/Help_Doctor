@@ -12,7 +12,7 @@ from reportlab.platypus import (
     Table,
     TableStyle,
 )
-
+from app.models.clinic import Clinic
 from pathlib import Path
 from app.core.time import UTC
 from app.models.prescription import Prescription,PrescriptionStatus
@@ -87,6 +87,7 @@ def draw_superseded_watermark(
 
 def generate_prescription_pdf(
     prescription: Prescription,
+    clinic: Clinic | None = None,
 ) -> bytes:
 
     buffer = BytesIO()
@@ -108,30 +109,78 @@ def generate_prescription_pdf(
     # CLINIC INFO
     # ====================================
 
-    elements.append(
-        Paragraph(
-            "<b>HelpDoctor Clinic</b>",
-            styles["Title"],
-        )
-    )
+    if clinic:
 
-    elements.append(
-        Paragraph(
-            "Rangpur, Bangladesh",
-            styles["Normal"],
-        )
-    )
+        if clinic.logo_url:
 
-    elements.append(
-        Paragraph(
-            "Phone: +880-1XXXXXXXXX",
-            styles["Normal"],
+            logo_path = Path(clinic.logo_url)
+
+            if logo_path.exists():
+
+                elements.append(
+                    Image(
+                        str(logo_path),
+                        width=120,
+                        height=60,
+                    )
+                )
+
+                elements.append(
+                    Spacer(1, 10)
+                )
+
+        elements.append(
+            Paragraph(
+                f"<b>{escape(clinic.name)}</b>",
+                styles["Title"],
+            )
         )
-    )
+
+        if clinic.address:
+            elements.append(
+                Paragraph(
+                    escape(clinic.address),
+                    styles["Normal"],
+                )
+            )
+
+        if clinic.phone:
+            elements.append(
+                Paragraph(
+                    f"Phone: {escape(clinic.phone)}",
+                    styles["Normal"],
+                )
+            )
+
+        if clinic.email:
+            elements.append(
+                Paragraph(
+                    f"Email: {escape(clinic.email)}",
+                    styles["Normal"],
+                )
+            )
+
+        if clinic.website:
+            elements.append(
+                Paragraph(
+                    escape(clinic.website),
+                    styles["Normal"],
+                )
+            )
+
+    else:
+
+        elements.append(
+            Paragraph(
+                "<b>HelpDoctor Clinic</b>",
+                styles["Title"],
+            )
+        )
 
     elements.append(
         Spacer(1, 20)
     )
+        
 
     # ====================================
     # PRESCRIPTION HEADER
@@ -595,15 +644,47 @@ def generate_prescription_pdf(
         Spacer(1, 20)
     )
 
+    footer_text = (
+        "This prescription was generated "
+        "digitally by HelpDoctor Clinic System."
+    )
+
+    if clinic:
+
+        clinic_lines = []
+
+        if clinic.name:
+            clinic_lines.append(
+                escape(clinic.name)
+            )
+
+        if clinic.address:
+            clinic_lines.append(
+                escape(clinic.address)
+            )
+
+        if clinic.phone:
+            clinic_lines.append(
+                escape(clinic.phone)
+            )
+
+        if clinic.email:
+            clinic_lines.append(
+                escape(clinic.email)
+            )
+
+        footer_text += (
+            "<br/><br/>"
+            + "<br/>".join(clinic_lines)
+        )
+
     elements.append(
         Paragraph(
-            (
-                "This prescription was generated "
-                "digitally by HelpDoctor Clinic System."
-            ),
+            footer_text,
             styles["Italic"],
         )
     )
+    
 
     # ====================================
     # BUILD PDF

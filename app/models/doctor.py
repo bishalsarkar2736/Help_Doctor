@@ -48,6 +48,21 @@ class Doctor(Base):
         DateTime(timezone=True),
         nullable=True,
     )
+
+    clinic_id: Mapped[int | None] = mapped_column(
+        ForeignKey(
+            "clinics.id",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
+        index=True,
+    )
+
+    clinic = relationship(
+        "Clinic",
+        back_populates="doctors",
+        lazy="selectin",
+    )
     
 
     user = relationship(

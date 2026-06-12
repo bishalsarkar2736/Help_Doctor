@@ -21,6 +21,10 @@ from app.services.domain_event_service import (
     publish_domain_event,
 )
 
+from app.services.clinic_context_service import (
+    get_current_clinic,
+)
+
 from app.schemas.event import (
     AppointmentCancelledEvent,
     AppointmentRescheduledEvent,
@@ -554,11 +558,14 @@ async def _book_appointment_internal(
             reason="outside_availability"
         ).inc()
         raise
+    
+    clinic = await get_current_clinic(db)
 
     # 5️⃣ Create appointment
     appointment = Appointment(
         doctor_id=doctor.id,
         patient_id=patient.id,
+        clinic_id=clinic.id if clinic else None,
         scheduled_at=scheduled_at,
         status=AppointmentStatus.PENDING,
     )

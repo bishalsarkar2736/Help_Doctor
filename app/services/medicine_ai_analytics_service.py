@@ -67,7 +67,7 @@ async def get_prompt_versions(
             ).label("average_latency_ms"),
         )
         .group_by(
-            MedicineAILog.prompt_version
+            MedicineAILog.prompt_version.desc()
         )
     )
 
@@ -137,7 +137,7 @@ async def get_tokens_by_medicine(
             ).label("tokens"),
         )
         .group_by(
-            MedicineAILog.medicine_name
+            MedicineAILog.medicine_name.is_not(None)
         )
         .order_by(
             func.sum(
@@ -167,16 +167,16 @@ async def get_estimated_cost(
 
     result = await db.execute(
         select(
-            func.sum(
-                MedicineAILog.tokens_used
+            func.coalesce(
+                func.sum(
+                    MedicineAILog.tokens_used
+                ),
+                0,
             )
         )
     )
 
-    total_tokens = (
-        result.scalar()
-        or 0
-    )
+    total_tokens = result.scalar_one()
 
     estimated_cost = (
         total_tokens / 1000
@@ -312,3 +312,52 @@ async def get_most_disliked_questions(
         }
         for row in result
     ]
+
+
+async def get_helpful_percentage(
+    db: AsyncSession,
+) -> float:
+
+    summary = await get_feedback_summary(
+        db
+    )
+
+    helpful = summary["helpful"]
+
+    not_helpful = summary["not_helpful"]
+
+    total = helpful + not_helpful
+
+    if total == 0:
+        return 0.0
+
+    return round(
+        helpful * 100 / total,
+        2,
+    )
+
+
+async def get_failure_rate_percentage(
+    db: AsyncSession,
+) -> float:
+
+    total_requests = await get_total_ai_requests(
+        db
+    )
+
+    total_failures = await get_total_ai_failures(
+        db
+    )
+
+    if total_requests == 0:
+        return 0.0
+
+    return round(
+        total_failures
+        * 100
+        / total_requests,
+        2,
+    )
+
+
+

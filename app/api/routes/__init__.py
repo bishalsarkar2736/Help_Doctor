@@ -22,8 +22,11 @@ from .admin_medicine_ai import router as admin_medicine_ai_router
 from .admin_medicine_ai_logs import router as admin_medicine_ai_logs_router
 from .admin_medicine_ai_analytics import router as admin_medicine_ai_analytics_router
 from .admin_medicine_ai_feedback import router as admin_medicine_ai_feedback_router
-
-
+from .admin_clinic import router as admin_clinic_router
+from .admin_clinic_analytics import router as admin_clinic_analytics_router
+from .admin_revenue_analytics import router as admin_revenue_analytics_router
+from .admin_dashboard import router as admin_dashboard_router
+from .admin_clinic_logo import router as admin_clinic_logo_router
 __all__ = [
     "admin_router",
     "doctors_router",
@@ -49,4 +52,9 @@ __all__ = [
     "admin_medicine_ai_logs_router",
     "admin_medicine_ai_analytics_router",
     "admin_medicine_ai_feedback_router",
+    "admin_clinic_router",
+    "admin_clinic_analytics_router",
+    "admin_revenue_analytics_router",
+    "admin_dashboard_router",
+    "admin_clinic_logo_router",
 ]

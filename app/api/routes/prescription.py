@@ -18,7 +18,7 @@ from app.services.prescription_service import (
     get_appointment_prescription,
     update_prescription,
 )
-
+from app.services.clinic_service import get_clinic
 from sqlalchemy.exc import IntegrityError
 
 from sqlalchemy import select
@@ -503,8 +503,11 @@ async def download_prescription_pdf(
     # GENERATE PDF
     # ====================================
 
+    clinic = await get_clinic(db)
+
     pdf = generate_prescription_pdf(
-        prescription
+        prescription=prescription,
+        clinic=clinic,
     )
 
     filename = (

@@ -6,9 +6,13 @@ from pydantic import BaseModel
 from app.models.prescription import PrescriptionStatus
 
 
-class PrescriptionVerificationResponse(BaseModel):
+class PrescriptionVerificationResponse(
+    BaseModel
+):
 
     valid: bool
+
+    verification_status: str
 
     prescription_uuid: UUID
 
@@ -21,6 +25,10 @@ class PrescriptionVerificationResponse(BaseModel):
     doctor_id: int
 
     doctor_name: str
+
+    clinic_name: str | None = None
+
+    clinic_logo_url: str | None = None
 
     status: PrescriptionStatus
 

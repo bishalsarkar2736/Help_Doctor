@@ -102,3 +102,46 @@ async def get_ai_logs(
         }
         for log, helpful_value in result.all()
     ]
+
+
+async def get_ai_log_stats(
+    db: AsyncSession,
+):
+    total_queries = await db.scalar(
+        select(
+            func.count(
+                MedicineAILog.id
+            )
+        )
+    )
+
+    total_tokens = await db.scalar(
+        select(
+            func.coalesce(
+                func.sum(
+                    MedicineAILog.tokens_used
+                ),
+                0,
+            )
+        )
+    )
+
+    avg_latency = await db.scalar(
+        select(
+            func.coalesce(
+                func.avg(
+                    MedicineAILog.latency_ms
+                ),
+                0,
+            )
+        )
+    )
+
+    return {
+        "total_queries": total_queries,
+        "total_tokens": total_tokens,
+        "avg_latency_ms": round(
+            float(avg_latency),
+            2,
+        ),
+    }
