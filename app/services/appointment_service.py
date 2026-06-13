@@ -25,6 +25,10 @@ from app.services.clinic_context_service import (
     get_current_clinic,
 )
 
+from app.services.activity_log_service import (
+    log_activity,
+)
+
 from app.schemas.event import (
     AppointmentCancelledEvent,
     AppointmentRescheduledEvent,
@@ -692,6 +696,14 @@ async def book_appointment(
                 },
             )
 
+            await log_activity(
+                db=db,
+                actor_id=patient.id,
+                action="APPOINTMENT_BOOKED",
+                entity_type="appointment",
+                entity_id=appointment.id,
+            )
+
             appointment_date = scheduled_at.date()
             await delete_cache(f"doctor:{doctor_id}:slots:{appointment_date}")
 
@@ -798,6 +810,14 @@ async def patient_cancel_appointment(
         doctor=doctor,
         notify_doctor=True,
         correlation_id=correlation_id,
+    )
+
+    await log_activity(
+        db=db,
+        actor_id=user.id,
+        action="APPOINTMENT_CANCELLED",
+        entity_type="appointment",
+        entity_id=appointment.id,
     )
 
     appointment_date = appointment.scheduled_at.date()
@@ -1055,6 +1075,14 @@ async def doctor_cancel_appointment(
         doctor=doctor,
         notify_patient=True,
         correlation_id=correlation_id,
+    )
+
+    await log_activity(
+        db=db,
+        actor_id=doctor_user.id,
+        action="APPOINTMENT_CANCELLED",
+        entity_type="appointment",
+        entity_id=appointment.id,
     )
 
     appointment_date = appointment.scheduled_at.date()
@@ -1342,6 +1370,14 @@ async def admin_force_cancel_appointment(
         notify_patient=True,
         notify_doctor=True,
         correlation_id=correlation_id,
+    )
+
+    await log_activity(
+        db=db,
+        actor_id=admin.id,
+        action="APPOINTMENT_CANCELLED",
+        entity_type="appointment",
+        entity_id=appointment.id,
     )
 
     appointment_date = appointment.scheduled_at.date()

@@ -2,7 +2,7 @@ from datetime import datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-
+from app.models.appointment import Appointment
 from app.models.doctor_availability import DoctorAvailability
 from app.try_except.exceptions import BadRequestError
 
@@ -14,8 +14,11 @@ async def validate_doctor_availability(
     doctor_id: int,
     scheduled_at: datetime,
 ) -> None:
-    appointment_end = scheduled_at + timedelta(minutes=APPOINTMENT_DURATION_MINUTES)
-
+    
+    #appointment_end = scheduled_at + timedelta(minutes=APPOINTMENT_DURATION_MINUTES)
+    appointment_end = scheduled_at + Appointment.APPOINTMENT_DURATION
+    
+    
     weekday = scheduled_at.weekday()
     start_time = scheduled_at.time()
     end_time = appointment_end.time()

@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.postgres import get_db
 
-from app.models.user import UserRole
+from app.models.user import UserRole,User
 
 from app.security.rbac import (
     require_roles,
@@ -40,7 +40,7 @@ router = APIRouter(
 async def create_medicine_endpoint(
     payload: MedicineCreate,
     db: AsyncSession = Depends(get_db),
-    admin=Depends(
+    admin : User =Depends(
         require_roles(UserRole.ADMIN)
     ),
 ):
@@ -56,7 +56,7 @@ async def create_medicine_endpoint(
 )
 async def list_medicines_endpoint(
     db: AsyncSession = Depends(get_db),
-    admin=Depends(
+    admin : User =Depends(
         require_roles(UserRole.ADMIN)
     ),
 ):
@@ -70,7 +70,7 @@ async def list_medicines_endpoint(
 async def get_medicine_endpoint(
     medicine_id: int,
     db: AsyncSession = Depends(get_db),
-    admin=Depends(
+    admin : User =Depends(
         require_roles(UserRole.ADMIN)
     ),
 ):
@@ -88,7 +88,7 @@ async def update_medicine_endpoint(
     medicine_id: int,
     payload: MedicineUpdate,
     db: AsyncSession = Depends(get_db),
-    admin=Depends(
+    admin : User =Depends(
         require_roles(UserRole.ADMIN)
     ),
 ):
@@ -103,7 +103,7 @@ async def update_medicine_endpoint(
 async def delete_medicine_endpoint(
     medicine_id: int,
     db: AsyncSession = Depends(get_db),
-    admin=Depends(
+    admin : User =Depends(
         require_roles(UserRole.ADMIN)
     ),
 ):

@@ -49,7 +49,9 @@ from app.schemas.prescription import (
     PrescriptionRevisionCreate,
 )
 
-
+from app.services.activity_log_service import (
+    log_activity,
+)
 
 
 async def create_prescription(
@@ -279,6 +281,14 @@ async def issue_prescription(
     await publish_domain_event(
         db=db,
         event=event,
+    )
+
+    await log_activity(
+        db=db,
+        actor_id=doctor.user_id,
+        action="PRESCRIPTION_ISSUED",
+        entity_type="prescription",
+        entity_id=prescription.id,
     )
 
     return prescription

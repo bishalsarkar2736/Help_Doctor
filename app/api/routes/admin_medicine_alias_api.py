@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.postgres import get_db
 
-from app.models.user import UserRole
+from app.models.user import UserRole,User
 
 from app.security.rbac import (
     require_roles,
@@ -39,7 +39,7 @@ router = APIRouter(
 async def create_alias_endpoint(
     payload: MedicineAliasCreate,
     db: AsyncSession = Depends(get_db),
-    admin=Depends(
+    admin : User=Depends(
         require_roles(
             UserRole.ADMIN
         )
@@ -63,7 +63,7 @@ async def create_alias_endpoint(
 )
 async def list_aliases_endpoint(
     db: AsyncSession = Depends(get_db),
-    admin=Depends(
+    admin : User =Depends(
         require_roles(
             UserRole.ADMIN
         )
@@ -81,7 +81,7 @@ async def list_aliases_endpoint(
 async def delete_alias_endpoint(
     alias_id: int,
     db: AsyncSession = Depends(get_db),
-    admin=Depends(
+    admin : User =Depends(
         require_roles(
             UserRole.ADMIN
         )

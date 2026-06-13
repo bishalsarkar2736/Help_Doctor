@@ -42,35 +42,7 @@ from prometheus_client import (
 from fastapi.responses import Response
 
 from app.api.routes import (
-    admin_router,
-    doctors_router,
-    auth_router,
-    doctor_availability_router,
-    appointments_router,
-    admin_doctors_router,
-    notification_router,
-    patients_router,
-    users_router,
-    metric_router,
-    prescription_router,
-    payment_router,
-    slot_router,
-    admin_analytics_router,
-    push_router,
-    notification_preferences_router,
-    medicine_api_router,
-    admin_medicine_router,
-    admin_medicine_analytics_router,
-    admin_medicine_alias_api_router,
-    admin_medicine_ai_router,
-    admin_medicine_ai_logs_router,
-    admin_medicine_ai_analytics_router,
-    admin_medicine_ai_feedback_router,
-    admin_clinic_router,
-    admin_clinic_analytics_router,
-    admin_revenue_analytics_router,
-    admin_dashboard_router,
-    admin_clinic_logo_router,
+    ALL_ROUTERS,
 )
 
 import logging
@@ -207,37 +179,11 @@ def create_app() -> FastAPI:
             media_type=CONTENT_TYPE_LATEST,
         )
 
-    app.include_router(admin_router)   
-    app.include_router(auth_router)
-    app.include_router(patients_router)
-    app.include_router(users_router)
-    app.include_router(doctors_router)
-    app.include_router(doctor_availability_router)
-    app.include_router(slot_router)
-    app.include_router(appointments_router)
-    app.include_router(prescription_router)
-    app.include_router(medicine_api_router)
-    app.include_router(admin_medicine_router)
-    app.include_router(admin_medicine_analytics_router)
-    app.include_router(admin_medicine_alias_api_router)
-    app.include_router(admin_medicine_ai_router)
-    app.include_router(admin_medicine_ai_logs_router)
-    app.include_router(admin_medicine_ai_analytics_router)
-    app.include_router(admin_medicine_ai_feedback_router)
-    app.include_router(admin_clinic_logo_router)
-    app.include_router(admin_clinic_router)
-    app.include_router(admin_clinic_analytics_router)
-    app.include_router(admin_revenue_analytics_router)
-    app.include_router(admin_dashboard_router)
-    app.include_router(admin_doctors_router)
-    app.include_router(ws_router)
-    app.include_router(notification_router)
-    app.include_router(notification_preferences_router)
-    app.include_router(metric_router)
-    app.include_router(payment_router)
-    app.include_router(admin_analytics_router)
-    app.include_router(push_router)
 
+    for router in ALL_ROUTERS:
+        app.include_router(router)
+
+    app.include_router(ws_router)
 
     return app
 

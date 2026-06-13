@@ -10,10 +10,13 @@ from app.db.postgres import get_db
 from app.schemas.medicine_ai_feedback_schema import (
     MedicineAIFeedbackCreate,
 )
-
+from app.security.rbac import require_roles
 from app.services.medicine_ai_feedback_service import (
     create_feedback,
 )
+
+from app.models.user import User,UserRole
+
 
 router = APIRouter(
     prefix="/admin/medicine-ai",
@@ -22,12 +25,17 @@ router = APIRouter(
 
 
 @router.post(
-    "/logs/{log_id}/feedback"
+    "/logs/{log_id}/feedback",
 )
 async def submit_feedback(
     log_id: int,
     payload: MedicineAIFeedbackCreate,
     db: AsyncSession = Depends(get_db),
+    admin: User = Depends(
+        require_roles(
+            UserRole.ADMIN,
+        )
+    ),
 ):
 
     feedback = await create_feedback(

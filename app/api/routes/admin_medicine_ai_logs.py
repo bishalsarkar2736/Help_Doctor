@@ -12,7 +12,7 @@ from app.db.postgres import (
 )
 
 from app.models.user import (
-    UserRole,
+    UserRole,User
 )
 
 from app.security.rbac import (
@@ -20,7 +20,6 @@ from app.security.rbac import (
 )
 
 from app.schemas.medicine_ai_log_schema import (
-    MedicineAILogResponse,
     MedicineAILogStatsResponse,
 )
 
@@ -42,7 +41,7 @@ async def list_ai_logs(
     helpful: bool | None = None,
     limit: int = 50,
     db: AsyncSession = Depends(get_db),
-    admin=Depends(
+    admin : User =Depends(
         require_roles(UserRole.ADMIN)
     ),
 ):
@@ -62,7 +61,7 @@ async def list_ai_logs(
 )
 async def ai_log_stats(
     db: AsyncSession = Depends(get_db),
-    admin=Depends(
+    admin : User =Depends(
         require_roles(
             UserRole.ADMIN
         )

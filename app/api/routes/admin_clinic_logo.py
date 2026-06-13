@@ -14,7 +14,7 @@ from app.db.postgres import (
 )
 
 from app.models.user import (
-    UserRole,
+    UserRole,User
 )
 
 from app.security.rbac import (
@@ -35,7 +35,7 @@ router = APIRouter(
 async def upload_logo(
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
-    admin=Depends(
+    admin : User =Depends(
         require_roles(
             UserRole.ADMIN
         )

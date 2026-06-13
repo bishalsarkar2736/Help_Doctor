@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends
 from app.security.rbac import require_roles
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.models.user import UserRole
+from app.models.user import UserRole,User
 from app.db.postgres import get_db
 from app.services.admin_analytics_service import (
     get_dashboard_overview,
@@ -21,7 +21,7 @@ router = APIRouter(prefix="/admin/analytics", tags=["Admin Analytics"])
 @router.get("/overview")
 async def dashboard_overview(
     db: AsyncSession = Depends(get_db),
-    admin=Depends(
+    admin : User =Depends(
         require_roles(UserRole.ADMIN)
     ),
 ):
@@ -43,7 +43,7 @@ async def daily_appointments(
 async def top_doctors(
     limit: int = 5,
     db: AsyncSession = Depends(get_db),
-    admin=Depends(
+    admin : User =Depends(
         require_roles(UserRole.ADMIN)
     ),
 ):
@@ -53,7 +53,7 @@ async def top_doctors(
 @router.get("/no-show-rate")
 async def no_show_rate(
     db: AsyncSession = Depends(get_db),
-    admin=Depends(
+    admin : User =Depends(
         require_roles(UserRole.ADMIN)
     ),
 ):
@@ -63,7 +63,7 @@ async def no_show_rate(
 @router.get("/cancellation-rate")
 async def cancellation_rate(
     db: AsyncSession = Depends(get_db),
-    admin=Depends(
+    admin : User =Depends(
         require_roles(UserRole.ADMIN)
     ),
 ):
@@ -74,7 +74,7 @@ async def cancellation_rate(
 async def doctor_utilization(
     doctor_id: int,
     db: AsyncSession = Depends(get_db),
-    admin=Depends(
+    admin : User =Depends(
         require_roles(UserRole.ADMIN)
     ),
 ):
@@ -84,7 +84,7 @@ async def doctor_utilization(
 @router.get("/system-utilization")
 async def system_utilization(
     db: AsyncSession = Depends(get_db),
-    admin=Depends(
+    admin : User =Depends(
         require_roles(UserRole.ADMIN)
     ),
 ):
@@ -95,7 +95,7 @@ async def system_utilization(
 @router.get("/notifications")
 async def notification_analytics(
     db: AsyncSession = Depends(get_db),
-    admin=Depends(
+    admin : User =Depends(
         require_roles(UserRole.ADMIN)
     ),
 ):
@@ -105,7 +105,7 @@ async def notification_analytics(
 @router.get("/notifications/daily")
 async def daily_notification_volume(
     db: AsyncSession = Depends(get_db),
-    admin=Depends(
+    admin : User =Depends(
         require_roles(UserRole.ADMIN)
     ),
 ):

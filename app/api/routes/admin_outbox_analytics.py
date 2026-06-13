@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends
 from app.security.rbac import require_roles
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.models.user import UserRole
+from app.models.user import UserRole,User
 from app.db.postgres import get_db
 
 from app.services.outbox_analytics_service import (
@@ -18,7 +18,7 @@ router = APIRouter(prefix="/admin/outbox/analytics", tags=["Admin Outbox Analyti
 @router.get("/overview")
 async def outbox_overview(
     db: AsyncSession = Depends(get_db),
-    admin=Depends(
+    admin : User =Depends(
         require_roles(UserRole.ADMIN)
     ),
 ):
@@ -29,7 +29,7 @@ async def outbox_overview(
 @router.get("/success-rate")
 async def outbox_success_rate(
     db: AsyncSession = Depends(get_db),
-    admin=Depends(
+    admin : User =Depends(
         require_roles(UserRole.ADMIN)
     ),
 ):
@@ -39,7 +39,7 @@ async def outbox_success_rate(
 @router.get("/queue-depth")
 async def outbox_queue_depth(
     db: AsyncSession = Depends(get_db),
-    admin=Depends(
+    admin : User =Depends(
         require_roles(UserRole.ADMIN)
     ),
 ):
@@ -49,7 +49,7 @@ async def outbox_queue_depth(
 @router.get("/latency")
 async def outbox_latency(
     db: AsyncSession = Depends(get_db),
-    admin=Depends(
+    admin : User =Depends(
         require_roles(UserRole.ADMIN)
     ),
 ):
@@ -60,7 +60,7 @@ async def outbox_latency(
 async def outbox_failures(
     days: int = 30,
     db: AsyncSession = Depends(get_db),
-    admin=Depends(
+    admin : User =Depends(
         require_roles(UserRole.ADMIN)
     ),
 ):

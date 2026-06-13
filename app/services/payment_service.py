@@ -29,6 +29,10 @@ from app.core.tracing import (
     inject_trace_attributes,
 )
 
+from app.services.activity_log_service import (
+    log_activity,
+)
+
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
 
@@ -390,6 +394,14 @@ async def mark_payment_success(
 
             span.set_status(
                 Status(StatusCode.OK)
+            )
+
+            await log_activity(
+                db=db,
+                actor_id=payment.patient_id,
+                action="PAYMENT_SUCCESS",
+                entity_type="payment",
+                entity_id=payment.id,
             )
 
             return payment

@@ -18,53 +18,7 @@ from app.services.notification_preference_service import (
 
 logger = logging.getLogger(__name__)
 
-# async def create_notification(
-#     *,
-#     db: AsyncSession,
-#     user_id: int,
-#     title: str,
-#     message: str,
-#     event_id: uuid.UUID | None = None,
-#     appointment_id: int | None = None,
-# ) ->Notification:
-   
-   
-#     """
-#     Persist notification linked to an OutboxEvent.
 
-#     This enforces strict 1:1 mapping:
-#     OutboxEvent → Notification
-#     """
-#     if event_id is None:
-#         raise ValueError("event_id is required for notification")
-   
-#     notification = Notification(
-#         user_id=user_id,
-#         title=title,
-#         message=message,
-#         related_appointment_id=appointment_id,
-#         event_id=event_id, 
-#     )
-#     db.add(notification)
-#     # await db.flush()
-#     # await db.refresh(notification)
-
-#     try:
-#         await db.flush()
-
-#     except IntegrityError:
-
-#         # Duplicate notification — fetch existing
-#         result = await db.execute(
-#             select(Notification).where(
-#                 Notification.event_id == event_id,
-#                 Notification.user_id == user_id,
-#             )
-#         )
-
-#         notification = result.scalar_one()
-
-#     return notification
 
 async def create_notification(
     *,

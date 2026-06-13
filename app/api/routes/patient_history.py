@@ -1,3 +1,4 @@
+
 from fastapi import (
     APIRouter,
     Depends,
@@ -12,32 +13,35 @@ from app.db.postgres import (
 )
 
 from app.models.user import (
-    UserRole,User
+    UserRole,
 )
 
 from app.security.rbac import (
     require_roles,
 )
 
-from app.services.dashboard_service import (
-    get_dashboard_data,
+from app.services.patient_history_service import (
+    get_patient_history,
 )
 
 router = APIRouter(
-    prefix="/admin",
-    tags=["Dashboard"],
+    prefix="/patients",
+    tags=["Patient History"],
 )
 
 
-@router.get("/dashboard")
-async def dashboard(
+@router.get("/{patient_id}/history")
+async def patient_history(
+    patient_id: int,
     db: AsyncSession = Depends(get_db),
-    admin : User =Depends(
+    user=Depends(
         require_roles(
             UserRole.ADMIN,
+            UserRole.DOCTOR,
         )
     ),
 ):
-    return await get_dashboard_data(
+    return await get_patient_history(
         db=db,
+        patient_id=patient_id,
     )

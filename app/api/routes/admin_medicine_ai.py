@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.postgres import get_db
 
-from app.models.user import UserRole
+from app.models.user import UserRole,User
 
 from app.security.rbac import (
     require_roles,
@@ -31,7 +31,7 @@ router = APIRouter(
 async def test_medicine_ai(
     question: str,
     db: AsyncSession = Depends(get_db),
-    admin=Depends(
+    admin : User =Depends(
         require_roles(
             UserRole.ADMIN
         )

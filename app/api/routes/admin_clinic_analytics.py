@@ -13,6 +13,7 @@ from app.db.postgres import (
 
 from app.models.user import (
     UserRole,
+    User
 )
 
 from app.security.rbac import (
@@ -32,7 +33,7 @@ router = APIRouter(
 @router.get("/analytics")
 async def clinic_analytics(
     db: AsyncSession = Depends(get_db),
-    admin=Depends(
+    admin : User =Depends(
         require_roles(
             UserRole.ADMIN
         )
