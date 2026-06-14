@@ -29,6 +29,10 @@ from app.models.medicine_ai_log import (
     MedicineAILog,
 )
 
+from app.services.clinic_context_service import (
+    get_current_clinic,
+)
+
 
 def get_today_range():
 
@@ -74,11 +78,15 @@ def get_month_range():
 async def get_total_count(
     db: AsyncSession,
     model,
+    clinic_id: int,
 ) -> int:
 
     result = await db.execute(
         select(
             func.count(model.id)
+        )
+        .where(
+            model.clinic_id == clinic_id
         )
     )
 
@@ -89,6 +97,7 @@ async def get_today_count(
     db: AsyncSession,
     model,
     date_column,
+    clinic_id: int,
 ) -> int:
 
     start, end = get_today_range()
@@ -97,6 +106,7 @@ async def get_today_count(
         select(
             func.count(model.id)
         ).where(
+            model.clinic_id == clinic_id,
             date_column >= start,
             date_column < end,
         )
@@ -109,6 +119,7 @@ async def get_month_count(
     db: AsyncSession,
     model,
     date_column,
+    clinic_id: int,
 ) -> int:
 
     start, end = get_month_range()
@@ -117,6 +128,7 @@ async def get_month_count(
         select(
             func.count(model.id)
         ).where(
+            model.clinic_id == clinic_id,
             date_column >= start,
             date_column < end,
         )
@@ -125,10 +137,13 @@ async def get_month_count(
     return result.scalar_one()
 
 
-
 async def get_clinic_analytics(
     db: AsyncSession,
 ):
+
+    clinic = await get_current_clinic(db)
+
+    clinic_id = clinic.id
 
     return {
 
@@ -136,6 +151,7 @@ async def get_clinic_analytics(
             await get_total_count(
                 db,
                 Appointment,
+                clinic_id,
             ),
 
         "appointments_this_month":
@@ -143,6 +159,7 @@ async def get_clinic_analytics(
                 db,
                 Appointment,
                 Appointment.created_at,
+                clinic_id,
             ),
 
         "appointments_today":
@@ -150,12 +167,14 @@ async def get_clinic_analytics(
                 db,
                 Appointment,
                 Appointment.created_at,
+                clinic_id,
             ),
 
         "total_prescriptions":
             await get_total_count(
                 db,
                 Prescription,
+                clinic_id,
             ),
 
         "prescriptions_this_month":
@@ -163,6 +182,7 @@ async def get_clinic_analytics(
                 db,
                 Prescription,
                 Prescription.created_at,
+                clinic_id,
             ),
 
         "prescriptions_today":
@@ -170,12 +190,14 @@ async def get_clinic_analytics(
                 db,
                 Prescription,
                 Prescription.created_at,
+                clinic_id,
             ),
 
         "total_payments":
             await get_total_count(
                 db,
                 Payment,
+                clinic_id,
             ),
 
         "payments_this_month":
@@ -183,6 +205,7 @@ async def get_clinic_analytics(
                 db,
                 Payment,
                 Payment.created_at,
+                clinic_id,
             ),
 
         "payments_today":
@@ -190,11 +213,13 @@ async def get_clinic_analytics(
                 db,
                 Payment,
                 Payment.created_at,
+                clinic_id,
             ),
 
         "medicine_ai_requests":
             await get_total_count(
                 db,
                 MedicineAILog,
+                clinic_id,
             ),
     }

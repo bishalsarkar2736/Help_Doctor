@@ -10,6 +10,11 @@ from app.models.medicine_ai_feedback import (
 )
 
 
+from app.services.clinic_context_service import (
+    get_current_clinic,
+)
+
+
 async def create_ai_log(
     db: AsyncSession,
     *,
@@ -21,7 +26,17 @@ async def create_ai_log(
     tokens_used: int,
     latency_ms: int,
 ):
+    
+    clinic = await get_current_clinic(db)
+
+
     log = MedicineAILog(
+        clinic_id=(
+            clinic.id
+            if clinic
+            else None
+        ),
+
         medicine_id=medicine_id,
         medicine_name=medicine_name,
         question=question,
@@ -48,6 +63,8 @@ async def get_ai_logs(
     helpful: bool | None = None,
     limit: int = 50,
 ):
+    
+    clinic = await get_current_clinic(db)
 
     query = (
         select(
@@ -58,6 +75,10 @@ async def get_ai_logs(
             MedicineAIFeedback,
             MedicineAIFeedback.ai_log_id
             == MedicineAILog.id,
+        )
+        .where(
+            MedicineAILog.clinic_id
+            == clinic.id
         )
     )
 
@@ -107,11 +128,18 @@ async def get_ai_logs(
 async def get_ai_log_stats(
     db: AsyncSession,
 ):
+    
+    clinic = await get_current_clinic(db)
+
+
     total_queries = await db.scalar(
         select(
             func.count(
                 MedicineAILog.id
             )
+        ).where(
+            MedicineAILog.clinic_id
+            == clinic.id
         )
     )
 
@@ -123,6 +151,9 @@ async def get_ai_log_stats(
                 ),
                 0,
             )
+        ).where(
+            MedicineAILog.clinic_id
+            == clinic.id
         )
     )
 
@@ -134,6 +165,9 @@ async def get_ai_log_stats(
                 ),
                 0,
             )
+        ).where(
+            MedicineAILog.clinic_id
+            == clinic.id
         )
     )
 

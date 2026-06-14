@@ -27,6 +27,15 @@ class MedicineAILog(Base):
         primary_key=True,
     )
 
+    clinic_id: Mapped[int | None] = mapped_column(
+        ForeignKey(
+            "clinics.id",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
+        index=True,
+    )
+
     medicine_id: Mapped[int | None] = mapped_column(
         ForeignKey(
             "medicines.id",

@@ -23,8 +23,12 @@ from app.schemas.appointment_calendar_schema import (
     CalendarAppointmentResponse,
 )
 
+from app.services.clinic_context_service import (
+    get_current_clinic,
+)
 
-DEFAULT_APPOINTMENT_DURATION_MINUTES = 30
+
+#DEFAULT_APPOINTMENT_DURATION_MINUTES = 30
 
 
 async def get_calendar_appointments(
@@ -34,6 +38,8 @@ async def get_calendar_appointments(
     end_date: date,
     doctor_id: int | None = None,
 ):
+    
+    clinic = await get_current_clinic(db)
 
     start_dt = datetime.combine(
         start_date,
@@ -57,6 +63,7 @@ async def get_calendar_appointments(
         .where(
             Appointment.scheduled_at >= start_dt,
             Appointment.scheduled_at <= end_dt,
+            Appointment.clinic_id == clinic.id,
         )
         .order_by(
             Appointment.scheduled_at.asc()

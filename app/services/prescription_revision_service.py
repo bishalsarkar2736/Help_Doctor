@@ -14,8 +14,11 @@ from app.models.prescription import (
 from app.models.user import UserRole
 
 from app.schemas.event import (
-    PrescriptionUpdatedEvent,
     PrescriptionRevisedEvent,
+)
+
+from app.services.prescription_template_apply_service import (
+    get_template_items,
 )
 
 from app.schemas.prescription import (
@@ -34,7 +37,7 @@ from app.try_except.exceptions import (
     BadRequestError,
     NotFoundError,
 )
-
+from app.services.clinic_context_service import get_current_clinic
 
 
 async def create_prescription_revision(
@@ -56,6 +59,8 @@ async def create_prescription_revision(
     NEW ISSUED REVISION
     """
 
+    clinic = await get_current_clinic(db)
+
     # ====================================================
     # VALIDATION
     # ====================================================
@@ -70,7 +75,7 @@ async def create_prescription_revision(
             "Only latest revision can be revised"
         )
 
-    if not data.items:
+    if not data.items and not data.template_id:
         raise BadRequestError(
             "Prescription must contain at least one medicine"
         )
@@ -82,7 +87,8 @@ async def create_prescription_revision(
     locked_result = await db.execute(
         select(Prescription)
         .where(
-            Prescription.id == prescription.id
+            Prescription.id == prescription.id,
+            Prescription.clinic_id == clinic.id,
         )
         .with_for_update()
     )
@@ -107,6 +113,8 @@ async def create_prescription_revision(
         .where(
             Prescription.appointment_id
             == prescription.appointment_id,
+
+            Prescription.clinic_id== clinic.id,
 
             Prescription.is_latest_revision.is_(True),
         )
@@ -152,12 +160,16 @@ async def create_prescription_revision(
                 Prescription.revision_number
             )
         ).where(
-            (Prescription.id == root_id)
-            |
             (
-                Prescription.parent_prescription_id
-                == root_id
-            )
+                (Prescription.id == root_id)
+                |
+                (
+                    Prescription.parent_prescription_id
+                    == root_id
+                )
+            ),
+            Prescription.clinic_id
+            == clinic.id,
         )
     )
 
@@ -185,6 +197,31 @@ async def create_prescription_revision(
     db.add(new_revision)
 
     await db.flush()
+
+    # ====================================
+    # TEMPLATE ITEMS
+    # ====================================
+
+    if data.template_id:
+
+        template = await get_template_items(
+            db=db,
+            template_id=data.template_id,
+            doctor_id=doctor.id,
+        )
+
+        for item in template.items:
+
+            db.add(
+                PrescriptionItem(
+                    prescription_id=new_revision.id,
+                    medicine_name=item.medicine_name,
+                    dosage=item.dosage,
+                    frequency=item.frequency,
+                    duration_days=item.duration_days,
+                    instructions=item.instructions,
+                )
+            )
 
     # ====================================================
     # CREATE ITEMS

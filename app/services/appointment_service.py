@@ -109,6 +109,8 @@ async def get_appointment_by_id(
     appointment_id: int,
     user: User,
 ) -> Appointment:
+    
+    clinic = await get_current_clinic(db)
 
     result = await db.execute(
         select(Appointment)
@@ -119,7 +121,10 @@ async def get_appointment_by_id(
             selectinload(Appointment.patient)
             .selectinload(Patient.user),
         )
-        .where(Appointment.id == appointment_id)
+        .where(
+            Appointment.id == appointment_id,
+             Appointment.clinic_id == clinic.id,
+        )
     )
 
     appointment = result.scalar_one_or_none()
@@ -738,13 +743,18 @@ async def get_patient_appointments(db: AsyncSession, user: User):
     if user.role != UserRole.PATIENT:
         raise ForbiddenError("Only patients allowed")
 
+    clinic = await get_current_clinic(db)
+
     result = await db.execute(
         select(Appointment)
         # .join(Doctor, Appointment.doctor_id == Doctor.id)
         .options(
             selectinload(Appointment.doctor).selectinload(Doctor.user)
         )
-        .where(Appointment.patient_id == user.id)
+        .where(
+            Appointment.patient_id == user.id,
+            Appointment.clinic_id == clinic.id,
+        )
         .order_by(Appointment.scheduled_at.desc())
     )
 
@@ -777,9 +787,14 @@ async def patient_cancel_appointment(
     if user.role != UserRole.PATIENT:
         raise ForbiddenError("Only patients allowed")
     
+    clinic = await get_current_clinic(db)
+
     result = await db.execute(
         select(Appointment)
-        .where(Appointment.id == appointment_id)
+        .where(
+            Appointment.id == appointment_id,
+            Appointment.clinic_id == clinic.id,
+        )
         .with_for_update()
     )
     appointment = result.scalar_one_or_none()
@@ -850,10 +865,15 @@ async def patient_reschedule_appointment(
     if user.role != UserRole.PATIENT:
         raise ForbiddenError("Only patients allowed")
 
+    clinic = await get_current_clinic(db)
+
     #async with db.begin():
     result = await db.execute(
             select(Appointment)
-            .where(Appointment.id == appointment_id)
+            .where(
+                Appointment.id == appointment_id,
+                Appointment.clinic_id == clinic.id,
+            )
             .with_for_update()
     )
     appointment = result.scalar_one_or_none()
@@ -970,10 +990,14 @@ async def doctor_update_appointment_status(
 
     doctor = await _get_verified_doctor_by_user_id(db, doctor_user.id)
 
-    
+    clinic = await get_current_clinic(db)
+
     result = await db.execute(
         select(Appointment)
-        .where(Appointment.id == appointment_id)
+        .where(
+            Appointment.id == appointment_id,
+            Appointment.clinic_id == clinic.id,
+        )
         .with_for_update()
     )
     appointment = result.scalar_one_or_none()
@@ -983,6 +1007,7 @@ async def doctor_update_appointment_status(
     
     if appointment.doctor_id != doctor.id:
         raise ForbiddenError("Not your appointment")
+    
     
     old_status = appointment.status.value
 
@@ -1048,15 +1073,24 @@ async def doctor_cancel_appointment(
 
     doctor = await _get_verified_doctor_by_user_id(db, doctor_user.id)
 
+    clinic = await get_current_clinic(db)
+
     result = await db.execute(
         select(Appointment)
-        .where(Appointment.id == appointment_id)
+        .where(
+            Appointment.id == appointment_id,
+            Appointment.clinic_id == clinic.id,
+        )
         .with_for_update()
     )
     appointment = result.scalar_one_or_none()
 
     if not appointment:
         raise NotFoundError("Appointment not found")
+    
+    if appointment.doctor_id != doctor.id:
+        raise ForbiddenError("Not your appointment")
+    
 
     appointment = await transition_appointment_locked(
         db=db,
@@ -1115,15 +1149,23 @@ async def doctor_reschedule_appointment(
 
     doctor = await _get_verified_doctor_by_user_id(db, doctor_user.id)
 
+    clinic = await get_current_clinic(db)
+
     result = await db.execute(
         select(Appointment)
-        .where(Appointment.id == appointment_id)
+        .where(
+            Appointment.id == appointment_id,
+            Appointment.clinic_id == clinic.id,
+        )
         .with_for_update()
     )
     appointment = result.scalar_one_or_none()
 
-    if not appointment or appointment.doctor_id != doctor.id:
+    if not appointment:
         raise NotFoundError("Appointment not found")
+
+    if appointment.doctor_id != doctor.id:
+        raise ForbiddenError("Not your appointment")
 
     #appointment.scheduled_at = new_datetime
 
@@ -1220,9 +1262,12 @@ async def doctor_today_appointments(db: AsyncSession, user: User):
     start = datetime.combine(today, datetime.min.time(), tzinfo=UTC)
     end = datetime.combine(today, datetime.max.time(), tzinfo=UTC)
 
+    clinic = await get_current_clinic(db)
+
     result = await db.execute(
         select(Appointment).where(
             Appointment.doctor_id == doctor.id,
+            Appointment.clinic_id == clinic.id,
             Appointment.scheduled_at >= start,
             Appointment.scheduled_at <= end,
         )
@@ -1239,9 +1284,12 @@ async def doctor_pending_appointments(db: AsyncSession, user: User):
 
     doctor = await _get_verified_doctor_by_user_id(db, user.id)
 
+    clinic = await get_current_clinic(db)
+
     result = await db.execute(
         select(Appointment).where(
             Appointment.doctor_id == doctor.id,
+            Appointment.clinic_id == clinic.id,
             Appointment.status == AppointmentStatus.PENDING,
         )
         .order_by(Appointment.scheduled_at.asc(), Appointment.id.asc())
@@ -1261,11 +1309,14 @@ async def doctor_pending_with_patient(
 
     doctor = await _get_verified_doctor_by_user_id(db, user.id)
 
+    clinic = await get_current_clinic(db)
+
     result = await db.execute(
         select(Appointment, User)
         .join(User, Appointment.patient_id == User.id)
         .where(
             Appointment.doctor_id == doctor.id,
+            Appointment.clinic_id == clinic.id,
             Appointment.status == AppointmentStatus.PENDING,
         )
         .order_by(Appointment.scheduled_at.asc(), Appointment.id.asc())
@@ -1283,9 +1334,12 @@ async def doctor_confirmed_appointments(db: AsyncSession, user: User):
 
     doctor = await _get_verified_doctor_by_user_id(db, user.id)
 
+    clinic = await get_current_clinic(db)
+
     result = await db.execute(
         select(Appointment).where(
             Appointment.doctor_id == doctor.id,
+            Appointment.clinic_id == clinic.id,
             Appointment.status == AppointmentStatus.CONFIRMED,
         )
         .order_by(Appointment.scheduled_at.asc(), Appointment.id.asc())
@@ -1305,11 +1359,14 @@ async def doctor_confirmed_with_patient(
 
     doctor = await _get_verified_doctor_by_user_id(db, user.id)
 
+    clinic = await get_current_clinic(db)
+
     result = await db.execute(
         select(Appointment, User)
         .join(User, Appointment.patient_id == User.id)
         .where(
             Appointment.doctor_id == doctor.id,
+            Appointment.clinic_id == clinic.id,
             Appointment.status == AppointmentStatus.CONFIRMED,
         )
         .order_by(Appointment.scheduled_at.asc(), Appointment.id.asc())
@@ -1338,9 +1395,15 @@ async def admin_force_cancel_appointment(
     if admin.role != UserRole.ADMIN:
         raise ForbiddenError("Admin only")
 
+    clinic = await get_current_clinic(db)
+
     result = await db.execute(
         select(Appointment)
-        .where(Appointment.id == appointment_id)
+        .where(
+            Appointment.id == appointment_id,
+            Appointment.clinic_id == clinic.id,
+
+        )
         .with_for_update()
     )
     appointment = result.scalar_one_or_none()

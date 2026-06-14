@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import List, Optional
 from uuid import UUID
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict,Field
 from urllib.parse import quote
 from app.models.prescription import PrescriptionStatus
 
@@ -18,7 +18,12 @@ class PrescriptionItemCreate(BaseModel):
 class PrescriptionCreate(BaseModel):
 
     notes: Optional[str] = None
-    items: List[PrescriptionItemCreate]
+
+    template_id: int | None = None
+    
+    items: list[PrescriptionItemCreate] = Field(
+        default_factory=list
+    )
 
 
 class MedicineReference(BaseModel):
@@ -95,7 +100,11 @@ class PrescriptionRevisionCreate(BaseModel):
 
     notes: str | None = None
 
-    items: list[PrescriptionItemUpdate]
+    template_id: int | None = None
+
+    items: list[PrescriptionItemUpdate] = Field(
+        default_factory=list
+    )
 
 
 class PrescriptionRevisionResponse(

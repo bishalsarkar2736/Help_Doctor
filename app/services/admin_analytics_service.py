@@ -6,6 +6,11 @@ from app.models.appointment import Appointment, AppointmentStatus
 from app.models.doctor import Doctor
 from app.models.doctor_slot import DoctorSlot
 from app.models.notification import Notification
+from app.services.clinic_context_service import (
+    get_current_clinic,
+)
+
+
 
 
 async def get_dashboard_overview(db: AsyncSession):
@@ -13,15 +18,29 @@ async def get_dashboard_overview(db: AsyncSession):
     High-level system stats
     """
 
+    clinic = await get_current_clinic(db)
+
+
     total_appointments = await db.scalar(
-        select(func.count()).select_from(Appointment)
+        select(func.count())
+        .select_from(Appointment)
+        .where(
+            Appointment.clinic_id == clinic.id
+        )
     )
 
     status_counts = await db.execute(
         select(
             Appointment.status,
             func.count()
-        ).group_by(Appointment.status)
+        )
+        .where(
+            Appointment.clinic_id
+            == clinic.id
+        )
+        .group_by(
+            Appointment.status
+        )
     )
 
     status_map = {
@@ -30,7 +49,11 @@ async def get_dashboard_overview(db: AsyncSession):
     }
 
     total_doctors = await db.scalar(
-        select(func.count()).select_from(Doctor)
+        select(func.count())
+        .select_from(Doctor)
+        .where(
+            Doctor.clinic_id == clinic.id
+        )
     )
 
     return {
@@ -45,6 +68,9 @@ async def get_daily_appointments(db: AsyncSession, days: int = 7):
     Daily appointment trend
     """
 
+    clinic = await get_current_clinic(db)
+
+
     since = utc_now() - timedelta(days=days)
 
     result = await db.execute(
@@ -52,7 +78,10 @@ async def get_daily_appointments(db: AsyncSession, days: int = 7):
             func.date(Appointment.scheduled_at),
             func.count()
         )
-        .where(Appointment.scheduled_at >= since)
+        .where(
+            Appointment.scheduled_at >= since,
+            Appointment.clinic_id== clinic.id,
+        )
         .group_by(func.date(Appointment.scheduled_at))
         .order_by(func.date(Appointment.scheduled_at))
     )
@@ -71,12 +100,22 @@ async def get_top_doctors(db: AsyncSession, limit: int = 5):
     Doctors with most appointments
     """
 
+    clinic = await get_current_clinic(db)
+
+
     result = await db.execute(
         select(
             Doctor.id,
             func.count(Appointment.id).label("total")
         )
         .join(Appointment, Appointment.doctor_id == Doctor.id)
+        .where(
+            Doctor.clinic_id
+            == clinic.id,
+
+            Appointment.clinic_id
+            == clinic.id,
+        )
         .group_by(Doctor.id)
         .order_by(func.count(Appointment.id).desc())
         .limit(limit)
@@ -93,15 +132,21 @@ async def get_top_doctors(db: AsyncSession, limit: int = 5):
 
 
 async def get_no_show_rate(db):
+
+    clinic = await get_current_clinic(db)
+
+
     total_confirmed = await db.scalar(
         select(func.count()).where(
-            Appointment.status == AppointmentStatus.CONFIRMED
+            Appointment.status == AppointmentStatus.CONFIRMED,
+            Appointment.clinic_id == clinic.id,
         )
     )
 
     total_no_show = await db.scalar(
         select(func.count()).where(
-            Appointment.status == AppointmentStatus.NO_SHOW
+            Appointment.status == AppointmentStatus.NO_SHOW,
+            Appointment.clinic_id == clinic.id,
         )
     )
 
@@ -114,13 +159,22 @@ async def get_no_show_rate(db):
 
 
 async def get_cancellation_rate(db):
+
+    clinic = await get_current_clinic(db)
+
+
     total = await db.scalar(
-        select(func.count()).select_from(Appointment)
+        select(func.count())
+        .select_from(Appointment)
+        .where(
+            Appointment.clinic_id == clinic.id
+        )
     )
 
     cancelled = await db.scalar(
         select(func.count()).where(
-            Appointment.status == AppointmentStatus.CANCELLED
+            Appointment.status == AppointmentStatus.CANCELLED,
+            Appointment.clinic_id == clinic.id,
         )
     )
 
@@ -133,16 +187,34 @@ async def get_cancellation_rate(db):
 
 
 async def get_doctor_utilization(db, doctor_id: int):
+
+    clinic = await get_current_clinic(db)
+
+
     total_slots = await db.scalar(
-        select(func.count()).where(
-            DoctorSlot.doctor_id == doctor_id
+        select(func.count())
+        .select_from(DoctorSlot)
+        .join(
+            Doctor,
+            Doctor.id == DoctorSlot.doctor_id,
+        )
+        .where(
+            DoctorSlot.doctor_id == doctor_id,
+            Doctor.clinic_id == clinic.id,
         )
     )
 
     booked_slots = await db.scalar(
-        select(func.count()).where(
+        select(func.count())
+        .select_from(DoctorSlot)
+        .join(
+            Doctor,
+            Doctor.id == DoctorSlot.doctor_id,
+        )
+        .where(
             DoctorSlot.doctor_id == doctor_id,
-            DoctorSlot.is_booked.is_(True)
+            Doctor.clinic_id == clinic.id,
+            DoctorSlot.is_booked.is_(True),
         )
     )
 
@@ -159,13 +231,32 @@ async def get_doctor_utilization(db, doctor_id: int):
 
 
 async def get_system_utilization(db):
+
+    clinic = await get_current_clinic(db)
+
+
     total_slots = await db.scalar(
-        select(func.count()).select_from(DoctorSlot)
+        select(func.count())
+        .select_from(DoctorSlot)
+        .join(
+            Doctor,
+            Doctor.id == DoctorSlot.doctor_id,
+        )
+        .where(
+            Doctor.clinic_id == clinic.id,
+        )
     )
 
     booked_slots = await db.scalar(
-        select(func.count()).where(
-            DoctorSlot.is_booked.is_(True)
+        select(func.count())
+        .select_from(DoctorSlot)
+        .join(
+            Doctor,
+            Doctor.id == DoctorSlot.doctor_id,
+        )
+        .where(
+            Doctor.clinic_id == clinic.id,
+            DoctorSlot.is_booked.is_(True),
         )
     )
 

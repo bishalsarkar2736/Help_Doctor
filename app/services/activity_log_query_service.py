@@ -4,6 +4,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.activity_log import (
     ActivityLog,
 )
+from app.services.clinic_context_service import (
+    get_current_clinic,
+)
 
 
 async def get_activity_logs(
@@ -11,8 +14,15 @@ async def get_activity_logs(
     limit: int = 100,
     offset: int = 0,
 ):
+    
+    clinic = await get_current_clinic(db)
+
     result = await db.execute(
         select(ActivityLog)
+        .where(
+            ActivityLog.clinic_id
+        == clinic.id,
+        )
         .order_by(
             ActivityLog.id.desc()
         )

@@ -6,6 +6,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.payment import Payment
 from app.models.appointment import Appointment,AppointmentStatus
+from app.services.clinic_context_service import (
+    get_current_clinic,
+)
 
 
 async def get_doctor_revenue_today(
@@ -13,6 +16,8 @@ async def get_doctor_revenue_today(
     db: AsyncSession,
     doctor_id: int,
 ) -> float:
+    
+    clinic = await get_current_clinic(db)
 
     today = date.today()
 
@@ -31,8 +36,9 @@ async def get_doctor_revenue_today(
             == Payment.appointment_id,
         )
         .where(
-            Appointment.doctor_id
-            == doctor_id,
+            Appointment.doctor_id== doctor_id,
+            Appointment.clinic_id== clinic.id,
+            Payment.clinic_id== clinic.id,
 
             Payment.status
             == "SUCCESS",
@@ -55,6 +61,8 @@ async def get_doctor_revenue_this_month(
     db: AsyncSession,
     doctor_id: int,
 ) -> float:
+    
+    clinic = await get_current_clinic(db)
 
     today = date.today()
 
@@ -73,8 +81,9 @@ async def get_doctor_revenue_this_month(
             == Payment.appointment_id,
         )
         .where(
-            Appointment.doctor_id
-            == doctor_id,
+            Appointment.doctor_id== doctor_id,
+            Appointment.clinic_id== clinic.id,
+            Payment.clinic_id== clinic.id,
 
             Payment.status
             == "SUCCESS",
@@ -103,6 +112,8 @@ async def get_completion_rate(
     db: AsyncSession,
     doctor_id: int,
 ) -> float:
+    
+    clinic = await get_current_clinic(db)
 
     completed_result = await db.execute(
         select(
@@ -113,6 +124,9 @@ async def get_completion_rate(
         .where(
             Appointment.doctor_id
             == doctor_id,
+
+            Appointment.clinic_id
+            == clinic.id,
 
             Appointment.status
             == AppointmentStatus.COMPLETED,
@@ -132,6 +146,9 @@ async def get_completion_rate(
         .where(
             Appointment.doctor_id
             == doctor_id,
+
+            Appointment.clinic_id
+            == clinic.id,
 
             Appointment.status
             == AppointmentStatus.CANCELLED,

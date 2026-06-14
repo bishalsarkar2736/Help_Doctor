@@ -31,7 +31,7 @@ from .admin_activity_log import router as admin_activity_log_router
 from .patient_history import router as patient_history_router
 from .appointment_calendar import router as appointment_calender_router
 from .doctor_dashboard import router as doctor_dashboard_router
-
+from .prescription_templates import router as prescription_tamplates_router
 
 ALL_ROUTERS = [
     admin_router,
@@ -48,6 +48,7 @@ ALL_ROUTERS = [
     users_router,
     metric_router,
     prescription_router,
+    prescription_tamplates_router,
     payment_router,
     slot_router,
     admin_analytics_router,

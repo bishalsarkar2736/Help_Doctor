@@ -45,14 +45,14 @@ from app.services.prescription_policy import (
     ensure_prescription_issuable,
 )
 
-from app.schemas.prescription import (
-    PrescriptionRevisionCreate,
-)
-
 from app.services.activity_log_service import (
     log_activity,
 )
 
+from app.services.prescription_template_apply_service import (
+    get_template_items,
+)
+from app.services.clinic_context_service import get_current_clinic
 
 async def create_prescription(
     db: AsyncSession,
@@ -63,9 +63,17 @@ async def create_prescription(
     doctor_id = doctor.id
     doctor_user_id = doctor.user_id
 
-    appointment = await db.get(
-        Appointment,
-        appointment_id,
+    clinic = await get_current_clinic(db)
+
+    appointment_result = await db.execute(
+        select(Appointment).where(
+            Appointment.id == appointment_id,
+            Appointment.clinic_id == clinic.id,
+        )
+    )
+
+    appointment = (
+        appointment_result.scalar_one_or_none()
     )
 
     if not appointment:
@@ -89,7 +97,9 @@ async def create_prescription(
     existing = await db.execute(
         select(Prescription).where(
             Prescription.appointment_id
-            == appointment_id
+            == appointment_id,
+            Prescription.clinic_id
+            == clinic.id,
         )
     )
 
@@ -110,6 +120,31 @@ async def create_prescription(
     db.add(prescription)
 
     await db.flush()
+
+    # ====================================
+    # TEMPLATE ITEMS
+    # ====================================
+
+    if data.template_id:
+
+        template = await get_template_items(
+            db=db,
+            template_id=data.template_id,
+            doctor_id=doctor_id,
+        )
+
+        for item in template.items:
+
+            db.add(
+                PrescriptionItem(
+                    prescription_id=prescription.id,
+                    medicine_name=item.medicine_name,
+                    dosage=item.dosage,
+                    frequency=item.frequency,
+                    duration_days=item.duration_days,
+                    instructions=item.instructions,
+                )
+            )
 
     items = [
         PrescriptionItem(
@@ -176,6 +211,8 @@ async def issue_prescription(
     db: AsyncSession,
     prescription: Prescription,
 ):
+    clinic = await get_current_clinic(db)
+
     doctor = await db.get(
         Doctor,
         prescription.doctor_id,
@@ -205,9 +242,17 @@ async def issue_prescription(
             "Cannot issue empty prescription"
         )
 
-    appointment = await db.get(
-        Appointment,
-        prescription.appointment_id,
+    appointment_result = await db.execute(
+        select(Appointment).where(
+            Appointment.id
+            == prescription.appointment_id,
+            Appointment.clinic_id
+            == clinic.id,
+        )
+    )
+
+    appointment = (
+        appointment_result.scalar_one_or_none()
     )
 
     if not appointment:
@@ -298,6 +343,8 @@ async def get_prescription_by_id(
     db: AsyncSession,
     prescription_id: int,
 ):
+    clinic = await get_current_clinic(db)
+
     result = await db.execute(
         select(Prescription)
         .options(
@@ -318,7 +365,9 @@ async def get_prescription_by_id(
         )
         .where(
             Prescription.id
-            == prescription_id
+            == prescription_id,
+            Prescription.clinic_id
+            == clinic.id,
         )
     )
 
@@ -338,6 +387,8 @@ async def get_patient_prescriptions(
     db: AsyncSession,
     patient_id: int,
 ):
+    clinic = await get_current_clinic(db)
+
     result = await db.execute(
         select(Prescription)
         .options(
@@ -358,7 +409,9 @@ async def get_patient_prescriptions(
         )
         .where(
             Prescription.patient_id
-            == patient_id
+            == patient_id,
+            Prescription.clinic_id
+            == clinic.id,
         )
         .order_by(
             Prescription.created_at.desc()
@@ -372,6 +425,8 @@ async def get_doctor_prescriptions(
     db: AsyncSession,
     doctor_id: int,
 ):
+    clinic = await get_current_clinic(db)
+
     result = await db.execute(
         select(Prescription)
         .options(
@@ -380,7 +435,10 @@ async def get_doctor_prescriptions(
             selectinload(Prescription.patient),
             selectinload(Prescription.appointment),
         )
-        .where(Prescription.doctor_id == doctor_id)
+        .where(
+            Prescription.doctor_id == doctor_id,
+            Prescription.clinic_id== clinic.id,
+        )
         .order_by(Prescription.created_at.desc())
     )
 
@@ -391,6 +449,8 @@ async def get_appointment_prescription(
     db: AsyncSession,
     appointment_id: int,
 ):
+    clinic = await get_current_clinic(db)
+
     result = await db.execute(
         select(Prescription)
         .options(
@@ -411,7 +471,9 @@ async def get_appointment_prescription(
         )
         .where(
             Prescription.appointment_id
-            == appointment_id
+            == appointment_id,
+            Prescription.clinic_id
+            == clinic.id,
         )
     )
 

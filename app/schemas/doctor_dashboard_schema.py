@@ -30,6 +30,10 @@ class DoctorDashboardResponse(
     completed_today: int
     cancelled_today: int
 
+    today_revenue: float
+    month_revenue: float
+    consultation_completion_rate: float
+
     recent_appointments: list[
         DoctorDashboardAppointment
     ]

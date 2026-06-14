@@ -19,12 +19,26 @@ from app.schemas.doctor_dashboard_schema import (
     DoctorDashboardRecentPatient,
 )
 
+from app.services.doctor_revenue_service import (
+    get_doctor_revenue_today,
+    get_doctor_revenue_this_month,
+    get_completion_rate,
+)
+
+from app.services.clinic_context_service import (
+    get_current_clinic,
+)
+
+
 
 async def get_doctor_dashboard(
     *,
     db: AsyncSession,
     doctor_id: int,
 ) -> DoctorDashboardResponse:
+    
+
+    clinic = await get_current_clinic(db)
 
     now = datetime.now(UTC)
 
@@ -49,6 +63,7 @@ async def get_doctor_dashboard(
         )
         .where(
             Appointment.doctor_id == doctor_id,
+            Appointment.clinic_id == clinic.id,
             Appointment.scheduled_at >= start_of_day,
             Appointment.scheduled_at < end_of_day,
         )
@@ -66,6 +81,7 @@ async def get_doctor_dashboard(
         )
         .where(
             Appointment.doctor_id == doctor_id,
+            Appointment.clinic_id == clinic.id,
             Appointment.scheduled_at > now,
             Appointment.status.in_(
                 [
@@ -91,6 +107,7 @@ async def get_doctor_dashboard(
         )
         .where(
             Appointment.doctor_id == doctor_id,
+            Appointment.clinic_id == clinic.id,
             Appointment.status
             == AppointmentStatus.PENDING,
         )
@@ -110,6 +127,7 @@ async def get_doctor_dashboard(
         )
         .where(
             Appointment.doctor_id == doctor_id,
+            Appointment.clinic_id == clinic.id,
             Appointment.status
             == AppointmentStatus.COMPLETED,
             Appointment.completed_at >= start_of_day,
@@ -131,6 +149,7 @@ async def get_doctor_dashboard(
         )
         .where(
             Appointment.doctor_id == doctor_id,
+            Appointment.clinic_id == clinic.id,
             Appointment.status
             == AppointmentStatus.CANCELLED,
             Appointment.cancelled_at >= start_of_day,
@@ -155,6 +174,7 @@ async def get_doctor_dashboard(
         )
         .where(
             Appointment.doctor_id == doctor_id,
+            Appointment.clinic_id == clinic.id,
         )
         .order_by(
             Appointment.created_at.desc()
@@ -192,6 +212,7 @@ async def get_doctor_dashboard(
         )
         .where(
             Appointment.doctor_id == doctor_id,
+            Appointment.clinic_id == clinic.id,
             Appointment.scheduled_at >= start_of_day,
             Appointment.scheduled_at < end_of_day,
             Appointment.status != AppointmentStatus.CANCELLED,
@@ -247,12 +268,41 @@ async def get_doctor_dashboard(
             )
         )
 
+
+    today_revenue = (
+        await get_doctor_revenue_today(
+            db=db,
+            doctor_id=doctor_id,
+        )
+    )
+
+    month_revenue = (
+        await get_doctor_revenue_this_month(
+            db=db,
+            doctor_id=doctor_id,
+        )
+    )
+
+    consultation_completion_rate = (
+        await get_completion_rate(
+            db=db,
+            doctor_id=doctor_id,
+        )
+    )
+
     return DoctorDashboardResponse(
         today_appointments=today_appointments,
         upcoming_appointments=upcoming_appointments,
         pending_appointments=pending_appointments,
         completed_today=completed_today,
         cancelled_today=cancelled_today,
+
+        today_revenue=today_revenue,
+        month_revenue=month_revenue,
+        consultation_completion_rate=(
+            consultation_completion_rate
+        ),
+        
         recent_appointments=recent_appointments,
         today_schedule=today_schedule,
         recent_patients=recent_patients,

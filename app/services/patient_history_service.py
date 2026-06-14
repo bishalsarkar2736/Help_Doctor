@@ -6,6 +6,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.appointment import Appointment
 from app.models.prescription import Prescription
 from app.models.payment import Payment
+from app.services.clinic_context_service import (
+    get_current_clinic,
+)
 
 
 async def get_patient_history(
@@ -13,6 +16,8 @@ async def get_patient_history(
     db: AsyncSession,
     patient_id: int,
 ):
+    
+    clinic = await get_current_clinic(db)
 
     timeline = []
 
@@ -21,8 +26,8 @@ async def get_patient_history(
     result = await db.execute(
         select(Appointment)
         .where(
-            Appointment.patient_id
-            == patient_id
+            Appointment.patient_id == patient_id,
+            Appointment.clinic_id == clinic.id,
         )
     )
 
@@ -45,8 +50,8 @@ async def get_patient_history(
     result = await db.execute(
         select(Prescription)
         .where(
-            Prescription.patient_id
-            == patient_id
+            Prescription.patient_id == patient_id,
+            Prescription.clinic_id == clinic.id,
         )
     )
 
@@ -71,8 +76,8 @@ async def get_patient_history(
     result = await db.execute(
         select(Payment)
         .where(
-            Payment.patient_id
-            == patient_id
+            Payment.patient_id == patient_id,
+            Payment.clinic_id == clinic.id,
         )
     )
 

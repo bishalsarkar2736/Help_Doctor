@@ -3,11 +3,19 @@ from dateutil.relativedelta import relativedelta
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.payment import Payment
+from app.models.appointment import Appointment
+
+from app.services.clinic_context_service import (
+    get_current_clinic,
+)
+
 
 
 async def get_total_revenue(
     db: AsyncSession,
 ) -> float:
+    
+    clinic = await get_current_clinic(db)
 
     result = await db.execute(
         select(
@@ -17,9 +25,23 @@ async def get_total_revenue(
                 ),
                 0,
             )
-        ).where(
-            Payment.status == "SUCCESS"
         )
+        .join(
+            Appointment,
+            Appointment.id
+            == Payment.appointment_id,
+        )
+        .where(
+            Payment.status
+            == "SUCCESS",
+
+            Appointment.clinic_id
+            == clinic.id,
+
+            Payment.clinic_id
+            == clinic.id,
+        )
+
     )
 
     return float(
@@ -30,6 +52,8 @@ async def get_total_revenue(
 async def get_revenue_today(
     db: AsyncSession,
 ) -> float:
+    
+    clinic = await get_current_clinic(db)
 
     today = date.today()
 
@@ -42,8 +66,21 @@ async def get_revenue_today(
                 0,
             )
         )
+        .join(
+            Appointment,
+            Appointment.id
+            == Payment.appointment_id,
+        )
         .where(
-            Payment.status == "SUCCESS",
+            Payment.status
+            == "SUCCESS",
+
+            Appointment.clinic_id
+            == clinic.id,
+
+            Payment.clinic_id
+            == clinic.id,
+
             func.date(
                 Payment.created_at
             )
@@ -60,6 +97,8 @@ async def get_revenue_today(
 async def get_revenue_this_month(
     db: AsyncSession,
 ) -> float:
+    
+    clinic = await get_current_clinic(db)
 
     today = date.today()
 
@@ -72,13 +111,27 @@ async def get_revenue_this_month(
                 0,
             )
         )
+        .join(
+            Appointment,
+            Appointment.id
+            == Payment.appointment_id,
+        )
         .where(
-            Payment.status == "SUCCESS",
+            Payment.status
+            == "SUCCESS",
+
+            Appointment.clinic_id
+            == clinic.id,
+
+            Payment.clinic_id
+            == clinic.id,
+
             func.extract(
                 "month",
                 Payment.created_at,
             )
             == today.month,
+
             func.extract(
                 "year",
                 Payment.created_at,
@@ -97,6 +150,9 @@ async def get_monthly_revenue(
     db: AsyncSession,
     months: int = 12,
 ):
+    
+    clinic = await get_current_clinic(db)
+
     start_date = (
         date.today().replace(day=1)
         - relativedelta(months=months - 1)
@@ -116,9 +172,23 @@ async def get_monthly_revenue(
                 0,
             ).label("amount"),
         )
+        .join(
+            Appointment,
+            Appointment.id
+            == Payment.appointment_id,
+        )
         .where(
-            Payment.status == "SUCCESS",
-            Payment.created_at >= start_date,
+            Payment.status
+            == "SUCCESS",
+
+            Appointment.clinic_id
+            == clinic.id,
+
+            Payment.clinic_id
+            == clinic.id,
+
+            Payment.created_at
+            >= start_date,
         )
         .group_by("month")
         .order_by("month")
@@ -138,14 +208,29 @@ async def get_monthly_revenue(
 async def get_total_successful_payments(
     db: AsyncSession,
 ) -> int:
+    
+    clinic = await get_current_clinic(db)
 
     result = await db.execute(
         select(
             func.count(
                 Payment.id
             )
-        ).where(
-            Payment.status == "SUCCESS"
+        )
+        .join(
+            Appointment,
+            Appointment.id
+            == Payment.appointment_id,
+        )
+        .where(
+            Payment.status
+            == "SUCCESS",
+
+            Appointment.clinic_id
+            == clinic.id,
+
+            Payment.clinic_id
+            == clinic.id,
         )
     )
 
