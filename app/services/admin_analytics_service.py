@@ -95,7 +95,7 @@ async def get_daily_appointments(db: AsyncSession, days: int = 7):
     ]
 
 
-async def get_top_doctors(db: AsyncSession, limit: int = 5):
+async def get_top_doctors_by_appointments(db: AsyncSession, limit: int = 5):
     """
     Doctors with most appointments
     """

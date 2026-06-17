@@ -22,7 +22,7 @@ from app.services.clinic_context_service import (
 async def create_prescription_template(
     *,
     db: AsyncSession,
-    doctor_id: int,,
+    doctor_id: int,
     data: PrescriptionTemplateCreate,
 ):
     

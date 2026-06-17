@@ -15,6 +15,8 @@ async def get_patient_history(
     *,
     db: AsyncSession,
     patient_id: int,
+    limit: int = 50,
+    offset: int = 0,
 ):
     
     clinic = await get_current_clinic(db)
@@ -37,13 +39,43 @@ async def get_patient_history(
 
         timeline.append(
             {
-                "type": "appointment",
-                "title": "Appointment",
+                "type": "APPOINTMENT_BOOKED",
+                "title": "Appointment Booked",
                 "reference_id": appointment.id,
-                "occurred_at":
-                    appointment.created_at,
+                "occurred_at": appointment.created_at,
             }
         )
+
+        if appointment.confirmed_at:
+            timeline.append(
+                {
+                    "type": "APPOINTMENT_CONFIRMED",
+                    "title": "Appointment Confirmed",
+                    "reference_id": appointment.id,
+                    "occurred_at": appointment.confirmed_at,
+                }
+            )
+
+        if appointment.completed_at:
+            timeline.append(
+                {
+                    "type": "APPOINTMENT_COMPLETED",
+                    "title": "Appointment Completed",
+                    "reference_id": appointment.id,
+                    "occurred_at": appointment.completed_at,
+                }
+            )
+
+        if appointment.cancelled_at:
+            timeline.append(
+                {
+                    "type": "APPOINTMENT_CANCELLED",
+                    "title": "Appointment Cancelled",
+                    "reference_id": appointment.id,
+                    "occurred_at": appointment.cancelled_at,
+                }
+            )
+
 
     # prescriptions
 
@@ -57,19 +89,40 @@ async def get_patient_history(
 
     prescriptions = result.scalars().all()
 
+
     for prescription in prescriptions:
 
         timeline.append(
             {
-                "type": "prescription",
-                "title":
-                    "Prescription Issued",
-                "reference_id":
-                    prescription.id,
-                "occurred_at":
-                    prescription.issued_at,
+                "type": "PRESCRIPTION_CREATED",
+                "title": "Prescription Created",
+                "reference_id": prescription.id,
+                "occurred_at": prescription.created_at,
             }
         )
+
+        if prescription.issued_at:
+            timeline.append(
+                {
+                    "type": "PRESCRIPTION_ISSUED",
+                    "title": "Prescription Issued",
+                    "reference_id": prescription.id,
+                    "occurred_at": prescription.issued_at,
+                }
+            )
+
+        if prescription.revision_number > 1:
+            timeline.append(
+                {
+                    "type": "PRESCRIPTION_REVISED",
+                    "title": (
+                        f"Prescription Revision "
+                        f"#{prescription.revision_number}"
+                    ),
+                    "reference_id": prescription.id,
+                    "occurred_at": prescription.created_at,
+                }
+            )
 
     # payments
 
@@ -85,17 +138,35 @@ async def get_patient_history(
 
     for payment in payments:
 
-        timeline.append(
-            {
-                "type": "payment",
-                "title":
-                    "Payment",
-                "reference_id":
-                    payment.id,
-                "occurred_at":
-                    payment.created_at,
-            }
-        )
+        if payment.status == "SUCCESS":
+
+            timeline.append(
+                {
+                    "type": "PAYMENT_SUCCESS",
+                    "title": "Payment Successful",
+                    "reference_id": payment.id,
+                    "occurred_at": payment.created_at,
+                }
+            )
+
+        # elif payment.status == "REFUNDED":
+
+        #     timeline.append(
+        #         {
+        #             "type": "PAYMENT_REFUNDED",
+        #             "title": "Payment Refunded",
+        #             "reference_id": payment.id,
+        #             "occurred_at": payment.updated_at
+        #             or payment.created_at,
+        #         }
+        #     )
+
+
+    timeline = [
+        item
+        for item in timeline
+        if item["occurred_at"] is not None
+    ]
 
     timeline.sort(
         key=lambda x:
@@ -103,7 +174,19 @@ async def get_patient_history(
         reverse=True,
     )
 
+    total_count = len(timeline)
+
+    paginated_timeline = timeline[
+        offset : offset + limit
+    ]
+
     return {
         "patient_id": patient_id,
-        "timeline": timeline,
+        "total_count": total_count,
+        "limit": limit,
+        "offset": offset,
+        "has_next": (
+            offset + limit
+        ) < total_count,
+        "timeline": paginated_timeline,
     }

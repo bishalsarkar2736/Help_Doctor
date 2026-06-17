@@ -23,7 +23,6 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy import text
 from app.core.time import UTC,utc_now
-from sqlalchemy import update
 from app.models.outbox_event import OutboxEvent
 from httpx import AsyncClient, ASGITransport
 from app.main import create_app
@@ -35,6 +34,7 @@ from app.models.prescription import (
     PrescriptionStatus,
     PrescriptionItem,
 )
+from app.models.clinic import Clinic
 
 
 
@@ -294,10 +294,12 @@ async def appointment(
     db: AsyncSession,
     doctor: Doctor,
     patient_user: User,
+    default_clinic,
 ):
     appt = Appointment(
         #doctor_id=doctor_user.id,
         doctor_id=doctor.id,
+        clinic_id=default_clinic.id,
         patient_id=patient_user.id,
         scheduled_at=datetime.now(timezone.utc) + timedelta(days=1),
         status=AppointmentStatus.PENDING,
@@ -452,12 +454,17 @@ async def appointment_factory(db):
         doctor_id,
         status,
     ):
+        
+        clinic = await db.scalar(
+            select(Clinic)
+        )
 
         appointment = Appointment(
             patient_id=patient_id,
             doctor_id=doctor_id,
             status=status,
             scheduled_at=utc_now(),
+            clinic_id=clinic.id,
         )
 
         db.add(appointment)
@@ -486,6 +493,10 @@ async def prescription_factory(db, appointment_factory):
         is_latest_revision=True,
         parent_prescription_id=None,
     ):
+        
+        clinic = await db.scalar(
+            select(Clinic)
+        )
 
         # ====================================
         # AUTO CREATE APPOINTMENT (SAFE DEFAULT)
@@ -510,6 +521,7 @@ async def prescription_factory(db, appointment_factory):
             parent_prescription_id=parent_prescription_id,
             revision_number=revision_number,
             is_latest_revision=is_latest_revision,
+            clinic_id=clinic.id,
         )
 
         db.add(prescription)
@@ -800,4 +812,26 @@ async def prescription_updated_event(
     return event
 
 
+@pytest_asyncio.fixture(autouse=True)
+async def default_clinic(db):
 
+    clinic = await db.scalar(
+        select(Clinic)
+    )
+
+    if clinic is None:
+        clinic = Clinic(
+            name="Test Clinic",
+            address="Dhaka",
+            phone="01700000000",
+            email="clinic@test.com",
+            website="https://test.com",
+            primary_color="#2563EB",
+        )
+
+        db.add(clinic)
+
+        await db.flush()
+        await db.refresh(clinic)
+
+    return clinic

@@ -94,35 +94,6 @@ class ConnectionManager:
         return True
     
 
-    # async def disconnect(
-    #     self,
-    #     user_id: int,
-    #     websocket: WebSocket,
-    # ):
-
-    #     async with self.lock:
-
-    #         sockets = self.active_connections.get(user_id)
-
-    #         if not sockets:
-    #             return
-
-    #         sockets.discard(websocket)
-
-    #         active_websocket_connections.dec()
-
-    #         # cleanup empty sets
-    #         if not sockets:
-    #             self.active_connections.pop(user_id, None)
-
-    #     logger.info(
-    #         "ws_disconnected",
-    #         extra={
-    #             "user_id": user_id,
-    #             "total_connections": self.total_connections,
-    #         },
-    #     )
-
     async def disconnect(
         self,
         user_id: int,

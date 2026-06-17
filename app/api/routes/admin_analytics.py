@@ -6,7 +6,7 @@ from app.db.postgres import get_db
 from app.services.admin_analytics_service import (
     get_dashboard_overview,
     get_daily_appointments,
-    get_top_doctors,
+    get_top_doctors_by_appointments,
     get_no_show_rate,
     get_cancellation_rate,
     get_doctor_utilization,
@@ -47,7 +47,7 @@ async def top_doctors(
         require_roles(UserRole.ADMIN)
     ),
 ):
-    return await get_top_doctors(db, limit)
+    return await get_top_doctors_by_appointments(db, limit)
 
 
 @router.get("/no-show-rate")

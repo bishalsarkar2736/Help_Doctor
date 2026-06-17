@@ -13,6 +13,10 @@ from app.security.rbac import require_roles
 from app.schemas.admin_user import AdminUserItem
 from app.websocket.manager import manager
 from app.services.realtime_service import notify_admins
+from app.services.realtime_sync_service import (
+    send_realtime_sync,
+)
+
 
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
@@ -31,23 +35,6 @@ async def appointment_audit(
     )
 
     return result.scalars().all()
-
-
-# 🔹 List users
-# @router.get("/users", response_model=list[AdminUserItem])
-# async def list_users(
-#     db: AsyncSession = Depends(get_db),
-#     admin: User = Depends(require_roles(UserRole.ADMIN)),
-#     limit: int = Query(20, le=100),
-#     offset: int = Query(0),
-# ):
-#     result = await db.execute(
-#         select(User)
-#         .limit(limit)
-#         .offset(offset)
-#     )
-
-#     return result.scalars().all()
 
 
 @router.get("/users", response_model=list[AdminUserItem])
@@ -140,7 +127,12 @@ async def toggle_user_active(
     }
 
     # ✅ 1. notify affected user
-    await manager.notify_user(user.id, event)
+    #await manager.notify_user(user.id, event)
+
+    await send_realtime_sync(
+        user_id=user.id,
+        payload=event,
+    )
 
     # ✅ 2. notify all admins (REAL-TIME ADMIN PANEL)
     await notify_admins(db, event)

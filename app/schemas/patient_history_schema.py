@@ -11,4 +11,10 @@ class TimelineEvent(BaseModel):
 
 class PatientHistoryResponse(BaseModel):
     patient_id: int
+
+    total_count: int
+    limit: int
+    offset: int
+    has_next: bool
+    
     timeline: list[TimelineEvent]

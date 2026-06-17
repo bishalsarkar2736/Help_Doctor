@@ -4,6 +4,9 @@ from sqlalchemy import select
 
 from app.models.user import User, UserRole
 from app.websocket.manager import manager
+from app.services.realtime_sync_service import (
+    send_realtime_sync,
+)
 
 
 async def notify_admins(
@@ -25,10 +28,21 @@ async def notify_admins(
         return
 
     # ✅ Send in parallel (faster)
+    # await asyncio.gather(
+    #     *[
+    #         manager.notify_user(admin_id, payload)
+    #         for admin_id in admin_ids
+    #     ],
+    #     return_exceptions=True  # ❗ never break main flow
+    # )
+
     await asyncio.gather(
         *[
-            manager.notify_user(admin_id, payload)
+            send_realtime_sync(
+                user_id=admin_id,
+                payload=payload,
+            )
             for admin_id in admin_ids
         ],
-        return_exceptions=True  # ❗ never break main flow
+        return_exceptions=True,
     )

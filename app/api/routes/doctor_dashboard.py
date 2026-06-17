@@ -9,6 +9,9 @@ from app.models.doctor import Doctor
 from app.services.doctor_dashboard_service import (
     get_doctor_dashboard,
 )
+from app.services.doctor_revenue_trend_service import get_doctor_monthly_revenue
+
+
 
 router = APIRouter(
     prefix="/doctor",
@@ -41,3 +44,31 @@ async def doctor_dashboard(
         db=db,
         doctor_id=doctor.id,
     )
+
+
+@router.get(
+    "/revenue-trend"
+)
+async def doctor_revenue_trend(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(
+        require_roles(
+            UserRole.DOCTOR
+        )
+    ),
+):
+    
+    result = await db.execute(
+        select(Doctor)
+        .where(
+            Doctor.user_id
+            == current_user.id
+        )
+    )
+
+    doctor = result.scalar_one_or_none()
+
+    return await get_doctor_monthly_revenue(
+    db=db,
+    doctor_id=doctor.id,
+)

@@ -23,6 +23,9 @@ from app.security.rbac import (
 from app.services.patient_history_service import (
     get_patient_history,
 )
+from app.schemas.patient_history_schema import PatientHistoryResponse
+
+
 
 router = APIRouter(
     prefix="/patients",
@@ -30,9 +33,14 @@ router = APIRouter(
 )
 
 
-@router.get("/{patient_id}/history")
+@router.get(
+    "/{patient_id}/history",
+    response_model=PatientHistoryResponse,
+)
 async def patient_history(
     patient_id: int,
+    limit: int = 50,
+    offset: int = 0,
     db: AsyncSession = Depends(get_db),
     user=Depends(
         require_roles(
@@ -41,7 +49,10 @@ async def patient_history(
         )
     ),
 ):
+    
     return await get_patient_history(
         db=db,
         patient_id=patient_id,
+        limit=limit,
+        offset=offset,
     )

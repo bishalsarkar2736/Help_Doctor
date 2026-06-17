@@ -14,6 +14,9 @@ from sqlalchemy.dialects.postgresql import insert
 from app.services.notification_preference_service import (
     get_or_create_preferences,
 )
+from app.models.notification import (
+    NotificationCategory,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -26,6 +29,9 @@ async def create_notification(
     user_id: int,
     title: str,
     message: str,
+    category: NotificationCategory = (
+        NotificationCategory.SYSTEM
+    ),
     event_id: uuid.UUID | None = None,
     appointment_id: int | None = None,
 ) -> Notification:
@@ -41,6 +47,7 @@ async def create_notification(
             user_id=user_id,
             title=title,
             message=message,
+            category=category,
             related_appointment_id=appointment_id,
             event_id=event_id,
         )
@@ -82,10 +89,19 @@ NOTIFY_COOLDOWN_SECONDS = 5
 
 async def notify_user_realtime(
     *,
+    db: AsyncSession,
     user_id: int,
     message: str,
     appointment_id: int | None = None,
 ) -> None:
+    
+    prefs = await get_or_create_preferences(
+        db,
+        user_id,
+    )
+
+    if not prefs.realtime_enabled:
+        return
 
     key = f"notify_cooldown:user:{user_id}"
 
@@ -111,6 +127,9 @@ async def notify_user(
     user_id: int,
     title: str,
     message: str,
+    category: NotificationCategory = (
+        NotificationCategory.SYSTEM
+    ),
     event_id: uuid.UUID | None = None,
     appointment_id: int | None = None,
 ):
@@ -120,6 +139,7 @@ async def notify_user(
         user_id=user_id,
         title=title,
         message=message,
+        category=category,
         event_id=event_id,
         appointment_id=appointment_id,
     )

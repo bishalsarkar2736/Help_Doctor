@@ -1,20 +1,26 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.notification_service import notify_user
-from app.websocket.manager import manager
 
 from app.services.realtime_dashboard_service import (
     publish_dashboard_update,
 )
-from app.services.notification_preference_service import (
-    get_or_create_preferences,
+
+from app.services.realtime_notification_service import (
+    send_realtime_notification,
 )
+from app.models.notification import (
+    NotificationCategory,
+)
+
+
 
 EVENT_NOTIFICATION_CONFIG = {
 
     "APPOINTMENT_CREATED": {
         "title": "Appointment Created",
         "message": "A new appointment has been booked",
+        "category": NotificationCategory.APPOINTMENT,
         "user_field": "user_id",
         "appointment_field": "appointment_id",
     },
@@ -22,6 +28,7 @@ EVENT_NOTIFICATION_CONFIG = {
     "APPOINTMENT_CONFIRMED": {
         "title": "Appointment Confirmed",
         "message": "Your appointment has been confirmed",
+        "category": NotificationCategory.APPOINTMENT,
         "user_field": "user_id",
         "appointment_field": "appointment_id",
     },
@@ -29,6 +36,7 @@ EVENT_NOTIFICATION_CONFIG = {
     "APPOINTMENT_CANCELLED": {
         "title": "Appointment Cancelled",
         "message": "Your appointment has been cancelled",
+        "category": NotificationCategory.APPOINTMENT,
         "user_field": "user_id",
         "appointment_field": "appointment_id",
     },
@@ -36,6 +44,7 @@ EVENT_NOTIFICATION_CONFIG = {
     "APPOINTMENT_RESCHEDULED": {
         "title": "Appointment Rescheduled",
         "message": "Your appointment has been rescheduled",
+        "category": NotificationCategory.APPOINTMENT,
         "user_field": "user_id",
         "appointment_field": "appointment_id",
     },
@@ -43,6 +52,7 @@ EVENT_NOTIFICATION_CONFIG = {
     "APPOINTMENT_RESCHEDULE_REQUEST": {
         "title": "Reschedule Request",
         "message": "A patient requested to reschedule an appointment",
+        "category": NotificationCategory.APPOINTMENT,
         "user_field": "user_id",
         "appointment_field": "appointment_id",
     },
@@ -50,6 +60,7 @@ EVENT_NOTIFICATION_CONFIG = {
     "PAYMENT_SUCCESS": {
         "title": "Payment Successful",
         "message": "Your payment was successful",
+        "category": NotificationCategory.PAYMENT,
         "user_field": "user_id",
         "appointment_field": "appointment_id",
     },
@@ -59,6 +70,7 @@ EVENT_NOTIFICATION_CONFIG = {
         "message_template": (
             "Your appointment status changed to {new_status}"
         ),
+        "category": NotificationCategory.APPOINTMENT,
         "user_field": "patient_id",
         "appointment_field": "appointment_id",
     },
@@ -66,6 +78,7 @@ EVENT_NOTIFICATION_CONFIG = {
     "CONSULTATION_STARTED": {
         "title": "Consultation Started",
         "message": "Your consultation has started",
+        "category": NotificationCategory.APPOINTMENT,
         "user_field": "patient_id",
         "appointment_field": "appointment_id",
     },
@@ -73,6 +86,7 @@ EVENT_NOTIFICATION_CONFIG = {
     "PRESCRIPTION_CREATED": {
         "title": "Prescription Created",
         "message": "Doctor created your prescription draft",
+        "category": NotificationCategory.PRESCRIPTION,
         "user_field": "patient_id",
         "appointment_field": "appointment_id",
     },
@@ -80,6 +94,7 @@ EVENT_NOTIFICATION_CONFIG = {
     "PRESCRIPTION_ISSUED": {
         "title": "Prescription Issued",
         "message": "Your prescription is ready",
+        "category": NotificationCategory.PRESCRIPTION,
         "user_field": "patient_id",
         "appointment_field": "appointment_id",
     },
@@ -87,6 +102,7 @@ EVENT_NOTIFICATION_CONFIG = {
     "PRESCRIPTION_UPDATED": {
         "title": "Prescription Updated",
         "message": "Your prescription was updated",
+        "category": NotificationCategory.PRESCRIPTION,
         "user_field": "patient_id",
         "appointment_field": "appointment_id",
     },
@@ -94,6 +110,7 @@ EVENT_NOTIFICATION_CONFIG = {
     "PRESCRIPTION_REVISED": {
         "title": "Prescription Revised",
         "message": "A revised prescription has been issued",
+        "category": NotificationCategory.PRESCRIPTION,
         "user_field": "patient_id",
         "appointment_field": "appointment_id",
     },
@@ -143,43 +160,24 @@ async def handle_notification_event(
         user_id=user_id,
         title=config["title"],
         message=message,
+        category=config["category"],
         appointment_id=appointment_id,
         event_id=event_id,
     )
 
-    # Send realtime websocket event
-    # await manager.notify_user(
-    #     user_id=user_id,
-    #     appointment_id=appointment_id,
-    #     message={
-    #         "version": 1,
-    #         "event": event_type.lower(),
-    #         "correlation_id": validated.correlation_id,
-    #         "data": validated.model_dump(),
-    #         "title": config["title"],
-    #         "message": message,
-    #     },
-    # )
-
-    prefs = await get_or_create_preferences(
-        db,
-        user_id,
+    await send_realtime_notification(
+        db=db,
+        user_id=user_id,
+        payload={
+            "version": 1,
+            "event": event_type.lower(),
+            "correlation_id": validated.correlation_id,
+            "data": validated.model_dump(),
+            "title": config["title"],
+            "message": message,
+            "appointment_id": appointment_id,
+        },
     )
-
-    if prefs.realtime_enabled:
-
-        await manager.notify_user(
-            user_id=user_id,
-            appointment_id=appointment_id,
-            message={
-                "version": 1,
-                "event": event_type.lower(),
-                "correlation_id": validated.correlation_id,
-                "data": validated.model_dump(),
-                "title": config["title"],
-                "message": message,
-            },
-        )
 
     if event_type in {
         "APPOINTMENT_CREATED",

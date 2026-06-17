@@ -7,6 +7,16 @@ from sqlalchemy.dialects.postgresql import UUID
 import uuid
 from sqlalchemy import Index
 
+from enum import Enum
+from sqlalchemy import Enum as SQLEnum
+
+class NotificationCategory(str, Enum):
+    APPOINTMENT = "APPOINTMENT"
+    PRESCRIPTION = "PRESCRIPTION"
+    PAYMENT = "PAYMENT"
+    SYSTEM = "SYSTEM"
+
+
 class Notification(Base):
     __tablename__ = "notifications"
 
@@ -87,6 +97,15 @@ class Notification(Base):
         nullable=True,
     )
 
+
+    category: Mapped[NotificationCategory] = mapped_column(
+        SQLEnum(
+            NotificationCategory,
+            name="notification_category",
+        ),
+        nullable=False,
+        server_default=NotificationCategory.SYSTEM.value,
+    )
     
     event_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("outbox_events.id", ondelete="CASCADE"),

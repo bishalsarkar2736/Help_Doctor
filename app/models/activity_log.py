@@ -4,6 +4,8 @@ from sqlalchemy import (
     ForeignKey,
     Text,
 )
+from datetime import datetime
+from sqlalchemy import DateTime, func
 
 from sqlalchemy.orm import (
     Mapped,
@@ -58,4 +60,11 @@ class ActivityLog(Base):
     details: Mapped[str | None] = mapped_column(
         Text,
         nullable=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        index=True,
     )

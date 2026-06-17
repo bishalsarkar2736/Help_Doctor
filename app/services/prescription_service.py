@@ -49,6 +49,10 @@ from app.services.activity_log_service import (
     log_activity,
 )
 
+from app.models.enums.activity_action import (
+    ActivityAction,
+)
+
 from app.services.prescription_template_apply_service import (
     get_template_items,
 )
@@ -331,7 +335,7 @@ async def issue_prescription(
     await log_activity(
         db=db,
         actor_id=doctor.user_id,
-        action="PRESCRIPTION_ISSUED",
+        action=ActivityAction.PRESCRIPTION_ISSUED,
         entity_type="prescription",
         entity_id=prescription.id,
     )

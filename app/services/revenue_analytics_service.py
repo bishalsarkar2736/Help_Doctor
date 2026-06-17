@@ -11,44 +11,6 @@ from app.services.clinic_context_service import (
 
 
 
-async def get_total_revenue(
-    db: AsyncSession,
-) -> float:
-    
-    clinic = await get_current_clinic(db)
-
-    result = await db.execute(
-        select(
-            func.coalesce(
-                func.sum(
-                    Payment.amount
-                ),
-                0,
-            )
-        )
-        .join(
-            Appointment,
-            Appointment.id
-            == Payment.appointment_id,
-        )
-        .where(
-            Payment.status
-            == "SUCCESS",
-
-            Appointment.clinic_id
-            == clinic.id,
-
-            Payment.clinic_id
-            == clinic.id,
-        )
-
-    )
-
-    return float(
-        result.scalar_one()
-    )
-
-
 async def get_revenue_today(
     db: AsyncSession,
 ) -> float:
@@ -242,9 +204,6 @@ async def get_revenue_analytics(
 ):
 
     return {
-        "total_revenue":
-            await get_total_revenue(db),
-
         "revenue_this_month":
             await get_revenue_this_month(db),
 

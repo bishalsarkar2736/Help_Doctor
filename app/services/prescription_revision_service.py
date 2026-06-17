@@ -33,6 +33,14 @@ from app.try_except.audit import (
     log_audit_event,
 )
 
+from app.services.activity_log_service import (
+    log_activity,
+)
+
+from app.models.enums.activity_action import (
+    ActivityAction,
+)
+
 from app.try_except.exceptions import (
     BadRequestError,
     NotFoundError,
@@ -287,6 +295,14 @@ async def create_prescription_revision(
     await publish_domain_event(
         db=db,
         event=event,
+    )
+
+    await log_activity(
+        db=db,
+        actor_id=doctor.user_id,
+        action=ActivityAction.PRESCRIPTION_REVISED,
+        entity_type="appointment",
+        entity_id=prescription.id,
     )
 
     # ====================================================

@@ -14,6 +14,7 @@ from app.security.rbac import require_roles
 
 from app.services.notification_preference_service import (
     get_or_create_preferences,
+    update_preferences,
 )
 
 from app.schemas.notification_preference import (
@@ -65,20 +66,14 @@ async def update_preferences(
         )
     ),
 ):
-    prefs = await get_or_create_preferences(
-        db,
-        current_user.id,
+    prefs = await update_preferences(
+        db=db,
+        user_id=current_user.id,
+        email_enabled=payload.email_enabled,
+        push_enabled=payload.push_enabled,
+        realtime_enabled=payload.realtime_enabled,
     )
-
-    if payload.email_enabled is not None:
-        prefs.email_enabled = payload.email_enabled
-
-    if payload.push_enabled is not None:
-        prefs.push_enabled = payload.push_enabled
-
-    if payload.realtime_enabled is not None:
-        prefs.realtime_enabled = payload.realtime_enabled
-
+    
     await db.commit()
 
     await db.refresh(prefs)

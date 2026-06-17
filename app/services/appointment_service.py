@@ -29,6 +29,10 @@ from app.services.activity_log_service import (
     log_activity,
 )
 
+from app.models.enums.activity_action import (
+    ActivityAction,
+)
+
 from app.schemas.event import (
     AppointmentCancelledEvent,
     AppointmentRescheduledEvent,
@@ -704,7 +708,7 @@ async def book_appointment(
             await log_activity(
                 db=db,
                 actor_id=patient.id,
-                action="APPOINTMENT_BOOKED",
+                action=ActivityAction.APPOINTMENT_BOOKED,
                 entity_type="appointment",
                 entity_id=appointment.id,
             )
@@ -830,7 +834,7 @@ async def patient_cancel_appointment(
     await log_activity(
         db=db,
         actor_id=user.id,
-        action="APPOINTMENT_CANCELLED",
+        action=ActivityAction.APPOINTMENT_CANCELLED,
         entity_type="appointment",
         entity_id=appointment.id,
     )
@@ -953,6 +957,14 @@ async def patient_reschedule_appointment(
         notify_doctor=True,
         is_request=True,
         correlation_id=correlation_id,
+    )
+
+    await log_activity(
+        db=db,
+        actor_id=user.id,
+        action=ActivityAction.APPOINTMENT_RESCHEDULED,
+        entity_type="appointment",
+        entity_id=appointment.id,
     )
 
 
@@ -1114,7 +1126,7 @@ async def doctor_cancel_appointment(
     await log_activity(
         db=db,
         actor_id=doctor_user.id,
-        action="APPOINTMENT_CANCELLED",
+        action=ActivityAction.APPOINTMENT_CANCELLED,
         entity_type="appointment",
         entity_id=appointment.id,
     )
@@ -1232,6 +1244,14 @@ async def doctor_reschedule_appointment(
         doctor=doctor,
         notify_patient=True,
         correlation_id=correlation_id,
+    )
+
+    await log_activity(
+        db=db,
+        actor_id=doctor_user.id,
+        action=ActivityAction.APPOINTMENT_RESCHEDULED,
+        entity_type="appointment",
+        entity_id=appointment.id,
     )
 
     # after flush + transition
@@ -1438,9 +1458,10 @@ async def admin_force_cancel_appointment(
     await log_activity(
         db=db,
         actor_id=admin.id,
-        action="APPOINTMENT_CANCELLED",
+        action=ActivityAction.ADMIN_FORCE_CANCEL,
         entity_type="appointment",
         entity_id=appointment.id,
+        details=reason,
     )
 
     appointment_date = appointment.scheduled_at.date()

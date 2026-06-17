@@ -15,6 +15,12 @@ from app.models.appointment import Appointment
 from app.websocket.manager import manager
 from datetime import timedelta
 from sqlalchemy.dialects.postgresql import Range
+from app.models.notification_preference import (
+    NotificationPreference,
+)
+
+
+
 
 @pytest.mark.asyncio
 async def test_outbox_event_creates_notification(db):
@@ -38,6 +44,15 @@ async def test_outbox_event_creates_notification(db):
         role=UserRole.DOCTOR,
     )
     db.add(doctor_user)
+    await db.flush()
+
+    db.add(
+        NotificationPreference(
+            user_id=patient_user.id,
+            realtime_enabled=True,
+            push_enabled=True,
+        )
+    )
     await db.flush()
 
     # doctor
@@ -177,17 +192,34 @@ async def test_outbox_event_creates_notification(db):
 
     
 
+    # assert any(
+    #     (
+    #         call.kwargs.get("user_id") == patient_user.id
+    #         and call.kwargs.get("appointment_id") == appointment.id
+    #         and call.kwargs.get("message", {}).get("event")
+    #             == "appointment_status_changed"
+    #     )
+    #     or
+    #     (
+    #         len(call.args) >= 2
+    #         and call.args[0] == patient_user.id
+    #     )
+    #     for call in calls
+    # )
+    print(manager.notify_user.await_args_list)
+
     assert any(
-        (
-            call.kwargs.get("user_id") == patient_user.id
-            and call.kwargs.get("appointment_id") == appointment.id
-            and call.kwargs.get("message", {}).get("event")
-                == "appointment_status_changed"
-        )
-        or
-        (
-            len(call.args) >= 2
-            and call.args[0] == patient_user.id
-        )
+        call.kwargs.get("user_id")
+            == patient_user.id
+        and
+        call.kwargs.get(
+            "message", {}
+        ).get("event")
+            == "appointment_status_changed"
+        and
+        call.kwargs.get(
+            "message", {}
+        ).get("appointment_id")
+            == appointment.id
         for call in calls
     )

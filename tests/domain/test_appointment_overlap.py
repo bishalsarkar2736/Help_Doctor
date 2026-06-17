@@ -10,6 +10,7 @@ from app.services.appointment_service import book_appointment
 from app.try_except.exceptions import BadRequestError
 from app.models.doctor_availability import DoctorAvailability
 from datetime import time
+from app.models.clinic import Clinic
 
 
 @pytest.mark.asyncio
@@ -17,6 +18,18 @@ async def test_doctor_overlap_is_prevented_under_concurrency(
     async_session_factory,
 ):
     async with async_session_factory() as session:
+
+        clinic = Clinic(
+            name="Test Clinic",
+            address="Dhaka",
+            phone="01700000000",
+            email="clinic@test.com",
+        )
+
+        session.add(clinic)
+        await session.flush()
+
+        
         patient = User(
             email="concurrency@test.com",
             hashed_password="x",
