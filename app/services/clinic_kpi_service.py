@@ -147,7 +147,7 @@ async def get_conversion_rate(
     )
 
 
-async def get_completion_rate(
+async def get_completion_rate_total_clinic(
     *,
     db: AsyncSession,
 ) -> float:
@@ -264,6 +264,135 @@ async def get_patients_this_month(
     return result.scalar_one()
 
 
+async def get_appointments_today(
+    *,
+    db: AsyncSession,
+) -> int:
+
+    clinic = await get_current_clinic(db)
+
+    today = date.today()
+
+    result = await db.execute(
+        select(
+            func.count(
+                Appointment.id
+            )
+        )
+        .where(
+            Appointment.clinic_id
+            == clinic.id,
+
+            func.date(
+                Appointment.created_at
+            )
+            == today,
+        )
+    )
+
+    return result.scalar_one()
+
+
+
+async def get_appointments_this_month(
+    *,
+    db: AsyncSession,
+) -> int:
+
+    clinic = await get_current_clinic(db)
+
+    today = date.today()
+
+    result = await db.execute(
+        select(
+            func.count(
+                Appointment.id
+            )
+        )
+        .where(
+            Appointment.clinic_id
+            == clinic.id,
+
+            func.extract(
+                "month",
+                Appointment.created_at,
+            )
+            == today.month,
+
+            func.extract(
+                "year",
+                Appointment.created_at,
+            )
+            == today.year,
+        )
+    )
+
+    return result.scalar_one()
+
+
+
+async def get_average_revenue_per_appointment(
+    *,
+    db: AsyncSession,
+) -> float:
+
+    clinic = await get_current_clinic(db)
+
+    revenue_result = await db.execute(
+        select(
+            func.coalesce(
+                func.sum(Payment.amount),
+                0,
+            )
+        )
+        .join(
+            Appointment,
+            Appointment.id
+            == Payment.appointment_id,
+        )
+        .where(
+            Payment.status == "SUCCESS",
+
+            Appointment.clinic_id
+            == clinic.id,
+
+            Payment.clinic_id
+            == clinic.id,
+        )
+    )
+
+    total_revenue = float(
+        revenue_result.scalar_one()
+    )
+
+    appointment_result = await db.execute(
+        select(
+            func.count(Appointment.id)
+        )
+        .where(
+            Appointment.clinic_id
+            == clinic.id,
+
+            Appointment.status
+            == AppointmentStatus.COMPLETED,
+        )
+    )
+
+    completed_appointments = (
+        appointment_result.scalar_one()
+    )
+
+    if completed_appointments == 0:
+        return 0.0
+
+    return round(
+        total_revenue
+        / completed_appointments,
+        2,
+    )
+
+
+
 
 async def get_clinic_kpi_dashboard(
     *,
@@ -287,7 +416,26 @@ async def get_clinic_kpi_dashboard(
             db=db,
         ),
 
-        completion_rate=await get_completion_rate(
+        completion_rate=await get_completion_rate_total_clinic(
             db=db,
         ),
+
+        patients_today=await get_patients_today(
+            db=db,
+        ),
+
+        patients_this_month= await get_patients_this_month(
+            db=db,
+        ),
+
+        appointments_today= await get_appointments_today(
+            db=db,
+        ),
+        appointments_this_month=await get_appointments_this_month(
+            db=db,
+        ),
+        average_revenue=get_average_revenue_per_appointment(
+            db=db,
+        )
+
     )

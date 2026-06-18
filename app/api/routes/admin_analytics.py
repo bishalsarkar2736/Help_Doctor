@@ -7,8 +7,8 @@ from app.services.admin_analytics_service import (
     get_dashboard_overview,
     get_daily_appointments,
     get_top_doctors_by_appointments,
-    get_no_show_rate,
-    get_cancellation_rate,
+    get_no_show_analytics,
+    get_cancellation_analytics,
     get_doctor_utilization,
     get_system_utilization,
     get_daily_notification_volume,
@@ -50,24 +50,27 @@ async def top_doctors(
     return await get_top_doctors_by_appointments(db, limit)
 
 
-@router.get("/no-show-rate")
-async def no_show_rate(
+@router.get("/no-show-analytics")
+async def no_show_analytics(
     db: AsyncSession = Depends(get_db),
     admin : User =Depends(
         require_roles(UserRole.ADMIN)
     ),
 ):
-    return await get_no_show_rate(db)
+    return await get_no_show_analytics(
+        db=db,
+    )
 
-
-@router.get("/cancellation-rate")
-async def cancellation_rate(
+@router.get("/cancellation-analytics")
+async def cancellation_analytics(
     db: AsyncSession = Depends(get_db),
     admin : User =Depends(
         require_roles(UserRole.ADMIN)
     ),
 ):
-    return await get_cancellation_rate(db)
+    return await get_cancellation_analytics(
+        db=db,
+    )
 
 
 @router.get("/doctor-utilization/{doctor_id}")

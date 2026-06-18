@@ -131,58 +131,102 @@ async def get_top_doctors_by_appointments(db: AsyncSession, limit: int = 5):
 
 
 
-async def get_no_show_rate(db):
-
+async def get_no_show_analytics(
+    *,
+    db: AsyncSession,
+):
     clinic = await get_current_clinic(db)
 
-
     total_confirmed = await db.scalar(
-        select(func.count()).where(
-            Appointment.status == AppointmentStatus.CONFIRMED,
+        select(
+            func.count(Appointment.id)
+        ).where(
             Appointment.clinic_id == clinic.id,
+            Appointment.status == AppointmentStatus.CONFIRMED,
         )
     )
 
     total_no_show = await db.scalar(
-        select(func.count()).where(
-            Appointment.status == AppointmentStatus.NO_SHOW,
+        select(
+            func.count(Appointment.id)
+        ).where(
             Appointment.clinic_id == clinic.id,
+            Appointment.status == AppointmentStatus.NO_SHOW,
         )
     )
 
-    if not total_confirmed:
-        return {"no_show_rate": 0}
+    total_confirmed = total_confirmed or 0
+    total_no_show = total_no_show or 0
+
+    if total_confirmed == 0:
+        rate = 0.0
+    else:
+        rate = round(
+            (total_no_show / total_confirmed) * 100,
+            2,
+        )
 
     return {
-        "no_show_rate": round(total_no_show / total_confirmed, 4)
+        "total_confirmed": total_confirmed,
+        "total_no_show": total_no_show,
+        "no_show_rate": rate,
     }
 
 
-async def get_cancellation_rate(db):
-
+async def get_cancellation_analytics(
+    *,
+    db: AsyncSession,
+):
     clinic = await get_current_clinic(db)
 
-
-    total = await db.scalar(
-        select(func.count())
-        .select_from(Appointment)
+    total_appointments = await db.scalar(
+        select(
+            func.count(Appointment.id)
+        )
         .where(
             Appointment.clinic_id == clinic.id
         )
     )
 
-    cancelled = await db.scalar(
-        select(func.count()).where(
-            Appointment.status == AppointmentStatus.CANCELLED,
+    cancelled_appointments = await db.scalar(
+        select(
+            func.count(Appointment.id)
+        )
+        .where(
             Appointment.clinic_id == clinic.id,
+            Appointment.status
+            == AppointmentStatus.CANCELLED,
         )
     )
 
-    if not total:
-        return {"cancellation_rate": 0}
+    total_appointments = (
+        total_appointments or 0
+    )
+
+    cancelled_appointments = (
+        cancelled_appointments or 0
+    )
+
+    if total_appointments == 0:
+        rate = 0.0
+    else:
+        rate = round(
+            (
+                cancelled_appointments
+                / total_appointments
+            ) * 100,
+            2,
+        )
 
     return {
-        "cancellation_rate": round(cancelled / total, 4)
+        "total_appointments":
+            total_appointments,
+
+        "cancelled_appointments":
+            cancelled_appointments,
+
+        "cancellation_rate":
+            rate,
     }
 
 

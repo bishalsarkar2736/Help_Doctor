@@ -1,5 +1,11 @@
-from datetime import date
-
+from app.core.time import utc_now
+from datetime import (
+    datetime, 
+    time, 
+    timedelta, 
+    timezone, 
+)
+from dateutil.relativedelta import relativedelta
 from sqlalchemy import func
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,7 +25,15 @@ async def get_doctor_revenue_today(
     
     clinic = await get_current_clinic(db)
 
-    today = date.today()
+    today = utc_now().date()
+
+    start = datetime.combine(
+        today,
+        time.min,
+        tzinfo=timezone.utc,
+    )
+
+    end = start + timedelta(days=1)
 
     result = await db.execute(
         select(
@@ -43,10 +57,8 @@ async def get_doctor_revenue_today(
             Payment.status
             == "SUCCESS",
 
-            func.date(
-                Payment.created_at
-            )
-            == today,
+            Payment.created_at >= start,
+            Payment.created_at < end,
         )
     )
 
@@ -64,7 +76,15 @@ async def get_doctor_revenue_this_month(
     
     clinic = await get_current_clinic(db)
 
-    today = date.today()
+    today = utc_now().date()
+
+    month_start = datetime.combine(
+        today.replace(day=1),
+        time.min,
+        tzinfo=timezone.utc,
+    )
+
+    next_month = month_start + relativedelta(months=1)
 
     result = await db.execute(
         select(
@@ -88,17 +108,8 @@ async def get_doctor_revenue_this_month(
             Payment.status
             == "SUCCESS",
 
-            func.extract(
-                "month",
-                Payment.created_at,
-            )
-            == today.month,
-
-            func.extract(
-                "year",
-                Payment.created_at,
-            )
-            == today.year,
+            Payment.created_at >= month_start,
+            Payment.created_at < next_month,
         )
     )
 
@@ -107,64 +118,3 @@ async def get_doctor_revenue_this_month(
     )
 
 
-async def get_completion_rate(
-    *,
-    db: AsyncSession,
-    doctor_id: int,
-) -> float:
-    
-    clinic = await get_current_clinic(db)
-
-    completed_result = await db.execute(
-        select(
-            func.count(
-                Appointment.id
-            )
-        )
-        .where(
-            Appointment.doctor_id
-            == doctor_id,
-
-            Appointment.clinic_id
-            == clinic.id,
-
-            Appointment.status
-            == AppointmentStatus.COMPLETED,
-        )
-    )
-
-    completed = (
-        completed_result.scalar_one()
-    )
-
-    cancelled_result = await db.execute(
-        select(
-            func.count(
-                Appointment.id
-            )
-        )
-        .where(
-            Appointment.doctor_id
-            == doctor_id,
-
-            Appointment.clinic_id
-            == clinic.id,
-
-            Appointment.status
-            == AppointmentStatus.CANCELLED,
-        )
-    )
-
-    cancelled = (
-        cancelled_result.scalar_one()
-    )
-
-    total = completed + cancelled
-
-    if total == 0:
-        return 0.0
-
-    return round(
-        (completed / total) * 100,
-        2,
-    )

@@ -7,3 +7,11 @@ class ClinicKPIResponse(BaseModel):
     total_appointments: int
     conversion_rate: float
     completion_rate: float
+
+    patients_today: int
+    patients_this_month: int
+
+    appointments_today: int
+    appointments_this_month: int
+
+    average_revenue : float

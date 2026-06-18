@@ -22,8 +22,9 @@ from app.schemas.doctor_dashboard_schema import (
 from app.services.doctor_revenue_service import (
     get_doctor_revenue_today,
     get_doctor_revenue_this_month,
-    get_completion_rate,
 )
+
+from app.services.doctor_analytics_service import get_completion_rate
 
 from app.services.clinic_context_service import (
     get_current_clinic,

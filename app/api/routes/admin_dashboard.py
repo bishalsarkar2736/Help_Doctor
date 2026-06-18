@@ -34,6 +34,24 @@ from app.services.clinic_kpi_service import (
     get_clinic_kpi_dashboard,
 )
 
+from app.services.appointment_status_analytics_service import (
+    get_appointment_status_distribution,
+)
+
+from app.services.doctor_analytics_service import (
+    get_top_doctors_by_appointments,
+    get_top_doctors_by_completed_consultations,
+)
+
+from app.services.followup_analytics_service import (
+    get_followup_analytics,
+)
+
+from app.services.doctor_performance_service import (
+    get_doctor_performance_scorecard,
+)
+
+from app.services.clinic_growth_service import get_growth_dashboard
 
 
 
@@ -91,4 +109,95 @@ async def clinic_kpi_dashboard(
 ):
     return await get_clinic_kpi_dashboard(
         db=db,
+    )
+
+
+
+
+
+@router.get("/growth-dashboard")
+async def growth_dashboard(
+    db: AsyncSession = Depends(get_db),
+    admin=Depends(
+        require_roles(UserRole.ADMIN)
+    ),
+):
+    return await get_growth_dashboard(
+        db=db,
+    )
+
+
+
+@router.get("/top-doctors-by-appointments")
+async def top_doctors_by_appointments(
+    db: AsyncSession = Depends(get_db),
+    admin=Depends(
+        require_roles(UserRole.ADMIN)
+    ),
+):
+    return await get_top_doctors_by_appointments(
+        db=db
+    )
+
+
+@router.get(
+    "/appointment-status-distribution"
+)
+async def appointment_status_distribution(
+    db: AsyncSession = Depends(get_db),
+    admin=Depends(
+        require_roles(
+            UserRole.ADMIN
+        )
+    ),
+):
+    return await get_appointment_status_distribution(
+        db=db
+    )
+
+
+
+@router.get(
+    "/top-doctors-by-completed-consultations"
+)
+async def top_doctors_by_completed_consultations(
+    db: AsyncSession = Depends(get_db),
+    admin=Depends(
+        require_roles(UserRole.ADMIN)
+    ),
+):
+    return await (
+        get_top_doctors_by_completed_consultations(
+            db=db
+        )
+    )
+
+
+@router.get(
+    "/followup-analytics"
+)
+async def followup_analytics(
+    db: AsyncSession = Depends(get_db),
+    admin=Depends(
+        require_roles(UserRole.ADMIN)
+    ),
+):
+    return await get_followup_analytics(
+        db=db
+    )
+
+
+@router.get(
+    "/doctor-performance-scorecard"
+)
+async def doctor_performance_scorecard(
+    db: AsyncSession = Depends(get_db),
+    admin=Depends(
+        require_roles(UserRole.ADMIN)
+    ),
+):
+    return await (
+        get_doctor_performance_scorecard(
+            db=db
+        )
     )

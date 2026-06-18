@@ -1,4 +1,11 @@
-from datetime import date
+from datetime import (
+    date,
+    datetime,
+    time,
+    timedelta,
+    timezone
+)
+from app.core.time import utc_now
 from dateutil.relativedelta import relativedelta
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,7 +24,15 @@ async def get_revenue_today(
     
     clinic = await get_current_clinic(db)
 
-    today = date.today()
+    today = utc_now().date()
+
+    start = datetime.combine(
+        today,
+        time.min,
+        tzinfo=timezone.utc,
+    )
+
+    end = start + timedelta(days=1)
 
     result = await db.execute(
         select(
@@ -43,10 +58,9 @@ async def get_revenue_today(
             Payment.clinic_id
             == clinic.id,
 
-            func.date(
-                Payment.created_at
-            )
-            == today,
+            Payment.created_at >= start,
+
+            Payment.created_at < end,
         )
     )
 
@@ -62,7 +76,18 @@ async def get_revenue_this_month(
     
     clinic = await get_current_clinic(db)
 
-    today = date.today()
+    today = utc_now().date()
+
+    month_start = datetime.combine(
+        today.replace(day=1),
+        time.min,
+        tzinfo=timezone.utc,
+    )
+
+    next_month = (
+        month_start
+        + relativedelta(months=1)
+    )
 
     result = await db.execute(
         select(
@@ -88,17 +113,9 @@ async def get_revenue_this_month(
             Payment.clinic_id
             == clinic.id,
 
-            func.extract(
-                "month",
-                Payment.created_at,
-            )
-            == today.month,
+            Payment.created_at >= month_start,
 
-            func.extract(
-                "year",
-                Payment.created_at,
-            )
-            == today.year,
+            Payment.created_at < next_month,
         )
     )
 
