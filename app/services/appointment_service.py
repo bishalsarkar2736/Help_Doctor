@@ -20,10 +20,8 @@ from app.utils.db_retry import with_retry
 from app.services.domain_event_service import (
     publish_domain_event,
 )
+from app.services.tenant_resolver import resolve_clinic_id
 
-from app.services.clinic_context_service import (
-    get_current_clinic,
-)
 
 from app.services.activity_log_service import (
     log_activity,
@@ -93,6 +91,13 @@ async def _get_verified_doctor_by_user_id(
 
     if not doctor:
         raise ForbiddenError("Doctor not verified")
+    
+    
+    if not doctor.clinic_id:
+        raise ForbiddenError(
+            "Doctor is not assigned to a clinic"
+        )
+
 
     return doctor
 
@@ -114,7 +119,6 @@ async def get_appointment_by_id(
     user: User,
 ) -> Appointment:
     
-    clinic = await get_current_clinic(db)
 
     result = await db.execute(
         select(Appointment)
@@ -127,7 +131,6 @@ async def get_appointment_by_id(
         )
         .where(
             Appointment.id == appointment_id,
-             Appointment.clinic_id == clinic.id,
         )
     )
 
@@ -141,6 +144,15 @@ async def get_appointment_by_id(
     # =========================
     if user.role == UserRole.PATIENT:
 
+        patient = await db.scalar(
+            select(Patient).where(
+                Patient.user_id == user.id,
+            )
+        )
+
+        if not patient:
+            raise NotFoundError("Patient not found")
+
         if appointment.patient_id != user.id:
             raise ForbiddenError("Not your appointment")
 
@@ -151,10 +163,77 @@ async def get_appointment_by_id(
             user.id,
         )
 
+        if appointment.clinic_id != doctor.clinic_id:
+            raise ForbiddenError(
+                "Cross-clinic access denied"
+            )
+
         if appointment.doctor_id != doctor.id:
             raise ForbiddenError("Not your appointment")
 
     return appointment
+
+
+# async def get_appointment_by_id(
+#     db: AsyncSession,
+#     appointment_id: int,
+#     user: User,
+# ) -> Appointment:
+
+#     query = (
+#         select(Appointment)
+#         .options(
+#             selectinload(Appointment.doctor)
+#             .selectinload(Doctor.user),
+
+#             selectinload(Appointment.patient),
+#         )
+#     )
+
+#     if user.role == UserRole.PATIENT:
+
+#         patient = await db.scalar(
+#             select(Patient).where(
+#                 Patient.user_id == user.id,
+#             )
+#         )
+
+#         if not patient:
+#             raise NotFoundError("Patient not found")
+
+#         query = query.where(
+#             Appointment.id == appointment_id,
+#             Appointment.patient_id == user.id,
+#         )
+
+#     elif user.role == UserRole.DOCTOR:
+
+#         doctor = await _get_verified_doctor_by_user_id(
+#             db,
+#             user.id,
+#         )
+
+#         query = query.where(
+#             Appointment.id == appointment_id,
+#             Appointment.clinic_id == doctor.clinic_id,
+#             Appointment.doctor_id == doctor.id,
+#         )
+
+#     elif user.role == UserRole.ADMIN:
+
+#         query = query.where(
+#             Appointment.id == appointment_id,
+#         )
+
+#     else:
+#         raise ForbiddenError("Access denied")
+
+#     appointment = await db.scalar(query)
+
+#     if not appointment:
+#         raise NotFoundError("Appointment not found")
+
+#     return appointment
 
 
 # =========================
@@ -572,14 +651,19 @@ async def _book_appointment_internal(
         ).inc()
         raise
     
-    clinic = await get_current_clinic(db)
+
+    if not doctor.clinic_id:
+        raise BadRequestError(
+            "Doctor is not assigned to a clinic"
+        )
 
     # 5️⃣ Create appointment
     appointment = Appointment(
         doctor_id=doctor.id,
         patient_id=patient.id,
-        clinic_id=clinic.id if clinic else None,
+        clinic_id=doctor.clinic_id,
         scheduled_at=scheduled_at,
+        consultation_fee=doctor.consultation_fee,
         status=AppointmentStatus.PENDING,
     )
 
@@ -707,6 +791,7 @@ async def book_appointment(
 
             await log_activity(
                 db=db,
+                clinic_id=appointment.clinic_id,
                 actor_id=patient.id,
                 action=ActivityAction.APPOINTMENT_BOOKED,
                 entity_type="appointment",
@@ -747,7 +832,6 @@ async def get_patient_appointments(db: AsyncSession, user: User):
     if user.role != UserRole.PATIENT:
         raise ForbiddenError("Only patients allowed")
 
-    clinic = await get_current_clinic(db)
 
     result = await db.execute(
         select(Appointment)
@@ -757,7 +841,6 @@ async def get_patient_appointments(db: AsyncSession, user: User):
         )
         .where(
             Appointment.patient_id == user.id,
-            Appointment.clinic_id == clinic.id,
         )
         .order_by(Appointment.scheduled_at.desc())
     )
@@ -791,13 +874,20 @@ async def patient_cancel_appointment(
     if user.role != UserRole.PATIENT:
         raise ForbiddenError("Only patients allowed")
     
-    clinic = await get_current_clinic(db)
+    patient = await db.scalar(
+        select(Patient).where(
+            Patient.user_id == user.id,
+        )
+    )
+
+    if not patient:
+        raise NotFoundError("Patient not found")
 
     result = await db.execute(
         select(Appointment)
         .where(
             Appointment.id == appointment_id,
-            Appointment.clinic_id == clinic.id,
+            Appointment.clinic_id == patient.clinic_id,
         )
         .with_for_update()
     )
@@ -833,6 +923,7 @@ async def patient_cancel_appointment(
 
     await log_activity(
         db=db,
+        clinic_id=appointment.clinic_id,
         actor_id=user.id,
         action=ActivityAction.APPOINTMENT_CANCELLED,
         entity_type="appointment",
@@ -869,14 +960,23 @@ async def patient_reschedule_appointment(
     if user.role != UserRole.PATIENT:
         raise ForbiddenError("Only patients allowed")
 
-    clinic = await get_current_clinic(db)
+
+    patient = await db.scalar(
+        select(Patient).where(
+            Patient.user_id == user.id,
+        )
+    )
+
+    if not patient:
+        raise NotFoundError("Patient not found")
+
 
     #async with db.begin():
     result = await db.execute(
             select(Appointment)
             .where(
                 Appointment.id == appointment_id,
-                Appointment.clinic_id == clinic.id,
+                Appointment.clinic_id == patient.clinic_id
             )
             .with_for_update()
     )
@@ -961,6 +1061,7 @@ async def patient_reschedule_appointment(
 
     await log_activity(
         db=db,
+        clinic_id=appointment.clinic_id,
         actor_id=user.id,
         action=ActivityAction.APPOINTMENT_RESCHEDULED,
         entity_type="appointment",
@@ -1001,14 +1102,14 @@ async def doctor_update_appointment_status(
         raise ForbiddenError("Doctor only")
 
     doctor = await _get_verified_doctor_by_user_id(db, doctor_user.id)
-
-    clinic = await get_current_clinic(db)
+    
 
     result = await db.execute(
         select(Appointment)
         .where(
             Appointment.id == appointment_id,
-            Appointment.clinic_id == clinic.id,
+            Appointment.clinic_id == doctor.clinic_id,
+
         )
         .with_for_update()
     )
@@ -1085,13 +1186,12 @@ async def doctor_cancel_appointment(
 
     doctor = await _get_verified_doctor_by_user_id(db, doctor_user.id)
 
-    clinic = await get_current_clinic(db)
 
     result = await db.execute(
         select(Appointment)
         .where(
             Appointment.id == appointment_id,
-            Appointment.clinic_id == clinic.id,
+            Appointment.clinic_id == doctor.clinic_id,
         )
         .with_for_update()
     )
@@ -1125,6 +1225,7 @@ async def doctor_cancel_appointment(
 
     await log_activity(
         db=db,
+        clinic_id=appointment.clinic_id,
         actor_id=doctor_user.id,
         action=ActivityAction.APPOINTMENT_CANCELLED,
         entity_type="appointment",
@@ -1161,13 +1262,12 @@ async def doctor_reschedule_appointment(
 
     doctor = await _get_verified_doctor_by_user_id(db, doctor_user.id)
 
-    clinic = await get_current_clinic(db)
 
     result = await db.execute(
         select(Appointment)
         .where(
             Appointment.id == appointment_id,
-            Appointment.clinic_id == clinic.id,
+            Appointment.clinic_id == doctor.clinic_id,
         )
         .with_for_update()
     )
@@ -1248,6 +1348,7 @@ async def doctor_reschedule_appointment(
 
     await log_activity(
         db=db,
+        clinic_id=appointment.clinic_id,
         actor_id=doctor_user.id,
         action=ActivityAction.APPOINTMENT_RESCHEDULED,
         entity_type="appointment",
@@ -1282,12 +1383,12 @@ async def doctor_today_appointments(db: AsyncSession, user: User):
     start = datetime.combine(today, datetime.min.time(), tzinfo=UTC)
     end = datetime.combine(today, datetime.max.time(), tzinfo=UTC)
 
-    clinic = await get_current_clinic(db)
+
 
     result = await db.execute(
         select(Appointment).where(
             Appointment.doctor_id == doctor.id,
-            Appointment.clinic_id == clinic.id,
+            Appointment.clinic_id == doctor.clinic_id,
             Appointment.scheduled_at >= start,
             Appointment.scheduled_at <= end,
         )
@@ -1304,15 +1405,17 @@ async def doctor_pending_appointments(db: AsyncSession, user: User):
 
     doctor = await _get_verified_doctor_by_user_id(db, user.id)
 
-    clinic = await get_current_clinic(db)
 
     result = await db.execute(
         select(Appointment).where(
             Appointment.doctor_id == doctor.id,
-            Appointment.clinic_id == clinic.id,
+            Appointment.clinic_id == doctor.clinic_id,
             Appointment.status == AppointmentStatus.PENDING,
         )
-        .order_by(Appointment.scheduled_at.asc(), Appointment.id.asc())
+        .order_by(
+            Appointment.scheduled_at.asc(), 
+            Appointment.id.asc()
+        )
     )
 
     return result.scalars().all()
@@ -1329,14 +1432,13 @@ async def doctor_pending_with_patient(
 
     doctor = await _get_verified_doctor_by_user_id(db, user.id)
 
-    clinic = await get_current_clinic(db)
 
     result = await db.execute(
         select(Appointment, User)
         .join(User, Appointment.patient_id == User.id)
         .where(
             Appointment.doctor_id == doctor.id,
-            Appointment.clinic_id == clinic.id,
+            Appointment.clinic_id == doctor.clinic_id,
             Appointment.status == AppointmentStatus.PENDING,
         )
         .order_by(Appointment.scheduled_at.asc(), Appointment.id.asc())
@@ -1354,12 +1456,11 @@ async def doctor_confirmed_appointments(db: AsyncSession, user: User):
 
     doctor = await _get_verified_doctor_by_user_id(db, user.id)
 
-    clinic = await get_current_clinic(db)
 
     result = await db.execute(
         select(Appointment).where(
             Appointment.doctor_id == doctor.id,
-            Appointment.clinic_id == clinic.id,
+            Appointment.clinic_id == doctor.clinic_id,
             Appointment.status == AppointmentStatus.CONFIRMED,
         )
         .order_by(Appointment.scheduled_at.asc(), Appointment.id.asc())
@@ -1379,14 +1480,13 @@ async def doctor_confirmed_with_patient(
 
     doctor = await _get_verified_doctor_by_user_id(db, user.id)
 
-    clinic = await get_current_clinic(db)
 
     result = await db.execute(
         select(Appointment, User)
         .join(User, Appointment.patient_id == User.id)
         .where(
             Appointment.doctor_id == doctor.id,
-            Appointment.clinic_id == clinic.id,
+            Appointment.clinic_id == doctor.clinic_id,
             Appointment.status == AppointmentStatus.CONFIRMED,
         )
         .order_by(Appointment.scheduled_at.asc(), Appointment.id.asc())
@@ -1403,6 +1503,7 @@ async def doctor_confirmed_with_patient(
 
 async def admin_force_cancel_appointment(
     db: AsyncSession,
+    clinic_id: int,
     admin: User,
     appointment_id: int,
     reason: str,
@@ -1415,13 +1516,18 @@ async def admin_force_cancel_appointment(
     if admin.role != UserRole.ADMIN:
         raise ForbiddenError("Admin only")
 
-    clinic = await get_current_clinic(db)
+    resolved_clinic_id = await resolve_clinic_id(
+        db=db,
+        user=admin,
+        clinic_id=clinic_id,
+    )
+   
 
     result = await db.execute(
         select(Appointment)
         .where(
             Appointment.id == appointment_id,
-            Appointment.clinic_id == clinic.id,
+            Appointment.clinic_id == resolved_clinic_id,
 
         )
         .with_for_update()
@@ -1457,6 +1563,7 @@ async def admin_force_cancel_appointment(
 
     await log_activity(
         db=db,
+        clinic_id=appointment.clinic_id,
         actor_id=admin.id,
         action=ActivityAction.ADMIN_FORCE_CANCEL,
         entity_type="appointment",

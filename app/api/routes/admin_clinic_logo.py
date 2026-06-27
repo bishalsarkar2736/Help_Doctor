@@ -24,6 +24,8 @@ from app.security.rbac import (
 from app.services.clinic_logo_service import (
     upload_clinic_logo,
 )
+from app.services.tenant_resolver import resolve_clinic_id
+
 
 router = APIRouter(
     prefix="/admin/clinic",
@@ -33,6 +35,7 @@ router = APIRouter(
 
 @router.post("/logo")
 async def upload_logo(
+    clinic_id: int,
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
     admin : User =Depends(
@@ -41,7 +44,15 @@ async def upload_logo(
         )
     ),
 ):
+    
+    clinic_id = await resolve_clinic_id(
+        db=db,
+        user=admin,
+        clinic_id=clinic_id,
+    )
+
     return await upload_clinic_logo(
         db=db,
+        clinic_id=clinic_id,
         file=file,
     )

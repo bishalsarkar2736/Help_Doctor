@@ -1,9 +1,6 @@
 import os
-
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker,create_async_engine
-
 from app.config import get_settings
-from app.db.base import Base
 from opentelemetry.instrumentation.sqlalchemy import (
     SQLAlchemyInstrumentor,
 )

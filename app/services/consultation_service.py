@@ -4,7 +4,7 @@ from app.models.appointment import (
     Appointment,
     AppointmentStatus,
 )
-
+import json
 from app.models.user import UserRole
 
 from app.services.appointment_transition_service import (
@@ -66,14 +66,15 @@ async def start_consultation(
 
     await log_activity(
         db=db,
+        clinic_id=appointment.clinic_id,
         actor_id=doctor_id,
         action=ActivityAction.CONSULTATION_STARTED,
         entity_type="appointment",
         entity_id=appointment.id,
-        details={
+        details=json.dumps({
             "patient_id": appointment.patient_id,
             "doctor_id": appointment.doctor_id,
-        },
+        }),
     )
 
     event = ConsultationStartedEvent(

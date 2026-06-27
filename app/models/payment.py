@@ -1,13 +1,20 @@
 from sqlalchemy import (
-    Integer,
     String,
     DateTime,
     ForeignKey,
     Numeric,
     JSON,
     Index,
+    text
 
 )
+from decimal import Decimal
+from sqlalchemy import Enum as SqlEnum
+
+from app.models.enums.payment_status import (
+    PaymentStatus,
+)
+from uuid import uuid4
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 from datetime import datetime
@@ -20,6 +27,13 @@ class Payment(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
 
+    public_invoice_id: Mapped[str] = mapped_column(
+        String(36),
+        unique=True,
+        nullable=False,
+        default=lambda: str(uuid4()),
+    )
+
     appointment_id: Mapped[int] = mapped_column(
         ForeignKey("appointments.id", ondelete="CASCADE"),
         index=True,
@@ -30,7 +44,7 @@ class Payment(Base):
         index=True,
     )
 
-    amount: Mapped[float] = mapped_column(
+    amount: Mapped[Decimal] = mapped_column(
         Numeric(10, 2),
         nullable=False,
     )
@@ -45,9 +59,13 @@ class Payment(Base):
     )
     # bkash | nagad | rocket
 
-    status: Mapped[str] = mapped_column(
-        String(20),
-        default="PENDING",
+    status: Mapped[PaymentStatus] = mapped_column(
+        SqlEnum(
+            PaymentStatus,
+            name="payment_status",
+        ),
+        default=PaymentStatus.PENDING,
+        nullable=False,
     )
     # PENDING | SUCCESS | FAILED | REFUNDED
 
@@ -59,6 +77,7 @@ class Payment(Base):
 
     gateway_payment_id: Mapped[str | None] = mapped_column(
         String(100),
+        unique=True,
         nullable=True,
     )
 
@@ -77,12 +96,28 @@ class Payment(Base):
         onupdate=func.now(),
     )
 
-    clinic_id: Mapped[int | None] = mapped_column(
+    refunded_amount: Mapped[Decimal | None] = mapped_column(
+    Numeric(10, 2),
+    nullable=True,
+)
+
+    refunded_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    refund_transaction_id: Mapped[str | None] = mapped_column(
+        String(100),
+        unique=True,
+        nullable=True,
+    )
+
+    clinic_id: Mapped[int] = mapped_column(
         ForeignKey(
             "clinics.id",
-            ondelete="SET NULL",
+            ondelete="RESTRICT",   # or remove ondelete
         ),
-        nullable=True,
+        nullable=False,
         index=True,
     )
 
@@ -100,10 +135,11 @@ class Payment(Base):
             "idx_unique_pending_payment",
             "appointment_id",
             unique=True,
-            postgresql_where=(status == "PENDING"),
+            postgresql_where=text(
+                "status = 'PENDING'"
+            ),
         ),
     )
 
 
 Index("idx_payment_status", Payment.status)
-Index("idx_payment_transaction", Payment.transaction_id)

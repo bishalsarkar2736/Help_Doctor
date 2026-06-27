@@ -10,14 +10,11 @@ from app.models.medicine_ai_feedback import (
 )
 
 
-from app.services.clinic_context_service import (
-    get_current_clinic,
-)
-
 
 async def create_ai_log(
     db: AsyncSession,
     *,
+    clinic_id : int,
     medicine_id: int | None,
     medicine_name: str | None,
     question: str,
@@ -26,16 +23,11 @@ async def create_ai_log(
     tokens_used: int,
     latency_ms: int,
 ):
-    
-    clinic = await get_current_clinic(db)
 
 
     log = MedicineAILog(
-        clinic_id=(
-            clinic.id
-            if clinic
-            else None
-        ),
+        
+        clinic_id=clinic_id,
 
         medicine_id=medicine_id,
         medicine_name=medicine_name,
@@ -45,6 +37,7 @@ async def create_ai_log(
         tokens_used=tokens_used,
         latency_ms=latency_ms,
     )
+
 
     db.add(log)
 
@@ -58,13 +51,12 @@ async def create_ai_log(
 async def get_ai_logs(
     db: AsyncSession,
     *,
+    clinic_id : int,
     medicine_name: str | None = None,
     prompt_version: str | None = None,
     helpful: bool | None = None,
     limit: int = 50,
 ):
-    
-    clinic = await get_current_clinic(db)
 
     query = (
         select(
@@ -78,7 +70,7 @@ async def get_ai_logs(
         )
         .where(
             MedicineAILog.clinic_id
-            == clinic.id
+            == clinic_id
         )
     )
 
@@ -127,9 +119,8 @@ async def get_ai_logs(
 
 async def get_ai_log_stats(
     db: AsyncSession,
+    clinic_id : int,
 ):
-    
-    clinic = await get_current_clinic(db)
 
 
     total_queries = await db.scalar(
@@ -139,7 +130,7 @@ async def get_ai_log_stats(
             )
         ).where(
             MedicineAILog.clinic_id
-            == clinic.id
+            == clinic_id
         )
     )
 
@@ -153,7 +144,7 @@ async def get_ai_log_stats(
             )
         ).where(
             MedicineAILog.clinic_id
-            == clinic.id
+            == clinic_id
         )
     )
 
@@ -167,7 +158,7 @@ async def get_ai_log_stats(
             )
         ).where(
             MedicineAILog.clinic_id
-            == clinic.id
+            == clinic_id
         )
     )
 

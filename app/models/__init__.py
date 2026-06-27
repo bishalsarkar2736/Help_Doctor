@@ -16,3 +16,5 @@ from .push_subscription import PushSubscription
 from .outbox_dead_letter import DeadLetterEvent
 from .notification_preference import NotificationPreference
 from .medicine_alias import MedicineAlias
+from .clinic import Clinic
+from .medicine import Medicine

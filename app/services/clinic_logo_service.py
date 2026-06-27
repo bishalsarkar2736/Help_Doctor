@@ -1,12 +1,9 @@
 from pathlib import Path
 from uuid import uuid4
-
+from sqlalchemy import select
 from fastapi import UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.services.clinic_context_service import (
-    get_current_clinic,
-)
+from app.models.clinic import Clinic
 
 from app.try_except.exceptions import (
     NotFoundError,
@@ -24,14 +21,17 @@ UPLOAD_DIR.mkdir(
 async def upload_clinic_logo(
     *,
     db: AsyncSession,
+    clinic_id: int,
     file: UploadFile,
 ):
 
-    clinic = await get_current_clinic(
-        db
+    clinic = await db.scalar(
+        select(Clinic).where(
+            Clinic.id == clinic_id
+        )
     )
 
-    if clinic is None:
+    if not clinic:
         raise NotFoundError(
             "Clinic not found"
         )

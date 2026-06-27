@@ -6,19 +6,19 @@ from app.schemas.prescription import (
     PrescriptionCreate,
     PrescriptionResponse,
 )
-from app.services.prescription_service import create_prescription
 from app.security.rbac import require_roles
 from app.models.user import User, UserRole
 from app.try_except.exceptions import NotFoundError, ForbiddenError,BadRequestError
 from app.models.prescription import Prescription,PrescriptionStatus
 from app.services.prescription_service import (
+    create_prescription,
     issue_prescription,
     get_prescription_by_id,
     get_patient_prescriptions,
     get_appointment_prescription,
     update_prescription,
+    get_doctor_prescriptions,
 )
-from app.services.clinic_service import get_clinic
 from sqlalchemy.exc import IntegrityError
 
 from sqlalchemy import select
@@ -75,7 +75,9 @@ from app.mappers.prescription_mapper import (
     to_prescription_response,
     to_prescription_revision_response,
 )
-
+from app.services.clinic_service import (
+    get_clinic_by_id,
+)
 
 
 
@@ -145,10 +147,28 @@ async def issue_prescription_endpoint(
     db: AsyncSession = Depends(get_db),
     doctor: User = Depends(require_roles(UserRole.DOCTOR)),
 ):
-    prescription = await db.get(
-        Prescription,
-        prescription_id,
+    
+    doctor_profile = await get_doctor_profile(
+        db=db,
+        user_id=doctor.id,
     )
+
+    result = await db.execute(
+        select(Prescription)
+        .where(
+            Prescription.id == prescription_id,
+            Prescription.doctor_id == doctor_profile.id,
+            Prescription.clinic_id == doctor_profile.clinic_id,
+        )
+    )
+
+    prescription = result.scalar_one_or_none()
+
+    if not prescription:
+        raise NotFoundError(
+            "Prescription not found"
+        )
+    
 
     if not prescription:
         raise NotFoundError("Prescription not found")
@@ -202,6 +222,7 @@ async def create_revision(
     prescription = await get_prescription_by_id(
         db=db,
         prescription_id=prescription_id,
+        user=current_user,
     )
 
     if prescription.doctor_id != doctor.id:
@@ -262,9 +283,26 @@ async def get_revision_history(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_roles(UserRole.DOCTOR)),
 ):
+    
+    prescription = await get_prescription_by_id(
+        db=db,
+        prescription_id=prescription_id,
+        user=current_user,
+    )
+
+    doctor = await get_doctor_profile(
+        db=db,
+        user_id=current_user.id,
+    )
+
+    if prescription.doctor_id != doctor.id:
+        raise ForbiddenError("Not allowed")
+    
+
     revisions = await get_prescription_revision_history(
         db=db,
         prescription_id=prescription_id,
+        clinic_id=prescription.clinic_id,
     )
 
     return {
@@ -290,6 +328,7 @@ async def get_prescription_endpoint(
     prescription = await get_prescription_by_id(
         db=db,
         prescription_id=prescription_id,
+        user=user,
     )
 
     # RBAC ownership checks
@@ -355,10 +394,6 @@ async def my_prescriptions_endpoint(
     ),
 ):
 
-    # return await get_patient_prescriptions(
-    #     db=db,
-    #     patient_id=patient.id,
-    # )
     prescriptions = await get_patient_prescriptions(
         db=db,
         patient_id=patient.id,
@@ -387,6 +422,49 @@ async def my_prescriptions_endpoint(
 
 
 @router.get(
+    "/doctor/me",
+    response_model=list[PrescriptionResponse],
+)
+async def my_created_prescriptions(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(
+        require_roles(UserRole.DOCTOR)
+    ),
+):
+    doctor = await get_doctor_profile(
+        db=db,
+        user_id=user.id,
+    )
+
+    prescriptions = await get_doctor_prescriptions(
+        db=db,
+        doctor=doctor,
+    )
+
+    all_medicine_names = {
+        item.medicine_name
+        for prescription in prescriptions
+        for item in prescription.items
+    }
+
+    existing_medicines = (
+        await get_existing_medicine_names(
+            db,
+            list(all_medicine_names),
+        )
+    )
+
+    return [
+        to_prescription_response(
+            prescription,
+            existing_medicines,
+        )
+        for prescription in prescriptions
+    ]
+
+
+
+@router.get(
     "/appointments/{appointment_id}",
     response_model=PrescriptionResponse,
 )
@@ -403,29 +481,8 @@ async def appointment_prescription_endpoint(
     prescription = await get_appointment_prescription(
         db=db,
         appointment_id=appointment_id,
+        user=user,
     )
-
-    # if user.role == UserRole.DOCTOR:
-
-    #     if not user.doctor:
-    #         raise ForbiddenError("Doctor profile not found")
-
-    #     if prescription.doctor_id != user.doctor.id:
-    #         raise ForbiddenError("Not allowed")
-
-    if user.role == UserRole.DOCTOR:
-
-        doctor_profile = await get_doctor_profile(
-            db=db,
-            user_id=user.id,
-        )
-
-        if prescription.doctor_id != doctor_profile.id:
-            raise ForbiddenError("Not allowed")
-
-    elif user.role == UserRole.PATIENT:
-        if prescription.patient_id != user.id:
-            raise ForbiddenError("Not allowed")
 
     #return prescription
 
@@ -462,6 +519,7 @@ async def download_prescription_pdf(
     prescription = await get_prescription_by_id(
         db=db,
         prescription_id=prescription_id,
+        user=user,
     )
 
     # ====================================
@@ -483,6 +541,12 @@ async def download_prescription_pdf(
             db=db,
             user_id=user.id,
         )
+
+        if not doctor_profile:
+            raise ForbiddenError(
+                "Doctor profile not found"
+            )
+        
         
         if prescription.doctor_id != doctor_profile.id:
             raise ForbiddenError("Not allowed")
@@ -503,7 +567,16 @@ async def download_prescription_pdf(
     # GENERATE PDF
     # ====================================
 
-    clinic = await get_clinic(db)
+    clinic = await get_clinic_by_id(
+        db,
+        prescription.clinic_id,
+    )
+
+    if not clinic:
+        raise NotFoundError(
+            "Clinic not found"
+        )
+    
 
     pdf = generate_prescription_pdf(
         prescription=prescription,
@@ -552,6 +625,7 @@ async def update_prescription_endpoint(
     prescription = await get_prescription_by_id(
         db=db,
         prescription_id=prescription_id,
+        user=doctor,
     )
 
     # ====================================

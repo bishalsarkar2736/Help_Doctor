@@ -1,6 +1,6 @@
 from pydantic import BaseModel,ConfigDict,Field
 from datetime import datetime
-
+from decimal import Decimal
 
 
 class DoctorListItem(BaseModel):
@@ -13,10 +13,9 @@ class DoctorListItem(BaseModel):
     experience_years: int
     bio: str | None
 
-    # class Config:
-    #     from_attributes = True
+    consultation_fee: Decimal
 
-
+    
 
 class DoctorPublic(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -28,12 +27,12 @@ class DoctorPublic(BaseModel):
     experience_years: int
     bio: str | None = None
 
+    consultation_fee: Decimal
+
     is_verified: bool
     created_at: datetime
 
-    # class Config:
-    #     from_attributes = True
-
+    
 
 class DoctorProfileUpdate(BaseModel):
     qualification: str | None = Field(
@@ -44,4 +43,9 @@ class DoctorProfileUpdate(BaseModel):
     medical_registration_number: str | None = Field(
         default=None,
         max_length=100,
+    )
+
+    consultation_fee: Decimal | None = Field(
+        default=None,
+        ge=0,
     )

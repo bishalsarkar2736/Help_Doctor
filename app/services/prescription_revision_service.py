@@ -45,7 +45,6 @@ from app.try_except.exceptions import (
     BadRequestError,
     NotFoundError,
 )
-from app.services.clinic_context_service import get_current_clinic
 
 
 async def create_prescription_revision(
@@ -67,7 +66,7 @@ async def create_prescription_revision(
     NEW ISSUED REVISION
     """
 
-    clinic = await get_current_clinic(db)
+    clinic_id = prescription.clinic_id
 
     # ====================================================
     # VALIDATION
@@ -96,7 +95,7 @@ async def create_prescription_revision(
         select(Prescription)
         .where(
             Prescription.id == prescription.id,
-            Prescription.clinic_id == clinic.id,
+            Prescription.clinic_id == clinic_id,
         )
         .with_for_update()
     )
@@ -122,7 +121,7 @@ async def create_prescription_revision(
             Prescription.appointment_id
             == prescription.appointment_id,
 
-            Prescription.clinic_id== clinic.id,
+            Prescription.clinic_id== clinic_id,
 
             Prescription.is_latest_revision.is_(True),
         )
@@ -177,7 +176,7 @@ async def create_prescription_revision(
                 )
             ),
             Prescription.clinic_id
-            == clinic.id,
+            == clinic_id,
         )
     )
 
@@ -216,6 +215,7 @@ async def create_prescription_revision(
             db=db,
             template_id=data.template_id,
             doctor_id=doctor.id,
+            clinic_id=clinic_id,
         )
 
         for item in template.items:
@@ -299,10 +299,15 @@ async def create_prescription_revision(
 
     await log_activity(
         db=db,
+        clinic_id=clinic_id,
         actor_id=doctor.user_id,
         action=ActivityAction.PRESCRIPTION_REVISED,
-        entity_type="appointment",
-        entity_id=prescription.id,
+        entity_type="prescription",
+        entity_id=new_revision.id,
+        details=(
+            f"Revision {next_revision_number} "
+            f"created from prescription {prescription.id}"
+        ),
     )
 
     # ====================================================

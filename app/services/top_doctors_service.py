@@ -6,18 +6,17 @@ from app.models.user import User
 from app.models.doctor import Doctor
 from app.models.payment import Payment
 from app.models.appointment import Appointment
-
-from app.services.clinic_context_service import (
-    get_current_clinic,
+from app.models.enums.payment_status import (
+    PaymentStatus,
 )
-
 
 async def get_top_doctors(
     *,
     db: AsyncSession,
+    clinic_id : int,
     limit: int = 5,
 ):
-    clinic = await get_current_clinic(db)
+
 
     result = await db.execute(
         select(
@@ -67,16 +66,16 @@ async def get_top_doctors(
 
         .where(
             Doctor.clinic_id
-            == clinic.id,
+            == clinic_id,
 
             Appointment.clinic_id
-            == clinic.id,
+            == clinic_id,
 
             Payment.clinic_id
-            == clinic.id,
+            == clinic_id,
 
-            Payment.status
-            == "SUCCESS",
+            Payment.status 
+            == PaymentStatus.SUCCESS,
         )
 
         .group_by(

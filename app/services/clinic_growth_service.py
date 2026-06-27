@@ -8,9 +8,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.appointment import Appointment
 from app.models.patient import Patient
 
-from app.services.clinic_context_service import (
-    get_current_clinic,
-)
 
 from app.services.revenue_analytics_service import (
     get_monthly_revenue,
@@ -22,9 +19,10 @@ from app.services.revenue_analytics_service import (
 async def get_monthly_patient_growth(
     *,
     db: AsyncSession,
+    clinic_id: int,
     months: int = 12,
 ):
-    clinic = await get_current_clinic(db)
+
 
     start_date = (
         date.today().replace(day=1)
@@ -44,7 +42,7 @@ async def get_monthly_patient_growth(
         )
         .where(
             Patient.clinic_id
-            == clinic.id,
+            == clinic_id,
 
             Patient.created_at
             >= start_date,
@@ -68,9 +66,9 @@ async def get_monthly_patient_growth(
 async def get_monthly_appointment_growth(
     *,
     db: AsyncSession,
+    clinic_id: int,
     months: int = 12,
 ):
-    clinic = await get_current_clinic(db)
 
     start_date = (
         date.today().replace(day=1)
@@ -90,7 +88,7 @@ async def get_monthly_appointment_growth(
         )
         .where(
             Appointment.clinic_id
-            == clinic.id,
+            == clinic_id,
 
             Appointment.created_at
             >= start_date,
@@ -115,20 +113,24 @@ async def get_monthly_appointment_growth(
 async def get_growth_dashboard(
     *,
     db: AsyncSession,
+    clinic_id: int,
 ):
     return {
         "monthly_patient_growth":
             await get_monthly_patient_growth(
-                db=db
+                db=db,
+                clinic_id=clinic_id,
             ),
 
         "monthly_appointment_growth":
             await get_monthly_appointment_growth(
-                db=db
+                db=db,
+                clinic_id=clinic_id,
             ),
 
         "monthly_revenue_growth":
             await get_monthly_revenue(
-                db=db
+                db=db,
+                clinic_id=clinic_id,
             ),
     }

@@ -1,7 +1,7 @@
 from sqlalchemy import Column,Integer,String,DateTime,Boolean,ForeignKey
 from sqlalchemy.orm import relationship
-from datetime import datetime
-from app.db.postgres import Base
+from sqlalchemy import DateTime
+from app.db.base import Base
 from sqlalchemy.sql import func
 
 class RefreshToken(Base):
@@ -14,7 +14,7 @@ class RefreshToken(Base):
     user = relationship("User", back_populates="refresh_tokens")
 
     revoked = Column(Boolean, default=False)
-    from sqlalchemy import DateTime
+    
 
     expires_at = Column(DateTime(timezone=True), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

@@ -2,7 +2,6 @@ from datetime import (
     date,
     datetime,
     time,
-    timedelta,
 )
 
 from sqlalchemy import select
@@ -23,10 +22,6 @@ from app.schemas.appointment_calendar_schema import (
     CalendarAppointmentResponse,
 )
 
-from app.services.clinic_context_service import (
-    get_current_clinic,
-)
-
 
 #DEFAULT_APPOINTMENT_DURATION_MINUTES = 30
 
@@ -34,12 +29,13 @@ from app.services.clinic_context_service import (
 async def get_calendar_appointments(
     *,
     db: AsyncSession,
+    clinic_id : int,
     start_date: date,
     end_date: date,
     doctor_id: int | None = None,
 ):
     
-    clinic = await get_current_clinic(db)
+
 
     start_dt = datetime.combine(
         start_date,
@@ -63,7 +59,7 @@ async def get_calendar_appointments(
         .where(
             Appointment.scheduled_at >= start_dt,
             Appointment.scheduled_at <= end_dt,
-            Appointment.clinic_id == clinic.id,
+            Appointment.clinic_id == clinic_id,
         )
         .order_by(
             Appointment.scheduled_at.asc()

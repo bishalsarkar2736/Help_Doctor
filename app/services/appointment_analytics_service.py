@@ -1,281 +1,247 @@
-from datetime import date
 
-from sqlalchemy import (
-    func,
-    select,
-)
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from sqlalchemy.ext.asyncio import (
-    AsyncSession,
-)
 
 from app.models.appointment import (
     Appointment,
     AppointmentStatus,
 )
-
-from app.services.clinic_context_service import (
-    get_current_clinic,
+from app.utils.date_ranges import (
+    get_month_range,
 )
 
 
-today = date.today()
-
-
-async def get_status_total(
-    db: AsyncSession,
-    status: AppointmentStatus,
-    clinic_id: int,
-) -> int:
-
-    result = await db.execute(
-        select(
-            func.count(
-                Appointment.id
-            )
-        ).where(
-            Appointment.status == status,
-            Appointment.clinic_id
-            == clinic_id,
-        )
-    )
-
-    return result.scalar_one()
-
-
-async def get_status_this_month(
-    db: AsyncSession,
-    status: AppointmentStatus,
-    clinic_id: int,
-) -> int:
-
-    result = await db.execute(
-        select(
-            func.count(
-                Appointment.id
-            )
-        ).where(
-            Appointment.status == status,
-            Appointment.clinic_id
-            == clinic_id,
-
-            func.extract(
-                "month",
-                Appointment.created_at,
-            ) == today.month,
-
-            func.extract(
-                "year",
-                Appointment.created_at,
-            ) == today.year,
-        )
-    )
-
-    return result.scalar_one()
-
-
-async def get_confirmed_this_month(
-    db: AsyncSession,
-    clinic_id: int,
-) -> int:
-
-    result = await db.execute(
-        select(
-            func.count(
-                Appointment.id
-            )
-        ).where(
-            Appointment.clinic_id
-            == clinic_id,
-
-            Appointment.confirmed_at.is_not(
-                None
-            ),
-
-            func.extract(
-                "month",
-                Appointment.confirmed_at,
-            ) == today.month,
-
-            func.extract(
-                "year",
-                Appointment.confirmed_at,
-            ) == today.year,
-        )
-    )
-
-    return result.scalar_one()
-
-
-async def get_completed_this_month(
-    db: AsyncSession,
-    clinic_id: int,
-) -> int:
-
-    result = await db.execute(
-        select(
-            func.count(
-                Appointment.id
-            )
-        ).where(
-            Appointment.clinic_id
-            == clinic_id,
-
-            Appointment.completed_at.is_not(
-                None
-            ),
-
-            func.extract(
-                "month",
-                Appointment.completed_at,
-            ) == today.month,
-
-            func.extract(
-                "year",
-                Appointment.completed_at,
-            ) == today.year,
-        )
-    )
-
-    return result.scalar_one()
-
-
-async def get_cancelled_this_month(
-    db: AsyncSession,
-    clinic_id: int,
-) -> int:
-
-    result = await db.execute(
-        select(
-            func.count(
-                Appointment.id
-            )
-        ).where(
-            Appointment.clinic_id
-            == clinic_id,
-
-            Appointment.cancelled_at.is_not(
-                None
-            ),
-
-            func.extract(
-                "month",
-                Appointment.cancelled_at,
-            ) == today.month,
-
-            func.extract(
-                "year",
-                Appointment.cancelled_at,
-            ) == today.year,
-        )
-    )
-
-    return result.scalar_one()
-
-
 async def get_appointment_analytics(
+    *,
     db: AsyncSession,
+    clinic_id: int,
 ):
-
-    clinic = await get_current_clinic(
-        db
+    month_start, next_month = (
+        get_month_range()
     )
+
+    stmt = select(
+
+        # ----------------------------------
+        # SCHEDULED
+        # ----------------------------------
+
+        func.count(Appointment.id)
+        .filter(
+            Appointment.status
+            == AppointmentStatus.SCHEDULED
+        )
+        .label("scheduled_total"),
+
+        func.count(Appointment.id)
+        .filter(
+            Appointment.status
+            == AppointmentStatus.SCHEDULED,
+
+            Appointment.created_at
+            >= month_start,
+
+            Appointment.created_at
+            < next_month,
+        )
+        .label("scheduled_this_month"),
+
+        # ----------------------------------
+        # CONFIRMED
+        # ----------------------------------
+
+        func.count(Appointment.id)
+        .filter(
+            Appointment.status
+            == AppointmentStatus.CONFIRMED
+        )
+        .label("confirmed_total"),
+
+        func.count(Appointment.id)
+        .filter(
+            Appointment.status
+            == AppointmentStatus.CONFIRMED,
+
+            Appointment.created_at
+            >= month_start,
+
+            Appointment.created_at
+            < next_month,
+        )
+        .label("confirmed_this_month"),
+
+        # ----------------------------------
+        # COMPLETED
+        # ----------------------------------
+
+        func.count(Appointment.id)
+        .filter(
+            Appointment.status
+            == AppointmentStatus.COMPLETED
+        )
+        .label("completed_total"),
+
+        func.count(Appointment.id)
+        .filter(
+            Appointment.status
+            == AppointmentStatus.COMPLETED,
+
+            Appointment.created_at
+            >= month_start,
+
+            Appointment.created_at
+            < next_month,
+        )
+        .label("completed_this_month"),
+
+        # ----------------------------------
+        # CANCELLED
+        # ----------------------------------
+
+        func.count(Appointment.id)
+        .filter(
+            Appointment.status
+            == AppointmentStatus.CANCELLED
+        )
+        .label("cancelled_total"),
+
+        func.count(Appointment.id)
+        .filter(
+            Appointment.status
+            == AppointmentStatus.CANCELLED,
+
+            Appointment.created_at
+            >= month_start,
+
+            Appointment.created_at
+            < next_month,
+        )
+        .label("cancelled_this_month"),
+
+        # ----------------------------------
+        # NO SHOW
+        # ----------------------------------
+
+        func.count(Appointment.id)
+        .filter(
+            Appointment.status
+            == AppointmentStatus.NO_SHOW
+        )
+        .label("no_show_total"),
+
+        func.count(Appointment.id)
+        .filter(
+            Appointment.status
+            == AppointmentStatus.NO_SHOW,
+
+            Appointment.created_at
+            >= month_start,
+
+            Appointment.created_at
+            < next_month,
+        )
+        .label("no_show_this_month"),
+
+        # ----------------------------------
+        # IN CONSULTATION
+        # ----------------------------------
+
+        func.count(Appointment.id)
+        .filter(
+            Appointment.status
+            == AppointmentStatus.IN_CONSULTATION
+        )
+        .label("in_consultation_total"),
+
+        # ----------------------------------
+        # TIMESTAMP-BASED METRICS
+        # ----------------------------------
+
+        func.count(Appointment.id)
+        .filter(
+            Appointment.confirmed_at
+            >= month_start,
+
+            Appointment.confirmed_at
+            < next_month,
+        )
+        .label(
+            "confirmed_by_timestamp_this_month"
+        ),
+
+        func.count(Appointment.id)
+        .filter(
+            Appointment.completed_at
+            >= month_start,
+
+            Appointment.completed_at
+            < next_month,
+        )
+        .label(
+            "completed_by_timestamp_this_month"
+        ),
+
+        func.count(Appointment.id)
+        .filter(
+            Appointment.cancelled_at
+            >= month_start,
+
+            Appointment.cancelled_at
+            < next_month,
+        )
+        .label(
+            "cancelled_by_timestamp_this_month"
+        ),
+    ).where(
+        Appointment.clinic_id
+        == clinic_id
+    )
+
+    result = await db.execute(stmt)
+
+    row = result.one()
 
     return {
-
         "scheduled_total":
-            await get_status_total(
-                db,
-                AppointmentStatus.SCHEDULED,
-                clinic.id,
-            ),
+            row.scheduled_total or 0,
 
         "scheduled_this_month":
-            await get_status_this_month(
-                db,
-                AppointmentStatus.SCHEDULED,
-                clinic.id,
-            ),
+            row.scheduled_this_month or 0,
 
         "confirmed_total":
-            await get_status_total(
-                db,
-                AppointmentStatus.CONFIRMED,
-                clinic.id,
-            ),
+            row.confirmed_total or 0,
 
         "confirmed_this_month":
-            await get_status_this_month(
-                db,
-                AppointmentStatus.CONFIRMED,
-                clinic.id,
-            ),
+            row.confirmed_this_month or 0,
 
         "completed_total":
-            await get_status_total(
-                db,
-                AppointmentStatus.COMPLETED,
-                clinic.id,
-            ),
+            row.completed_total or 0,
 
         "completed_this_month":
-            await get_status_this_month(
-                db,
-                AppointmentStatus.COMPLETED,
-                clinic.id,
-            ),
+            row.completed_this_month or 0,
 
         "cancelled_total":
-            await get_status_total(
-                db,
-                AppointmentStatus.CANCELLED,
-                clinic.id,
-            ),
+            row.cancelled_total or 0,
 
         "cancelled_this_month":
-            await get_status_this_month(
-                db,
-                AppointmentStatus.CANCELLED,
-                clinic.id,
-            ),
+            row.cancelled_this_month or 0,
 
         "no_show_total":
-            await get_status_total(
-                db,
-                AppointmentStatus.NO_SHOW,
-                clinic.id,
-            ),
+            row.no_show_total or 0,
 
         "no_show_this_month":
-            await get_status_this_month(
-                db,
-                AppointmentStatus.NO_SHOW,
-                clinic.id,
-            ),
+            row.no_show_this_month or 0,
 
         "in_consultation_total":
-            await get_status_total(
-                db,
-                AppointmentStatus.IN_CONSULTATION,
-                clinic.id,
-            ),
+            row.in_consultation_total or 0,
 
         "confirmed_by_timestamp_this_month":
-            await get_confirmed_this_month(
-                db,
-                clinic.id,
-            ),
+            row.confirmed_by_timestamp_this_month or 0,
 
         "completed_by_timestamp_this_month":
-            await get_completed_this_month(
-                db,
-                clinic.id,
-            ),
+            row.completed_by_timestamp_this_month or 0,
 
         "cancelled_by_timestamp_this_month":
-            await get_cancelled_this_month(
-                db,
-                clinic.id,
-            ),
+            row.cancelled_by_timestamp_this_month or 0,
     }
-

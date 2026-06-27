@@ -40,6 +40,9 @@ from prometheus_client import (
     CONTENT_TYPE_LATEST,
 )
 from fastapi.responses import Response
+from app.task.payment_reconciliation import (
+    payment_reconciliation_job,
+)
 
 from app.api.routes import (
     ALL_ROUTERS,
@@ -78,6 +81,13 @@ async def lifespan(app: FastAPI):
             send_appointment_reminders,
             trigger="interval",
             minutes=1,
+            max_instances=1,
+        )
+
+        scheduler.add_job(
+            payment_reconciliation_job,
+            trigger="interval",
+            minutes=5,
             max_instances=1,
         )
 

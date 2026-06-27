@@ -21,7 +21,7 @@ from datetime import datetime
 from app.schemas.activity_log_schema import (
     ActivityLogListResponse,
 )
-
+from app.services.tenant_resolver import resolve_clinic_id
 
 router = APIRouter(
     prefix="/activity/log",
@@ -34,9 +34,9 @@ router = APIRouter(
     response_model=ActivityLogListResponse,
 )
 async def list_activity_logs(
+    clinic_id: int,
     limit: int = 100,
     offset: int = 0,
-
     action: str | None = None,
     entity_type: str | None = None,
     actor_id: int | None = None,
@@ -50,9 +50,16 @@ async def list_activity_logs(
         require_roles(UserRole.ADMIN)
     ),
 ):
+    
+    resolved_clinic_id = await resolve_clinic_id(
+        db=db,
+        user=admin,
+        clinic_id=clinic_id,
+    )
 
     return await get_activity_logs(
         db=db,
+        clinic_id=resolved_clinic_id,
         limit=limit,
         offset=offset,
         action=action,

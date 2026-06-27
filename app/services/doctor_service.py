@@ -17,9 +17,6 @@ from app.try_except.exceptions import BadRequestError,NotFoundError
 from app.schemas.doctor import (
     DoctorProfileUpdate,
 )
-from app.services.clinic_context_service import (
-    get_current_clinic,
-)
 
 
 async def create_doctor_profile(
@@ -41,12 +38,10 @@ async def create_doctor_profile(
     if result.scalar_one_or_none():
         raise BadRequestError("Doctor profile already exists")
 
-    clinic = await get_current_clinic(db)
-    
+
     doctor = Doctor(
         user_id=user.id,
         specialization=specialization,
-        clinic_id=clinic.id if clinic else None,
         experience_years=experience_years,
         bio=bio,
     )
@@ -123,6 +118,11 @@ async def update_doctor_profile(
     if data.medical_registration_number is not None:
         doctor.medical_registration_number = (
             data.medical_registration_number
+        )
+
+    if data.consultation_fee is not None:
+        doctor.consultation_fee = (
+            data.consultation_fee
         )
 
     await db.flush()

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException,status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -43,6 +43,7 @@ async def doctor_dashboard(
     return await get_doctor_dashboard(
         db=db,
         doctor_id=doctor.id,
+        clinic_id=doctor.clinic_id,
     )
 
 
@@ -68,7 +69,14 @@ async def doctor_revenue_trend(
 
     doctor = result.scalar_one_or_none()
 
+    if not doctor:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Doctor profile not found for this user."
+        )
+
     return await get_doctor_monthly_revenue(
     db=db,
     doctor_id=doctor.id,
+    clinic_id=doctor.clinic_id,
 )

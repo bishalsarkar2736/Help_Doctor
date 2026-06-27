@@ -9,18 +9,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.payment import Payment
 from app.models.appointment import Appointment
 
-from app.services.clinic_context_service import (
-    get_current_clinic,
-)
 
 
 async def get_doctor_monthly_revenue(
     *,
     db: AsyncSession,
     doctor_id: int,
+    clinic_id : int,
     months: int = 12,
 ):
-    clinic = await get_current_clinic(db)
 
     start_date = (
         date.today().replace(day=1)
@@ -51,10 +48,10 @@ async def get_doctor_monthly_revenue(
             == doctor_id,
 
             Appointment.clinic_id
-            == clinic.id,
+            == clinic_id,
 
             Payment.clinic_id
-            == clinic.id,
+            == clinic_id,
 
             Payment.status
             == "SUCCESS",

@@ -11,9 +11,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.payment import Payment
-from app.models.appointment import Appointment,AppointmentStatus
-from app.services.clinic_context_service import (
-    get_current_clinic,
+from app.models.appointment import Appointment
+
+from app.models.enums.payment_status import (
+    PaymentStatus,
 )
 
 
@@ -21,10 +22,9 @@ async def get_doctor_revenue_today(
     *,
     db: AsyncSession,
     doctor_id: int,
+    clinic_id : int,
 ) -> float:
     
-    clinic = await get_current_clinic(db)
-
     today = utc_now().date()
 
     start = datetime.combine(
@@ -51,11 +51,10 @@ async def get_doctor_revenue_today(
         )
         .where(
             Appointment.doctor_id== doctor_id,
-            Appointment.clinic_id== clinic.id,
-            Payment.clinic_id== clinic.id,
+            Appointment.clinic_id== clinic_id,
+            Payment.clinic_id== clinic_id,
 
-            Payment.status
-            == "SUCCESS",
+            Payment.status == PaymentStatus.SUCCESS,
 
             Payment.created_at >= start,
             Payment.created_at < end,
@@ -72,9 +71,10 @@ async def get_doctor_revenue_this_month(
     *,
     db: AsyncSession,
     doctor_id: int,
+    clinic_id : int,
 ) -> float:
     
-    clinic = await get_current_clinic(db)
+  
 
     today = utc_now().date()
 
@@ -102,11 +102,10 @@ async def get_doctor_revenue_this_month(
         )
         .where(
             Appointment.doctor_id== doctor_id,
-            Appointment.clinic_id== clinic.id,
-            Payment.clinic_id== clinic.id,
+            Appointment.clinic_id== clinic_id,
+            Payment.clinic_id== clinic_id,
 
-            Payment.status
-            == "SUCCESS",
+            Payment.status == PaymentStatus.SUCCESS,
 
             Payment.created_at >= month_start,
             Payment.created_at < next_month,

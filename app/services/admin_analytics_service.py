@@ -6,26 +6,26 @@ from app.models.appointment import Appointment, AppointmentStatus
 from app.models.doctor import Doctor
 from app.models.doctor_slot import DoctorSlot
 from app.models.notification import Notification
-from app.services.clinic_context_service import (
-    get_current_clinic,
-)
 
 
 
 
-async def get_dashboard_overview(db: AsyncSession):
+async def get_dashboard_overview(
+        db: AsyncSession,
+        clinic_id : int,
+):
     """
     High-level system stats
     """
 
-    clinic = await get_current_clinic(db)
+    
 
 
     total_appointments = await db.scalar(
         select(func.count())
         .select_from(Appointment)
         .where(
-            Appointment.clinic_id == clinic.id
+            Appointment.clinic_id == clinic_id
         )
     )
 
@@ -36,7 +36,7 @@ async def get_dashboard_overview(db: AsyncSession):
         )
         .where(
             Appointment.clinic_id
-            == clinic.id
+            == clinic_id
         )
         .group_by(
             Appointment.status
@@ -52,7 +52,7 @@ async def get_dashboard_overview(db: AsyncSession):
         select(func.count())
         .select_from(Doctor)
         .where(
-            Doctor.clinic_id == clinic.id
+            Doctor.clinic_id == clinic_id
         )
     )
 
@@ -63,12 +63,14 @@ async def get_dashboard_overview(db: AsyncSession):
     }
 
 
-async def get_daily_appointments(db: AsyncSession, days: int = 7):
+async def get_daily_appointments(
+    db: AsyncSession,
+    clinic_id : int,
+    days: int = 7,
+):
     """
     Daily appointment trend
     """
-
-    clinic = await get_current_clinic(db)
 
 
     since = utc_now() - timedelta(days=days)
@@ -80,7 +82,7 @@ async def get_daily_appointments(db: AsyncSession, days: int = 7):
         )
         .where(
             Appointment.scheduled_at >= since,
-            Appointment.clinic_id== clinic.id,
+            Appointment.clinic_id== clinic_id,
         )
         .group_by(func.date(Appointment.scheduled_at))
         .order_by(func.date(Appointment.scheduled_at))
@@ -95,12 +97,14 @@ async def get_daily_appointments(db: AsyncSession, days: int = 7):
     ]
 
 
-async def get_top_doctors_by_appointments(db: AsyncSession, limit: int = 5):
+async def get_top_doctors_by_appointments(
+    db: AsyncSession,
+    clinic_id : int,
+    limit: int = 5,
+):
     """
     Doctors with most appointments
     """
-
-    clinic = await get_current_clinic(db)
 
 
     result = await db.execute(
@@ -111,10 +115,10 @@ async def get_top_doctors_by_appointments(db: AsyncSession, limit: int = 5):
         .join(Appointment, Appointment.doctor_id == Doctor.id)
         .where(
             Doctor.clinic_id
-            == clinic.id,
+            == clinic_id,
 
             Appointment.clinic_id
-            == clinic.id,
+            == clinic_id,
         )
         .group_by(Doctor.id)
         .order_by(func.count(Appointment.id).desc())
@@ -134,14 +138,14 @@ async def get_top_doctors_by_appointments(db: AsyncSession, limit: int = 5):
 async def get_no_show_analytics(
     *,
     db: AsyncSession,
+    clinic_id : int,
 ):
-    clinic = await get_current_clinic(db)
 
     total_confirmed = await db.scalar(
         select(
             func.count(Appointment.id)
         ).where(
-            Appointment.clinic_id == clinic.id,
+            Appointment.clinic_id == clinic_id,
             Appointment.status == AppointmentStatus.CONFIRMED,
         )
     )
@@ -150,7 +154,7 @@ async def get_no_show_analytics(
         select(
             func.count(Appointment.id)
         ).where(
-            Appointment.clinic_id == clinic.id,
+            Appointment.clinic_id == clinic_id,
             Appointment.status == AppointmentStatus.NO_SHOW,
         )
     )
@@ -176,15 +180,15 @@ async def get_no_show_analytics(
 async def get_cancellation_analytics(
     *,
     db: AsyncSession,
+    clinic_id : int,
 ):
-    clinic = await get_current_clinic(db)
 
     total_appointments = await db.scalar(
         select(
             func.count(Appointment.id)
         )
         .where(
-            Appointment.clinic_id == clinic.id
+            Appointment.clinic_id == clinic_id
         )
     )
 
@@ -193,7 +197,7 @@ async def get_cancellation_analytics(
             func.count(Appointment.id)
         )
         .where(
-            Appointment.clinic_id == clinic.id,
+            Appointment.clinic_id == clinic_id,
             Appointment.status
             == AppointmentStatus.CANCELLED,
         )
@@ -230,9 +234,11 @@ async def get_cancellation_analytics(
     }
 
 
-async def get_doctor_utilization(db, doctor_id: int):
-
-    clinic = await get_current_clinic(db)
+async def get_doctor_utilization(
+    db:AsyncSession,
+    clinic_id : int, 
+    doctor_id: int,
+):
 
 
     total_slots = await db.scalar(
@@ -244,7 +250,7 @@ async def get_doctor_utilization(db, doctor_id: int):
         )
         .where(
             DoctorSlot.doctor_id == doctor_id,
-            Doctor.clinic_id == clinic.id,
+            Doctor.clinic_id == clinic_id,
         )
     )
 
@@ -257,7 +263,7 @@ async def get_doctor_utilization(db, doctor_id: int):
         )
         .where(
             DoctorSlot.doctor_id == doctor_id,
-            Doctor.clinic_id == clinic.id,
+            Doctor.clinic_id == clinic_id,
             DoctorSlot.is_booked.is_(True),
         )
     )
@@ -274,9 +280,10 @@ async def get_doctor_utilization(db, doctor_id: int):
     }
 
 
-async def get_system_utilization(db):
-
-    clinic = await get_current_clinic(db)
+async def get_system_utilization(
+    db : AsyncSession,
+    clinic_id : int,
+):
 
 
     total_slots = await db.scalar(
@@ -287,7 +294,7 @@ async def get_system_utilization(db):
             Doctor.id == DoctorSlot.doctor_id,
         )
         .where(
-            Doctor.clinic_id == clinic.id,
+            Doctor.clinic_id == clinic_id,
         )
     )
 
@@ -299,7 +306,7 @@ async def get_system_utilization(db):
             Doctor.id == DoctorSlot.doctor_id,
         )
         .where(
-            Doctor.clinic_id == clinic.id,
+            Doctor.clinic_id == clinic_id,
             DoctorSlot.is_booked.is_(True),
         )
     )

@@ -1,4 +1,13 @@
-from sqlalchemy import String, Integer, Boolean, ForeignKey, DateTime
+from sqlalchemy import (
+    String, 
+    Integer, 
+    Boolean, 
+    ForeignKey, 
+    DateTime,
+    text,
+    Numeric,
+)
+from decimal import Decimal
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
@@ -52,10 +61,17 @@ class Doctor(Base):
     clinic_id: Mapped[int | None] = mapped_column(
         ForeignKey(
             "clinics.id",
-            ondelete="SET NULL",
+            ondelete="RESTRICT",   # or remove ondelete
         ),
         nullable=True,
         index=True,
+    )
+
+    consultation_fee: Mapped[Decimal] = mapped_column(
+        Numeric(10, 2),
+        nullable=False,
+        default=Decimal("0.00"),
+        server_default=text("0.00"),
     )
 
     clinic = relationship(

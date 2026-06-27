@@ -2,24 +2,37 @@
 from sqlalchemy import select
 
 from sqlalchemy.ext.asyncio import AsyncSession
-
+from app.models.patient import Patient
 from app.models.appointment import Appointment
 from app.models.prescription import Prescription
 from app.models.payment import Payment
-from app.services.clinic_context_service import (
-    get_current_clinic,
+from app.try_except.exceptions import (
+    NotFoundError,
 )
+
 
 
 async def get_patient_history(
     *,
     db: AsyncSession,
+    clinic_id : int,
     patient_id: int,
     limit: int = 50,
     offset: int = 0,
 ):
     
-    clinic = await get_current_clinic(db)
+    patient = await db.scalar(
+        select(Patient).where(
+            Patient.id == patient_id,
+            Patient.clinic_id == clinic_id,
+        )
+    )
+
+    if not patient:
+        raise NotFoundError(
+            "Patient not found"
+        )
+
 
     timeline = []
 
@@ -29,7 +42,7 @@ async def get_patient_history(
         select(Appointment)
         .where(
             Appointment.patient_id == patient_id,
-            Appointment.clinic_id == clinic.id,
+            Appointment.clinic_id == clinic_id,
         )
     )
 
@@ -83,7 +96,7 @@ async def get_patient_history(
         select(Prescription)
         .where(
             Prescription.patient_id == patient_id,
-            Prescription.clinic_id == clinic.id,
+            Prescription.clinic_id == clinic_id,
         )
     )
 
@@ -130,7 +143,7 @@ async def get_patient_history(
         select(Payment)
         .where(
             Payment.patient_id == patient_id,
-            Payment.clinic_id == clinic.id,
+            Payment.clinic_id == clinic_id,
         )
     )
 

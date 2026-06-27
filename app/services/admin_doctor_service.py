@@ -1,6 +1,6 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-
+from app.models.clinic import Clinic
 from app.models.doctor import Doctor
 from app.models.user import User, UserRole
 from app.try_except.exceptions import NotFoundError,ForbiddenError
@@ -15,6 +15,7 @@ async def verify_doctor(
     db: AsyncSession,
     admin: User,
     doctor_id: int,
+    clinic_id: int,
 ):
     await _admin_only(admin)
 
@@ -25,7 +26,19 @@ async def verify_doctor(
 
     if not doctor:
         raise NotFoundError("Doctor not found")
+    
+    clinic_result = await db.execute(
+        select(Clinic)
+        .where(Clinic.id == clinic_id)
+    )
 
+    clinic = clinic_result.scalar_one_or_none()
+
+    if not clinic:
+        raise NotFoundError("Clinic not found")
+    
+
+    doctor.clinic_id = clinic.id
     doctor.is_verified = True
     await db.flush()
 

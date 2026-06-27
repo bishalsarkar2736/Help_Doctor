@@ -1,6 +1,16 @@
 from sqlalchemy import (
-    text,Integer, DateTime,Boolean, Enum, ForeignKey, String, Text,event,func
+    text,Integer, 
+    DateTime,
+    Boolean, 
+    Enum, 
+    ForeignKey, 
+    String, 
+    Text,
+    event,
+    func,
+    Numeric,
 )
+from decimal import Decimal
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 import enum
@@ -9,7 +19,6 @@ from app.db.base import Base
 from datetime import datetime,timedelta
 from sqlalchemy.dialects.postgresql import TSTZRANGE
 from sqlalchemy.dialects.postgresql import ExcludeConstraint
-from psycopg2.extras import DateTimeTZRange
 from sqlalchemy.dialects.postgresql import Range
 
 
@@ -112,13 +121,20 @@ class Appointment(Base):
         default="1",
     )
 
-    clinic_id: Mapped[int | None] = mapped_column(
+    clinic_id: Mapped[int] = mapped_column(
         ForeignKey(
             "clinics.id",
-            ondelete="SET NULL",
+            ondelete="RESTRICT",   # or remove ondelete
         ),
-        nullable=True,
+        nullable=False,
         index=True,
+    )
+
+    consultation_fee: Mapped[Decimal] = mapped_column(
+        Numeric(10, 2),
+        nullable=False,
+        default=Decimal("0.00"),
+        server_default=text("0.00"),
     )
 
     clinic = relationship(

@@ -9,18 +9,15 @@ from app.try_except.exceptions import (
     NotFoundError,
 )
 
-from app.services.clinic_context_service import (
-    get_current_clinic,
-)
-
 
 async def get_prescription_revision_history(
     *,
     db: AsyncSession,
     prescription_id: int,
+    clinic_id: int,
 ):
 
-    clinic = await get_current_clinic(db)
+
 
     # Get root prescription safely
     root = await db.scalar(
@@ -30,7 +27,7 @@ async def get_prescription_revision_history(
             == prescription_id,
 
             Prescription.clinic_id
-            == clinic.id,
+            == clinic_id,
         )
     )
 
@@ -58,7 +55,7 @@ async def get_prescription_revision_history(
             ),
 
             Prescription.clinic_id
-            == clinic.id,
+            == clinic_id,
         )
         .order_by(
             Prescription.revision_number.asc()

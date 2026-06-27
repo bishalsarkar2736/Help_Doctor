@@ -9,7 +9,8 @@ from app.schemas.event import (
     PrescriptionIssuedEvent,
     ConsultationStartedEvent,
     PrescriptionUpdatedEvent,
-    PrescriptionRevisedEvent
+    PrescriptionRevisedEvent,
+    PaymentRefundedEvent,
 )
 
 EVENT_SCHEMAS = {
@@ -45,4 +46,7 @@ EVENT_SCHEMAS = {
 
     "PRESCRIPTION_REVISED": 
         PrescriptionRevisedEvent,
+    
+    "PAYMENT_REFUNDED" :
+        PaymentRefundedEvent,
 }

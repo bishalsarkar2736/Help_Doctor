@@ -1,5 +1,3 @@
-from typing import Optional
-
 from fastapi import HTTPException,status
 from google.oauth2 import id_token
 from google.auth.transport import requests
@@ -7,6 +5,7 @@ from google.auth.transport import requests
 from app.config import get_settings
 
 settings = get_settings()
+
 
 def verify_google_token(token:str) -> dict:
     """
@@ -21,7 +20,7 @@ def verify_google_token(token:str) -> dict:
 
         return {
             "email" : idinfo["email"],
-            "full_name" : idinfo.get["name"],
+            "full_name": idinfo.get("name"),
             "google_id" : idinfo["sub"],
         }
     except ValueError:

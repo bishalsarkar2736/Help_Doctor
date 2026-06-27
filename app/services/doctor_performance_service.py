@@ -1,5 +1,5 @@
-from sqlalchemy import func
 from sqlalchemy import case
+from sqlalchemy import func
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -8,24 +8,66 @@ from app.models.appointment import (
     AppointmentStatus,
 )
 
-from app.models.payment import Payment
 from app.models.doctor import Doctor
+from app.models.payment import Payment
 from app.models.user import User
-
-from app.services.clinic_context_service import (
-    get_current_clinic,
-)
+from app.models.enums.payment_status import PaymentStatus
 
 
 async def get_doctor_performance_scorecard(
     *,
     db: AsyncSession,
+    clinic_id: int,
 ):
-    clinic = await get_current_clinic(db)
+    # -----------------------------------------
+    # Revenue aggregated per doctor
+    # -----------------------------------------
+
+    revenue_subquery = (
+        select(
+            Appointment.doctor_id.label(
+                "doctor_id"
+            ),
+
+            func.coalesce(
+                func.sum(
+                    Payment.amount
+                ),
+                0,
+            ).label(
+                "revenue"
+            ),
+        )
+        .join(
+            Payment,
+            Payment.appointment_id
+            == Appointment.id,
+        )
+        .where(
+            Appointment.clinic_id
+            == clinic_id,
+
+            Payment.clinic_id
+            == clinic_id,
+
+            Payment.status
+            == PaymentStatus.SUCCESS,
+        )
+        .group_by(
+            Appointment.doctor_id
+        )
+        .subquery()
+    )
+
+    # -----------------------------------------
+    # Main scorecard query
+    # -----------------------------------------
 
     stmt = (
         select(
-            Doctor.id.label("doctor_id"),
+            Doctor.id.label(
+                "doctor_id"
+            ),
 
             User.full_name.label(
                 "doctor_name"
@@ -81,16 +123,7 @@ async def get_doctor_performance_scorecard(
             ),
 
             func.coalesce(
-                func.sum(
-                    case(
-                        (
-                            Payment.status
-                            == "SUCCESS",
-                            Payment.amount,
-                        ),
-                        else_=0,
-                    )
-                ),
+                revenue_subquery.c.revenue,
                 0,
             ).label(
                 "revenue"
@@ -104,39 +137,38 @@ async def get_doctor_performance_scorecard(
 
         .outerjoin(
             Appointment,
-            Appointment.doctor_id
-            == Doctor.id,
+            (
+                Appointment.doctor_id
+                == Doctor.id
+            )
+            &
+            (
+                Appointment.clinic_id
+                == clinic_id
+            ),
         )
 
         .outerjoin(
-            Payment,
-            Payment.appointment_id
-            == Appointment.id,
+            revenue_subquery,
+            revenue_subquery.c.doctor_id
+            == Doctor.id,
         )
 
         .where(
             Doctor.clinic_id
-            == clinic.id
+            == clinic_id
         )
 
         .group_by(
             Doctor.id,
             User.full_name,
             Doctor.specialization,
+            revenue_subquery.c.revenue,
         )
 
         .order_by(
             func.coalesce(
-                func.sum(
-                    case(
-                        (
-                            Payment.status
-                            == "SUCCESS",
-                            Payment.amount,
-                        ),
-                        else_=0,
-                    )
-                ),
+                revenue_subquery.c.revenue,
                 0,
             ).desc()
         )

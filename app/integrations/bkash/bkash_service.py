@@ -1,70 +1,54 @@
-import httpx
-from app.config import Settings
+from decimal import Decimal
+
+from app.config import get_settings
 from .bkash_client import BkashClient
+
+settings = get_settings()
 
 
 class BkashService:
 
+    def __init__(self):
+        self.client = BkashClient()
+
     async def create_payment(
         self,
-        amount: float,
+        *,
+        amount: Decimal,
         invoice_id: str,
     ):
+        return await self.client.create_payment(
+            amount=str(amount),
+            invoice_id=invoice_id,
+            payer_reference="patient",
+            callback_url=settings.BKASH_CALLBACK_URL,
+        )
 
-        token = await BkashClient().get_token()
+    async def execute_payment(
+        self,
+        *,
+        gateway_payment_id: str,
+    ):
+        return await self.client.execute_payment(
+            gateway_payment_id=gateway_payment_id,
+        )
 
-        url = f"{Settings.BKASH_BASE_URL}/tokenized/checkout/create"
+    async def query_payment(
+        self,
+        *,
+        gateway_payment_id: str,
+    ):
+        return await self.client.query_payment(
+            gateway_payment_id=gateway_payment_id,
+        )
+    
 
-        payload = {
-            "mode": "0011",
-            "payerReference": "patient",
-            "callbackURL": "http://localhost:8000/api/payments/bkash/callback",
-            "amount": str(amount),
-            "currency": "BDT",
-            "intent": "sale",
-            "merchantInvoiceNumber": invoice_id,
-        }
-
-        headers = {
-            "Authorization": token,
-            "X-APP-Key": Settings.BKASH_APP_KEY,
-            "Content-Type": "application/json",
-        }
-
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                url,
-                json=payload,
-                headers=headers,
-            )
-
-        response.raise_for_status()
-
-        return response.json()
-
-    async def execute_payment(self, payment_id: str):
-
-        token = await BkashClient().get_token()
-
-        url = f"{Settings.BKASH_BASE_URL}/tokenized/checkout/execute"
-
-        payload = {
-            "paymentID": payment_id
-        }
-
-        headers = {
-            "Authorization": token,
-            "X-APP-Key": Settings.BKASH_APP_KEY,
-            "Content-Type": "application/json",
-        }
-
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                url,
-                json=payload,
-                headers=headers,
-            )
-
-        response.raise_for_status()
-
-        return response.json()
+    async def refund_payment(
+        self,
+        *,
+        transaction_id: str,
+        amount: Decimal,
+    ) -> dict:
+        raise NotImplementedError(
+            "Bkash refund API not integrated yet"
+        )

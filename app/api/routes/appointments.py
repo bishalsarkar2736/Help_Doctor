@@ -24,7 +24,6 @@ from app.services.appointment_service import (
 )
 from app.schemas.appointment import AppointmentCreate
 
-from app.core.idempotency import handle_idempotency
 from app.services.idempotency_service import (
     get_existing_key,
     store_key,

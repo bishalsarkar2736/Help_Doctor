@@ -42,11 +42,11 @@ celery_app.conf.beat_schedule = {
         "schedule": 3600.0,  # every 1 hour
     },
 
-    # 🚀 NEW — OUTBOX EVENT PROCESSOR
-    # "process-outbox-events": {
-    #     "task": "process_outbox_events",  # must match task name
-    #     "schedule": 5.0,  # every 5 seconds (fast + safe)
-    # },
+    "payment-reconciliation-job": {
+        "task": "app.tasks.payment_reconciliation.payment_reconciliation_task",
+        "schedule": 300.0,
+    },
+
 }
 
 celery_app.autodiscover_tasks(["app.tasks"])

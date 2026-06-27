@@ -123,6 +123,21 @@ class PaymentSuccessEvent(BaseEvent):
     appointment_id: int
 
 
+class PaymentRefundedEvent(BaseEvent):
+
+    event_type: Literal[
+        "PAYMENT_REFUNDED"
+    ]
+
+    user_id: int
+    appointment_id: int
+
+    payment_id: int
+
+    refund_transaction_id: str
+    refunded_amount: str
+
+
 class PrescriptionCreatedEvent(BaseEvent):
 
     event_type: Literal[

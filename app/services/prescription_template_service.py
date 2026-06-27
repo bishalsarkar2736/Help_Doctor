@@ -14,9 +14,6 @@ from app.try_except.exceptions import (
     NotFoundError,
 )
 
-from app.services.clinic_context_service import (
-    get_current_clinic,
-)
 
 
 async def create_prescription_template(
@@ -24,13 +21,14 @@ async def create_prescription_template(
     db: AsyncSession,
     doctor_id: int,
     data: PrescriptionTemplateCreate,
+    clinic_id : int ,
 ):
     
-    clinic = await get_current_clinic(db)
+   
 
     template = PrescriptionTemplate(
         doctor_id=doctor_id,
-        clinic_id=clinic.id,
+        clinic_id=clinic_id,
         name=data.name,
         notes=data.notes,
     )
@@ -62,15 +60,15 @@ async def list_prescription_templates(
     *,
     db: AsyncSession,
     doctor_id: int,
+    clinic_id : int,
 ):
     
-    clinic = await get_current_clinic(db)
 
     result = await db.execute(
         select(PrescriptionTemplate)
         .where(
             PrescriptionTemplate.doctor_id== doctor_id,
-            PrescriptionTemplate.clinic_id== clinic.id,
+            PrescriptionTemplate.clinic_id== clinic_id,
         )
         .order_by(
             PrescriptionTemplate.name
@@ -85,16 +83,15 @@ async def get_prescription_template(
     db: AsyncSession,
     template_id: int,
     doctor_id: int,
+    clinic_id : int,
 ):
     
-    clinic = await get_current_clinic(db)
-
     result = await db.execute(
         select(PrescriptionTemplate)
         .where(
             PrescriptionTemplate.id== template_id,
             PrescriptionTemplate.doctor_id == doctor_id,
-            PrescriptionTemplate.clinic_id== clinic.id,
+            PrescriptionTemplate.clinic_id== clinic_id,
         )
     )
 

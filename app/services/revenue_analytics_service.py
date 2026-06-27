@@ -12,18 +12,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.payment import Payment
 from app.models.appointment import Appointment
 
-from app.services.clinic_context_service import (
-    get_current_clinic,
+from app.models.enums.payment_status import (
+    PaymentStatus,
 )
+
 
 
 
 async def get_revenue_today(
     db: AsyncSession,
+    clinic_id: int,
 ) -> float:
     
-    clinic = await get_current_clinic(db)
-
     today = utc_now().date()
 
     start = datetime.combine(
@@ -49,14 +49,13 @@ async def get_revenue_today(
             == Payment.appointment_id,
         )
         .where(
-            Payment.status
-            == "SUCCESS",
+            Payment.status == PaymentStatus.SUCCESS,
 
             Appointment.clinic_id
-            == clinic.id,
+            == clinic_id,
 
             Payment.clinic_id
-            == clinic.id,
+            == clinic_id,
 
             Payment.created_at >= start,
 
@@ -72,9 +71,9 @@ async def get_revenue_today(
 
 async def get_revenue_this_month(
     db: AsyncSession,
+    clinic_id: int,
 ) -> float:
     
-    clinic = await get_current_clinic(db)
 
     today = utc_now().date()
 
@@ -104,14 +103,13 @@ async def get_revenue_this_month(
             == Payment.appointment_id,
         )
         .where(
-            Payment.status
-            == "SUCCESS",
+            Payment.status == PaymentStatus.SUCCESS,
 
             Appointment.clinic_id
-            == clinic.id,
+            == clinic_id,
 
             Payment.clinic_id
-            == clinic.id,
+            == clinic_id,
 
             Payment.created_at >= month_start,
 
@@ -127,10 +125,10 @@ async def get_revenue_this_month(
 
 async def get_monthly_revenue(
     db: AsyncSession,
+    clinic_id: int,
     months: int = 12,
 ):
     
-    clinic = await get_current_clinic(db)
 
     start_date = (
         date.today().replace(day=1)
@@ -157,14 +155,13 @@ async def get_monthly_revenue(
             == Payment.appointment_id,
         )
         .where(
-            Payment.status
-            == "SUCCESS",
+            Payment.status == PaymentStatus.SUCCESS,
 
             Appointment.clinic_id
-            == clinic.id,
+            == clinic_id,
 
             Payment.clinic_id
-            == clinic.id,
+            == clinic_id,
 
             Payment.created_at
             >= start_date,
@@ -186,9 +183,9 @@ async def get_monthly_revenue(
 
 async def get_total_successful_payments(
     db: AsyncSession,
+    clinic_id: int,
 ) -> int:
     
-    clinic = await get_current_clinic(db)
 
     result = await db.execute(
         select(
@@ -202,14 +199,13 @@ async def get_total_successful_payments(
             == Payment.appointment_id,
         )
         .where(
-            Payment.status
-            == "SUCCESS",
+            Payment.status == PaymentStatus.SUCCESS,
 
             Appointment.clinic_id
-            == clinic.id,
+            == clinic_id,
 
             Payment.clinic_id
-            == clinic.id,
+            == clinic_id,
         )
     )
 
@@ -218,18 +214,31 @@ async def get_total_successful_payments(
 
 async def get_revenue_analytics(
     db: AsyncSession,
+    clinic_id: int,
 ):
 
     return {
         "revenue_this_month":
-            await get_revenue_this_month(db),
+            await get_revenue_this_month(
+                db=db,
+                clinic_id=clinic_id,
+            ),
 
         "revenue_today":
-            await get_revenue_today(db),
+            await get_revenue_today(
+                db=db,
+                clinic_id=clinic_id,
+            ),
 
         "total_payments":
-            await get_total_successful_payments(db),
+            await get_total_successful_payments(
+                db=db,
+                clinic_id=clinic_id,
+            ),
 
         "monthly_revenue":
-            await get_monthly_revenue(db),
+            await get_monthly_revenue(
+                db=db,
+                clinic_id=clinic_id,
+            ),
     }

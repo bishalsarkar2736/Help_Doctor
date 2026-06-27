@@ -13,9 +13,6 @@ from app.try_except.exceptions import (
     BadRequestError,
     NotFoundError,
 )
-from app.services.clinic_context_service import (
-    get_current_clinic,
-)
 
 from app.schemas.prescription_verification import PrescriptionVerificationResponse
 
@@ -32,11 +29,9 @@ async def verify_prescription_by_uuid(
     result = await db.execute(
         select(Prescription)
         .options(
-            selectinload(
-                Prescription.doctor
-            ).selectinload(
-                Doctor.user
-            )
+            selectinload(Prescription.doctor)
+                .selectinload(Doctor.user),
+            selectinload(Prescription.clinic),
         )
         .where(
             Prescription.uuid
@@ -83,7 +78,6 @@ async def verify_prescription_by_uuid(
         else VERIFICATION_SUPERSEDED
     )
 
-    clinic = await get_current_clinic(db)
 
     return PrescriptionVerificationResponse(
         valid=is_valid,
@@ -96,14 +90,14 @@ async def verify_prescription_by_uuid(
         doctor_name=doctor_name,
 
         clinic_name=(
-            clinic.name
-            if clinic
+            prescription.clinic.name
+            if prescription.clinic
             else None
         ),
 
         clinic_logo_url=(
-            clinic.logo_url
-            if clinic
+            prescription.clinic.logo_url
+            if prescription.clinic
             else None
         ),
 

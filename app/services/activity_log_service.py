@@ -3,15 +3,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.activity_log import (
     ActivityLog,
 )
-from app.services.clinic_context_service import (
-    get_current_clinic,
-)
 
 
 
 async def log_activity(
     *,
     db: AsyncSession,
+    clinic_id : int,
     actor_id: int | None,
     action: str,
     entity_type: str,
@@ -19,15 +17,15 @@ async def log_activity(
     details: str | None = None,
 ):
     
-    clinic = await get_current_clinic(db)
+  
 
     db.add(
         ActivityLog(
+            clinic_id=clinic_id,
             actor_id=actor_id,
             action=action,
             entity_type=entity_type,
             entity_id=entity_id,
             details=details,
-            clinic_id=clinic.id,
         )
     )

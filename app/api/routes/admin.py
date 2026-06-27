@@ -11,7 +11,6 @@ from app.services.notification_service import notify_user
 
 from app.security.rbac import require_roles
 from app.schemas.admin_user import AdminUserItem
-from app.websocket.manager import manager
 from app.services.realtime_service import notify_admins
 from app.services.realtime_sync_service import (
     send_realtime_sync,

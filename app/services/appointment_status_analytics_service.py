@@ -6,16 +6,14 @@ from app.models.appointment import (
     Appointment,
 )
 
-from app.services.clinic_context_service import (
-    get_current_clinic,
-)
 
 
 async def get_appointment_status_distribution(
     *,
     db: AsyncSession,
+    clinic_id : int,
 ):
-    clinic = await get_current_clinic(db)
+
 
     result = await db.execute(
         select(
@@ -30,7 +28,7 @@ async def get_appointment_status_distribution(
         )
         .where(
             Appointment.clinic_id
-            == clinic.id
+            == clinic_id
         )
         .group_by(
             Appointment.status

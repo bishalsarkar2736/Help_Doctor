@@ -3,7 +3,6 @@ from sqlalchemy import func
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
-
 from app.core.time import UTC
 from app.models.appointment import (
     Appointment,
@@ -15,7 +14,7 @@ from app.models.prescription import (
     PrescriptionItem,
     PrescriptionStatus,
 )
-from app.models.user import UserRole
+from app.models.user import UserRole,User
 from app.schemas.event import (
     PrescriptionCreatedEvent,
     PrescriptionIssuedEvent,
@@ -56,7 +55,7 @@ from app.models.enums.activity_action import (
 from app.services.prescription_template_apply_service import (
     get_template_items,
 )
-from app.services.clinic_context_service import get_current_clinic
+
 
 async def create_prescription(
     db: AsyncSession,
@@ -67,12 +66,12 @@ async def create_prescription(
     doctor_id = doctor.id
     doctor_user_id = doctor.user_id
 
-    clinic = await get_current_clinic(db)
 
     appointment_result = await db.execute(
         select(Appointment).where(
             Appointment.id == appointment_id,
-            Appointment.clinic_id == clinic.id,
+            Appointment.doctor_id == doctor.id,
+            Appointment.clinic_id == doctor.clinic_id,
         )
     )
 
@@ -102,8 +101,8 @@ async def create_prescription(
         select(Prescription).where(
             Prescription.appointment_id
             == appointment_id,
-            Prescription.clinic_id
-            == clinic.id,
+            Prescription.clinic_id 
+            == appointment.clinic_id,
         )
     )
 
@@ -135,6 +134,7 @@ async def create_prescription(
             db=db,
             template_id=data.template_id,
             doctor_id=doctor_id,
+            clinic_id=appointment.clinic_id,
         )
 
         for item in template.items:
@@ -215,7 +215,6 @@ async def issue_prescription(
     db: AsyncSession,
     prescription: Prescription,
 ):
-    clinic = await get_current_clinic(db)
 
     doctor = await db.get(
         Doctor,
@@ -250,8 +249,10 @@ async def issue_prescription(
         select(Appointment).where(
             Appointment.id
             == prescription.appointment_id,
-            Appointment.clinic_id
-            == clinic.id,
+            Appointment.doctor_id 
+            == prescription.doctor_id,
+            Appointment.clinic_id 
+            == prescription.clinic_id,
         )
     )
 
@@ -334,6 +335,7 @@ async def issue_prescription(
 
     await log_activity(
         db=db,
+        clinic_id=prescription.clinic_id,
         actor_id=doctor.user_id,
         action=ActivityAction.PRESCRIPTION_ISSUED,
         entity_type="prescription",
@@ -346,43 +348,60 @@ async def issue_prescription(
 async def get_prescription_by_id(
     db: AsyncSession,
     prescription_id: int,
+    user: User,
 ):
-    clinic = await get_current_clinic(db)
-
-    result = await db.execute(
+    query = (
         select(Prescription)
         .options(
-            selectinload(
-                Prescription.items
-            ),
-            selectinload(
-                Prescription.doctor
-            ).selectinload(
-                Doctor.user
-            ),
-            selectinload(
-                Prescription.patient
-            ),
-            selectinload(
-                Prescription.appointment
-            ),
-        )
-        .where(
-            Prescription.id
-            == prescription_id,
-            Prescription.clinic_id
-            == clinic.id,
+            selectinload(Prescription.items),
+            selectinload(Prescription.doctor)
+                .selectinload(Doctor.user),
+            selectinload(Prescription.patient),
+            selectinload(Prescription.appointment),
         )
     )
 
-    prescription = (
-        result.scalar_one_or_none()
-    )
+    if user.role == UserRole.DOCTOR:
+
+        doctor = await db.scalar(
+            select(Doctor).where(
+                Doctor.user_id == user.id
+            )
+        )
+
+        if not doctor:
+            raise NotFoundError("Doctor profile not found")
+
+        prescription = await db.scalar(
+            query.where(
+                Prescription.id == prescription_id,
+                Prescription.doctor_id == doctor.id,
+                Prescription.clinic_id == doctor.clinic_id,
+            )
+        )
+
+    elif user.role == UserRole.PATIENT:
+
+        prescription = await db.scalar(
+            query.where(
+                Prescription.id == prescription_id,
+                Prescription.patient_id == user.id,
+            )
+        )
+
+    elif user.role == UserRole.ADMIN:
+
+        prescription = await db.scalar(
+            query.where(
+                Prescription.id == prescription_id,
+            )
+        )
+
+    else:
+        raise ForbiddenError("Not allowed")
 
     if not prescription:
-        raise NotFoundError(
-            "Prescription not found"
-        )
+        raise NotFoundError("Prescription not found")
 
     return prescription
 
@@ -391,7 +410,6 @@ async def get_patient_prescriptions(
     db: AsyncSession,
     patient_id: int,
 ):
-    clinic = await get_current_clinic(db)
 
     result = await db.execute(
         select(Prescription)
@@ -414,8 +432,7 @@ async def get_patient_prescriptions(
         .where(
             Prescription.patient_id
             == patient_id,
-            Prescription.clinic_id
-            == clinic.id,
+            
         )
         .order_by(
             Prescription.created_at.desc()
@@ -427,63 +444,92 @@ async def get_patient_prescriptions(
 
 async def get_doctor_prescriptions(
     db: AsyncSession,
-    doctor_id: int,
+    doctor: Doctor,
+    limit: int = 50,
+    offset: int = 0,
 ):
-    clinic = await get_current_clinic(db)
-
     result = await db.execute(
         select(Prescription)
         .options(
             selectinload(Prescription.items),
-            selectinload(Prescription.doctor).selectinload(Doctor.user),
+            selectinload(Prescription.doctor)
+                .selectinload(Doctor.user),
             selectinload(Prescription.patient),
             selectinload(Prescription.appointment),
         )
         .where(
-            Prescription.doctor_id == doctor_id,
-            Prescription.clinic_id== clinic.id,
+            Prescription.doctor_id == doctor.id,
+            Prescription.clinic_id == doctor.clinic_id,
         )
-        .order_by(Prescription.created_at.desc())
+        .order_by(
+            Prescription.created_at.desc()
+        )
+        .limit(limit)
+        .offset(offset)
     )
 
     return result.scalars().all()
 
 
+
 async def get_appointment_prescription(
     db: AsyncSession,
     appointment_id: int,
+    user: User,
 ):
-    clinic = await get_current_clinic(db)
-
-    result = await db.execute(
+    query = (
         select(Prescription)
         .options(
-            selectinload(
-                Prescription.items
-            ),
-            selectinload(
-                Prescription.doctor
-            ).selectinload(
-                Doctor.user
-            ),
-            selectinload(
-                Prescription.patient
-            ),
-            selectinload(
-                Prescription.appointment
-            ),
-        )
-        .where(
-            Prescription.appointment_id
-            == appointment_id,
-            Prescription.clinic_id
-            == clinic.id,
+            selectinload(Prescription.items),
+            selectinload(Prescription.doctor)
+                .selectinload(Doctor.user),
+            selectinload(Prescription.patient),
+            selectinload(Prescription.appointment),
         )
     )
 
-    prescription = (
-        result.scalar_one_or_none()
-    )
+    if user.role == UserRole.DOCTOR:
+
+        doctor = await db.scalar(
+            select(Doctor).where(
+                Doctor.user_id == user.id
+            )
+        )
+
+        if not doctor:
+            raise NotFoundError(
+                "Doctor profile not found"
+            )
+
+        prescription = await db.scalar(
+            query.where(
+                Prescription.appointment_id == appointment_id,
+                Prescription.doctor_id == doctor.id,
+                Prescription.clinic_id == doctor.clinic_id,
+            )
+        )
+
+    elif user.role == UserRole.PATIENT:
+
+        prescription = await db.scalar(
+            query.where(
+                Prescription.appointment_id == appointment_id,
+                Prescription.patient_id == user.id,
+            )
+        )
+
+    elif user.role == UserRole.ADMIN:
+
+        prescription = await db.scalar(
+            query.where(
+                Prescription.appointment_id == appointment_id,
+            )
+        )
+
+    else:
+        raise ForbiddenError(
+            "Not allowed"
+        )
 
     if not prescription:
         raise NotFoundError(
@@ -491,6 +537,7 @@ async def get_appointment_prescription(
         )
 
     return prescription
+
 
 
 async def update_prescription(

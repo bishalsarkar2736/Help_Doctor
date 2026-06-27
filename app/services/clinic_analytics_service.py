@@ -1,9 +1,3 @@
-from datetime import (
-    date,
-    datetime,
-    timedelta,
-)
-
 from sqlalchemy import (
     func,
     select,
@@ -28,51 +22,11 @@ from app.models.payment import (
 from app.models.medicine_ai_log import (
     MedicineAILog,
 )
-
-from app.services.clinic_context_service import (
-    get_current_clinic,
+from app.utils.date_ranges import (
+    get_month_range,
+    get_today_range,
 )
 
-
-def get_today_range():
-
-    start = datetime.combine(
-        date.today(),
-        datetime.min.time(),
-    )
-
-    end = start + timedelta(days=1)
-
-    return start, end
-
-
-def get_month_range():
-
-    today = date.today()
-
-    start = datetime(
-        today.year,
-        today.month,
-        1,
-    )
-
-    if today.month == 12:
-
-        end = datetime(
-            today.year + 1,
-            1,
-            1,
-        )
-
-    else:
-
-        end = datetime(
-            today.year,
-            today.month + 1,
-            1,
-        )
-
-    return start, end
 
 
 async def get_total_count(
@@ -139,11 +93,8 @@ async def get_month_count(
 
 async def get_clinic_analytics(
     db: AsyncSession,
+    clinic_id: int,
 ):
-
-    clinic = await get_current_clinic(db)
-
-    clinic_id = clinic.id
 
     return {
 

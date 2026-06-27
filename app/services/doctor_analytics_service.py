@@ -5,17 +5,15 @@ from app.models.appointment import Appointment,AppointmentStatus
 from app.models.doctor import Doctor
 from app.models.user import User
 
-from app.services.clinic_context_service import (
-    get_current_clinic,
-)
 
 
 
 async def get_top_doctors_by_appointments(
     *,
     db: AsyncSession,
+    clinic_id : int,
 ):
-    clinic = await get_current_clinic(db)
+
 
     result = await db.execute(
         select(
@@ -44,8 +42,8 @@ async def get_top_doctors_by_appointments(
             Appointment.doctor_id == Doctor.id,
         )
         .where(
-            Doctor.clinic_id == clinic.id,
-            Appointment.clinic_id == clinic.id,
+            Doctor.clinic_id == clinic_id,
+            Appointment.clinic_id == clinic_id,
         )
         .group_by(
             Doctor.id,
@@ -76,8 +74,8 @@ async def get_top_doctors_by_appointments(
 async def get_top_doctors_by_completed_consultations(
     *,
     db: AsyncSession,
+    clinic_id : int,
 ):
-    clinic = await get_current_clinic(db)
 
     result = await db.execute(
         select(
@@ -111,10 +109,10 @@ async def get_top_doctors_by_completed_consultations(
 
         .where(
             Doctor.clinic_id
-            == clinic.id,
+            == clinic_id,
 
             Appointment.clinic_id
-            == clinic.id,
+            == clinic_id,
 
             Appointment.status
             == AppointmentStatus.COMPLETED,
@@ -152,9 +150,10 @@ async def get_completion_rate(
     *,
     db: AsyncSession,
     doctor_id: int,
+    clinic_id : int,
 ) -> float:
     
-    clinic = await get_current_clinic(db)
+
 
     completed_result = await db.execute(
         select(
@@ -167,7 +166,7 @@ async def get_completion_rate(
             == doctor_id,
 
             Appointment.clinic_id
-            == clinic.id,
+            == clinic_id,
 
             Appointment.status
             == AppointmentStatus.COMPLETED,
@@ -189,7 +188,7 @@ async def get_completion_rate(
             == doctor_id,
 
             Appointment.clinic_id
-            == clinic.id,
+            == clinic_id,
 
             Appointment.status
             == AppointmentStatus.CANCELLED,

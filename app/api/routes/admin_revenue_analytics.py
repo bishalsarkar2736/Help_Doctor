@@ -21,7 +21,6 @@ from app.security.rbac import (
 
 from app.services.revenue_analytics_service import (
     get_revenue_analytics,
-    get_monthly_revenue,
 )
 from app.schemas.doctor_revenue_schema import DoctorRevenueDashboardResponse
 from app.services.doctor_revenue_dashboard_service import get_doctor_revenue_dashboard
@@ -32,7 +31,7 @@ from app.services.revenue_by_specialization_service import (
 from app.schemas.revenue_by_specialization_schema import (
     RevenueBySpecializationResponse,
 )
-
+from app.services.tenant_resolver import resolve_clinic_id
 
 
 router = APIRouter(
@@ -46,19 +45,29 @@ router = APIRouter(
     response_model=DoctorRevenueDashboardResponse,
 )
 async def doctor_revenue_dashboard(
+    clinic_id: int,
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(
         require_roles(UserRole.ADMIN)
     ),
 ):
+    
+    clinic_id = await resolve_clinic_id(
+        db=db,
+        user=admin,
+        clinic_id=clinic_id,
+    )
+
     return await get_doctor_revenue_dashboard(
         db=db,
+        clinic_id=clinic_id,
     )
 
 
 
 @router.get("/revenue")
 async def revenue_analytics(
+    clinic_id: int,
     db: AsyncSession = Depends(get_db),
     admin : User =Depends(
         require_roles(
@@ -66,24 +75,18 @@ async def revenue_analytics(
         )
     ),
 ):
+    
+    clinic_id = await resolve_clinic_id(
+        db=db,
+        user=admin,
+        clinic_id=clinic_id,
+    )
 
     return await get_revenue_analytics(
         db=db,
+        clinic_id=clinic_id
     )
 
-
-@router.get("/revenue/monthly")
-async def monthly_revenue(
-    db: AsyncSession = Depends(get_db),
-    admin : User =Depends(
-        require_roles(
-            UserRole.ADMIN
-        )
-    ),
-):
-    return await get_monthly_revenue(
-        db=db,
-    )
 
 
 @router.get(
@@ -93,11 +96,20 @@ async def monthly_revenue(
     ],
 )
 async def revenue_by_specialization(
+    clinic_id: int,
     db: AsyncSession = Depends(get_db),
-    admin=Depends(
+    admin : User =Depends(
         require_roles(UserRole.ADMIN)
     ),
 ):
+    
+    clinic_id = await resolve_clinic_id(
+        db=db,
+        user=admin,
+        clinic_id=clinic_id,
+    )
+
     return await get_revenue_by_specialization(
         db=db,
+        clinic_id=clinic_id
     )

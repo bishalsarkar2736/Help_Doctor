@@ -6,16 +6,13 @@ from app.models.payment import Payment
 from app.models.appointment import Appointment
 from app.models.doctor import Doctor
 
-from app.services.clinic_context_service import (
-    get_current_clinic,
-)
-
 
 async def get_revenue_by_specialization(
     *,
     db: AsyncSession,
+    clinic_id : int,
 ):
-    clinic = await get_current_clinic(db)
+
 
     result = await db.execute(
         select(
@@ -50,13 +47,13 @@ async def get_revenue_by_specialization(
         )
         .where(
             Doctor.clinic_id
-            == clinic.id,
+            == clinic_id,
 
             Appointment.clinic_id
-            == clinic.id,
+            == clinic_id,
 
             Payment.clinic_id
-            == clinic.id,
+            == clinic_id,
 
             Payment.status
             == "SUCCESS",

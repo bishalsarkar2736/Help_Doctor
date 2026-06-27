@@ -5,11 +5,12 @@ from app.models.appointment import Appointment,AppointmentStatus
 from app.models.patient import Patient
 from app.models.payment import Payment
 from datetime import date
-from app.services.clinic_context_service import (
-    get_current_clinic,
-)
+
 from app.schemas.clinic_kpi_schema import (
     ClinicKPIResponse,
+)
+from app.models.enums.payment_status import (
+    PaymentStatus,
 )
 
 
@@ -17,9 +18,9 @@ from app.schemas.clinic_kpi_schema import (
 async def get_total_patients(
     *,
     db: AsyncSession,
+    clinic_id: int,
 ) -> int:
 
-    clinic = await get_current_clinic(db)
 
     result = await db.execute(
         select(
@@ -29,7 +30,7 @@ async def get_total_patients(
         )
         .where(
             Patient.clinic_id
-            == clinic.id
+            == clinic_id
         )
     )
 
@@ -39,9 +40,8 @@ async def get_total_patients(
 async def get_total_appointments(
     *,
     db: AsyncSession,
+    clinic_id: int,
 ) -> int:
-
-    clinic = await get_current_clinic(db)
 
     result = await db.execute(
         select(
@@ -51,7 +51,7 @@ async def get_total_appointments(
         )
         .where(
             Appointment.clinic_id
-            == clinic.id
+            == clinic_id
         )
     )
 
@@ -60,9 +60,9 @@ async def get_total_appointments(
 
 async def get_total_revenue(
     db: AsyncSession,
+    clinic_id: int,
 ) -> float:
     
-    clinic = await get_current_clinic(db)
 
     result = await db.execute(
         select(
@@ -79,14 +79,13 @@ async def get_total_revenue(
             == Payment.appointment_id,
         )
         .where(
-            Payment.status
-            == "SUCCESS",
+            Payment.status == PaymentStatus.SUCCESS,
 
             Appointment.clinic_id
-            == clinic.id,
+            == clinic_id,
 
             Payment.clinic_id
-            == clinic.id,
+            == clinic_id,
         )
 
     )
@@ -99,9 +98,8 @@ async def get_total_revenue(
 async def get_conversion_rate(
     *,
     db: AsyncSession,
+    clinic_id: int,
 ) -> float:
-
-    clinic = await get_current_clinic(db)
 
     total_result = await db.execute(
         select(
@@ -111,7 +109,7 @@ async def get_conversion_rate(
         )
         .where(
             Appointment.clinic_id
-            == clinic.id
+            == clinic_id
         )
     )
 
@@ -130,7 +128,7 @@ async def get_conversion_rate(
         )
         .where(
             Appointment.clinic_id
-            == clinic.id,
+            == clinic_id,
             Appointment.status
             == AppointmentStatus.COMPLETED,
         )
@@ -150,9 +148,8 @@ async def get_conversion_rate(
 async def get_completion_rate_total_clinic(
     *,
     db: AsyncSession,
+    clinic_id: int,
 ) -> float:
-
-    clinic = await get_current_clinic(db)
 
     completed_result = await db.execute(
         select(
@@ -162,7 +159,7 @@ async def get_completion_rate_total_clinic(
         )
         .where(
             Appointment.clinic_id
-            == clinic.id,
+            == clinic_id,
 
             Appointment.status
             == AppointmentStatus.COMPLETED,
@@ -181,7 +178,7 @@ async def get_completion_rate_total_clinic(
         )
         .where(
             Appointment.clinic_id
-            == clinic.id,
+            == clinic_id,
 
             Appointment.status
             == AppointmentStatus.CANCELLED,
@@ -211,9 +208,9 @@ async def get_completion_rate_total_clinic(
 async def get_patients_today(
     *,
     db: AsyncSession,
+    clinic_id: int,
 ) -> int:
 
-    clinic = await get_current_clinic(db)
 
     today = date.today()
 
@@ -222,7 +219,7 @@ async def get_patients_today(
             func.count(Patient.id)
         )
         .where(
-            Patient.clinic_id == clinic.id,
+            Patient.clinic_id == clinic_id,
             func.date(
                 Patient.created_at
             ) == today,
@@ -236,9 +233,8 @@ async def get_patients_today(
 async def get_patients_this_month(
     *,
     db: AsyncSession,
+    clinic_id: int,
 ) -> int:
-
-    clinic = await get_current_clinic(db)
 
     today = date.today()
 
@@ -247,7 +243,7 @@ async def get_patients_this_month(
             func.count(Patient.id)
         )
         .where(
-            Patient.clinic_id == clinic.id,
+            Patient.clinic_id == clinic_id,
 
             func.extract(
                 "month",
@@ -267,9 +263,9 @@ async def get_patients_this_month(
 async def get_appointments_today(
     *,
     db: AsyncSession,
+    clinic_id: int,
 ) -> int:
 
-    clinic = await get_current_clinic(db)
 
     today = date.today()
 
@@ -281,7 +277,7 @@ async def get_appointments_today(
         )
         .where(
             Appointment.clinic_id
-            == clinic.id,
+            == clinic_id,
 
             func.date(
                 Appointment.created_at
@@ -297,9 +293,8 @@ async def get_appointments_today(
 async def get_appointments_this_month(
     *,
     db: AsyncSession,
+    clinic_id: int,
 ) -> int:
-
-    clinic = await get_current_clinic(db)
 
     today = date.today()
 
@@ -311,7 +306,7 @@ async def get_appointments_this_month(
         )
         .where(
             Appointment.clinic_id
-            == clinic.id,
+            == clinic_id,
 
             func.extract(
                 "month",
@@ -334,9 +329,9 @@ async def get_appointments_this_month(
 async def get_average_revenue_per_appointment(
     *,
     db: AsyncSession,
+    clinic_id: int,
 ) -> float:
 
-    clinic = await get_current_clinic(db)
 
     revenue_result = await db.execute(
         select(
@@ -351,13 +346,13 @@ async def get_average_revenue_per_appointment(
             == Payment.appointment_id,
         )
         .where(
-            Payment.status == "SUCCESS",
+            Payment.status == PaymentStatus.SUCCESS,
 
             Appointment.clinic_id
-            == clinic.id,
+            == clinic_id,
 
             Payment.clinic_id
-            == clinic.id,
+            == clinic_id,
         )
     )
 
@@ -371,7 +366,7 @@ async def get_average_revenue_per_appointment(
         )
         .where(
             Appointment.clinic_id
-            == clinic.id,
+            == clinic_id,
 
             Appointment.status
             == AppointmentStatus.COMPLETED,
@@ -397,45 +392,56 @@ async def get_average_revenue_per_appointment(
 async def get_clinic_kpi_dashboard(
     *,
     db: AsyncSession,
+    clinic_id : int,
 ) -> ClinicKPIResponse:
 
     return ClinicKPIResponse(
         total_revenue=await get_total_revenue(
             db=db,
+            clinic_id=clinic_id,
         ),
 
         total_patients=await get_total_patients(
             db=db,
+            clinic_id=clinic_id,
         ),
 
         total_appointments=await get_total_appointments(
             db=db,
+            clinic_id=clinic_id,
         ),
 
         conversion_rate=await get_conversion_rate(
             db=db,
+            clinic_id=clinic_id,
         ),
 
         completion_rate=await get_completion_rate_total_clinic(
             db=db,
+            clinic_id=clinic_id,
         ),
 
         patients_today=await get_patients_today(
             db=db,
+            clinic_id=clinic_id,
         ),
 
         patients_this_month= await get_patients_this_month(
             db=db,
+            clinic_id=clinic_id,
         ),
 
         appointments_today= await get_appointments_today(
             db=db,
+            clinic_id=clinic_id,
         ),
         appointments_this_month=await get_appointments_this_month(
             db=db,
+            clinic_id=clinic_id,
         ),
-        average_revenue=get_average_revenue_per_appointment(
+        average_revenue=await get_average_revenue_per_appointment(
             db=db,
+            clinic_id=clinic_id,
         )
 
     )

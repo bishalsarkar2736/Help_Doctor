@@ -23,6 +23,9 @@ from app.security.rbac import (
 from app.services.appointment_analytics_service import (
     get_appointment_analytics,
 )
+from app.services.tenant_resolver import resolve_clinic_id
+
+
 
 router = APIRouter(
     prefix="/admin/analytics",
@@ -32,6 +35,7 @@ router = APIRouter(
 
 @router.get("/appointments")
 async def appointment_analytics(
+    clinic_id : int,
     db: AsyncSession = Depends(get_db),
     admin : User =Depends(
         require_roles(
@@ -39,7 +43,14 @@ async def appointment_analytics(
         )
     ),
 ):
+    
+    clinic_id = await resolve_clinic_id(
+        db=db,
+        user=admin,
+        clinic_id=clinic_id,
+    )
 
     return await get_appointment_analytics(
         db=db,
+        clinic_id=clinic_id,
     )

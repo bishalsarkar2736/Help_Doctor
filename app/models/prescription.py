@@ -94,12 +94,12 @@ class Prescription(Base):
         nullable=True,
     )
 
-    clinic_id: Mapped[int | None] = mapped_column(
+    clinic_id: Mapped[int] = mapped_column(
         ForeignKey(
             "clinics.id",
-            ondelete="SET NULL",
+            ondelete="RESTRICT",   # or remove ondelete
         ),
-        nullable=True,
+        nullable=False,
         index=True,
     )
 

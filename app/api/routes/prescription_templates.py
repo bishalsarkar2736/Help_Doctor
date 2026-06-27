@@ -55,6 +55,8 @@ async def create_template(
         db=db,
         doctor_id=doctor.doctor.id,
         data=data,
+        clinic_id=doctor.doctor.clinic_id,
+        
     )
 
 

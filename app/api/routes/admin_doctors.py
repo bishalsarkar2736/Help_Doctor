@@ -68,10 +68,16 @@ async def verify(
 @router.post("/{doctor_id}/suspend")
 async def suspend(
     doctor_id: int,
+    clinic_id: int,
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_roles(UserRole.ADMIN)),
 ):
-    return await suspend_doctor(db=db, admin=admin, doctor_id=doctor_id)
+    return await suspend_doctor(
+        db=db, 
+        admin=admin, 
+        doctor_id=doctor_id,
+        clinic_id=clinic_id,
+    )
 
 
 # ✅ Unsuspend doctor
