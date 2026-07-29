@@ -24,13 +24,13 @@ click==8.3.1
 click-didyoumean==0.3.1
 click-plugins==1.1.1.2
 click-repl==0.3.0
-cryptography==46.0.3
+cryptography==49.0.0
 Deprecated==1.3.1
 dnspython==2.8.0
 ecdsa==0.19.1
 email-validator==2.3.0
 fakeredis==2.34.1
-fastapi==0.128.0
+fastapi==0.141.0
 from-root==1.3.0
 frozenlist==1.8.0
 google-auth==2.48.0
@@ -94,7 +94,7 @@ pytest-asyncio==1.3.0
 python-dateutil==2.9.0.post0
 python-dotenv==1.2.1
 python-jose==3.5.0
-python-multipart==0.0.22
+python-multipart==0.0.32
 pywebpush==2.3.0
 PyYAML==6.0.3
 qrcode==8.2
@@ -108,7 +108,7 @@ six==1.17.0
 slowapi==0.1.9
 sortedcontainers==2.4.0
 SQLAlchemy==2.0.46
-starlette==0.50.0
+starlette==1.3.1
 threadpoolctl==3.6.0
 typing-inspection==0.4.2
 typing_extensions==4.15.0
