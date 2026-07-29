@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 class PrescriptionStatus(str, enum.Enum):
     DRAFT = "DRAFT"
     ISSUED = "ISSUED"
+    LOCKED = "LOCKED"
     SUPERSEDED = "SUPERSEDED"
     REVOKED = "REVOKED"
 

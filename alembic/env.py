@@ -58,11 +58,23 @@ def run_migrations_offline():
 
 
 
+PLACEHOLDER_URL = "driver://user:pass@localhost/dbname"
+
+
 def run_migrations_online():
+    # Precedence:
+    #   1. explicit env vars (tests / deploys)
+    #   2. a url already set on the config by the caller (e.g. conftest)
+    #   3. the application settings, as a last resort for local runs
+    existing_url = config.get_main_option("sqlalchemy.url")
+
     database_url = (
         os.getenv("TEST_DATABASE_URL")
         or os.getenv("DATABASE_URL")
     )
+
+    if not database_url and (not existing_url or existing_url == PLACEHOLDER_URL):
+        database_url = get_settings().database_url
 
     if database_url and "+asyncpg" in database_url:
         database_url = database_url.replace("+asyncpg", "+psycopg2")
@@ -74,7 +86,12 @@ def run_migrations_online():
 
     """
     if database_url:
-        config.set_main_option("sqlalchemy.url", database_url)
+        # Escape % so ConfigParser interpolation doesn't choke on
+        # url-encoded characters in the password (e.g. %24 for '$').
+        config.set_main_option(
+            "sqlalchemy.url",
+            database_url.replace("%", "%%"),
+        )
 
     connectable = engine_from_config(
         config.get_section(config.config_ini_section),

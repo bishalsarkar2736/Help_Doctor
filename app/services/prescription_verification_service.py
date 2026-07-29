@@ -50,6 +50,7 @@ async def verify_prescription_by_uuid(
 
     if prescription.status not in [
         PrescriptionStatus.ISSUED,
+        PrescriptionStatus.LOCKED,
         PrescriptionStatus.SUPERSEDED,
     ]:
         raise BadRequestError(

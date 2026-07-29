@@ -12,8 +12,10 @@ from app.services.realtime_notification_service import (
 from app.models.notification import (
     NotificationCategory,
 )
-
-
+from app.models.appointment import Appointment
+from app.services.notification_preference_service import (
+    get_or_create_preferences,
+)
 
 EVENT_NOTIFICATION_CONFIG = {
 
@@ -65,6 +67,16 @@ EVENT_NOTIFICATION_CONFIG = {
         "appointment_field": "appointment_id",
     },
 
+    "PAYMENT_REFUNDED": {
+        "title": "Payment Refunded",
+        "message_template": (
+            "Your payment of ৳{refunded_amount} has been refunded"
+        ),
+        "category": NotificationCategory.PAYMENT,
+        "user_field": "user_id",
+        "appointment_field": "appointment_id",
+    },
+
     "APPOINTMENT_STATUS_CHANGED": {
         "title": "Appointment Update",
         "message_template": (
@@ -78,6 +90,25 @@ EVENT_NOTIFICATION_CONFIG = {
     "CONSULTATION_STARTED": {
         "title": "Consultation Started",
         "message": "Your consultation has started",
+        "category": NotificationCategory.APPOINTMENT,
+        "user_field": "patient_id",
+        "appointment_field": "appointment_id",
+    },
+
+    "PATIENT_NEXT_IN_QUEUE": {
+        "title": "You're Next",
+        "message": (
+            "Please proceed to the consultation room. "
+            "You are next in the queue."
+        ),
+        "category": NotificationCategory.APPOINTMENT,
+        "user_field": "patient_id",
+        "appointment_field": "appointment_id",
+    },
+    
+    "CONSULTATION_COMPLETED": {
+        "title": "Consultation Completed",
+        "message": "Your consultation has been completed.",
         "category": NotificationCategory.APPOINTMENT,
         "user_field": "patient_id",
         "appointment_field": "appointment_id",
@@ -165,19 +196,25 @@ async def handle_notification_event(
         event_id=event_id,
     )
 
-    await send_realtime_notification(
-        db=db,
-        user_id=user_id,
-        payload={
-            "version": 1,
-            "event": event_type.lower(),
-            "correlation_id": validated.correlation_id,
-            "data": validated.model_dump(),
-            "title": config["title"],
-            "message": message,
-            "appointment_id": appointment_id,
-        },
+    prefs = await get_or_create_preferences(
+        db,
+        user_id,
     )
+
+    if prefs.realtime_enabled:
+        await send_realtime_notification(
+            db=db,
+            user_id=user_id,
+            payload={
+                "version": 1,
+                "event": event_type.lower(),
+                "correlation_id": validated.correlation_id,
+                "data": validated.model_dump(),
+                "title": config["title"],
+                "message": message,
+                "appointment_id": appointment_id,
+            },
+        )
 
     if event_type in {
         "APPOINTMENT_CREATED",
@@ -186,7 +223,19 @@ async def handle_notification_event(
         "APPOINTMENT_STATUS_CHANGED",
         "APPOINTMENT_RESCHEDULED",
         "CONSULTATION_STARTED",
+        "PATIENT_NEXT_IN_QUEUE",
+        "CONSULTATION_COMPLETED",
         "PRESCRIPTION_ISSUED",
         "PRESCRIPTION_REVISED",
+        "PAYMENT_REFUNDED",
     }:
-        await publish_dashboard_update(db)
+        appointment = await db.get(
+            Appointment,
+            appointment_id,
+        )
+
+        if appointment:
+            await publish_dashboard_update(
+                db=db,
+                clinic_id=appointment.clinic_id,
+            )

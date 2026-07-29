@@ -1,5 +1,6 @@
 from app.core.celery import celery_app
 from app.task.base import run_async
+from app.db.postgres import AsyncSessionLocal
 
 from app.services.push_service import send_push_to_user
 from app.services.notification_receipt_service import (
@@ -33,33 +34,61 @@ async def send_push_notification_task(
 
     event_uuid = uuid.UUID(event_id)
 
-    try:
+    # The receipt helpers take an AsyncSession and do NOT commit internally
+    # (unlike mark_notification_delivered / mark_notifications_seen), so the
+    # task owns the session and the commit. Same factory the other Celery
+    # tasks use — no new engine.
+    async with AsyncSessionLocal() as db:
 
-        await send_push_to_user(
-            user_id=user_id,
-            payload=payload,
-        )
+        try:
 
-        await mark_push_delivered(
-            event_id=event_uuid,
-        )
+            await send_push_to_user(
+                user_id=user_id,
+                payload=payload,
+            )
 
-    except Exception as exc:
+            await mark_push_delivered(
+                db=db,
+                event_id=event_uuid,
+            )
 
-        await mark_delivery_failed(
-            event_id=event_uuid,
-            error=str(exc),
-        )
+            await db.commit()
 
-        logger.exception(
-            "push_notification_failed",
-            extra={
-                "user_id": user_id,
-                "event_id": event_id,
-                "payload": payload,
-                "error": str(exc,
-                ),
-            },
-        )
+        except Exception as exc:
 
-        raise
+            # Discard the failed transaction before recording the failure,
+            # otherwise the session is still in a broken state.
+            await db.rollback()
+
+            try:
+                await mark_delivery_failed(
+                    db=db,
+                    event_id=event_uuid,
+                    error=str(exc),
+                )
+
+                await db.commit()
+
+            except Exception:
+                # Never let bookkeeping mask the original failure below.
+                await db.rollback()
+
+                logger.exception(
+                    "push_notification_mark_failed_errored",
+                    extra={
+                        "user_id": user_id,
+                        "event_id": event_id,
+                    },
+                )
+
+            logger.exception(
+                "push_notification_failed",
+                extra={
+                    "user_id": user_id,
+                    "event_id": event_id,
+                    "payload": payload,
+                    "error": str(exc),
+                },
+            )
+
+            raise

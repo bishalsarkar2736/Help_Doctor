@@ -46,3 +46,6 @@ class ConfigurationError(AppException):
 
 class ServiceUnavailableError(AppException):
     status_code = 503
+
+class ExternalServiceError(AppException):
+    status_code = 502

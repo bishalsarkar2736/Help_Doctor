@@ -432,6 +432,14 @@ class ConnectionManager:
                 )
             )
 
+        logger.info(
+            "Broadcasting to channel",
+            extra={
+                "channel": channel,
+                "subscribers": len(sockets),
+            },
+        )
+
         if not sockets:
             return
 

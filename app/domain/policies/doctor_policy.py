@@ -1,5 +1,6 @@
 from app.try_except.exceptions import ForbiddenError
 from app.models.user import UserRole
+from app.models.doctor import DoctorStatus
 
 
 class DoctorPolicy:
@@ -29,7 +30,7 @@ class DoctorPolicy:
             return True
 
         # Patient can view only verified doctors
-        if user.role == UserRole.PATIENT and doctor.is_verified:
+        if user.role == UserRole.PATIENT and doctor.status == DoctorStatus.APPROVED:
             return True
 
         raise ForbiddenError("You are not allowed to view this doctor")

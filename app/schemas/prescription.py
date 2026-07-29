@@ -20,7 +20,11 @@ class PrescriptionCreate(BaseModel):
     notes: Optional[str] = None
 
     template_id: int | None = None
-    
+
+    # Set true to prescribe despite a recorded patient allergy (logged as an
+    # explicit override).
+    allergy_override: bool = False
+
     items: list[PrescriptionItemCreate] = Field(
         default_factory=list
     )
@@ -128,3 +132,23 @@ class PrescriptionRevisionHistoryItem(BaseModel):
 
 class PrescriptionRevisionHistoryResponse(BaseModel):
     items: list[PrescriptionRevisionHistoryItem]
+
+
+
+class PrescriptionSearchOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+
+    patient_id: int
+    patient_name: str | None = None
+
+    doctor_id: int
+    doctor_name: str | None = None
+
+    status: PrescriptionStatus
+
+    issued_at: datetime | None = None
+    created_at: datetime
+
+    medicine_names: list[str] = []

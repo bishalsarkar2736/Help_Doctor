@@ -83,7 +83,6 @@ async def get_doctor_dashboard(
                 [
                     AppointmentStatus.PENDING,
                     AppointmentStatus.CONFIRMED,
-                    AppointmentStatus.SCHEDULED,
                 ]
             ),
         )

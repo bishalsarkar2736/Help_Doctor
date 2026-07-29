@@ -1,7 +1,7 @@
 from fastapi import (
-    APIRouter, 
+    APIRouter,
     Depends,
-    Request
+    Request,
 )
 from app.core.limiter import limiter
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,14 +11,21 @@ from app.services.payment_service import (
     create_payment,
 )
 from app.services.payment_webhook_service import process_bkash_webhook
-from app.integrations.bkash.bkash_service import BkashService
+from app.integrations.payment_gateway_factory import get_payment_gateway
 from app.security.rbac import require_roles
 from app.schemas.payment_webhook import (
     BkashWebhookSchema,
 )
 from app.models.user import User,UserRole
+from app.schemas.payment_refund import (
+    PaymentRefundRequest,
+    PaymentRefundResponse,
+)
 
-
+from app.services.payment_refund_service import refund_payment
+from app.integrations.fake_gateway import set_outcome
+from app.config import get_settings
+from app.try_except.exceptions import BadRequestError, NotFoundError
 
 
 logger = logging.getLogger(__name__)
@@ -29,7 +36,9 @@ router = APIRouter(
 )
 
 @router.post("/webhook/bkash")
+@limiter.limit("30/minute")
 async def bkash_webhook(
+    request: Request,
     payload: BkashWebhookSchema,
     db: AsyncSession = Depends(get_db),
 ):
@@ -60,7 +69,7 @@ async def initiate_bkash_payment(
         method="bkash",
     )
 
-    bkash = BkashService()
+    bkash = get_payment_gateway()
 
     response = await bkash.create_payment(
         amount=payment.amount,
@@ -81,3 +90,52 @@ async def initiate_bkash_payment(
     }
 
 
+
+# Dev-only: flip a fake payment's outcome before the simulate page fires the
+# webhook. Disabled unless PAYMENT_GATEWAY=fake, so it's inert in production.
+@router.post("/dev/outcome")
+async def set_fake_payment_outcome(
+    paymentID: str,
+    outcome: str = "success",
+    current_user: User = Depends(require_roles(UserRole.PATIENT)),
+):
+    if get_settings().PAYMENT_GATEWAY != "fake":
+        raise BadRequestError("Payment simulation is disabled")
+    if not set_outcome(paymentID, outcome):
+        raise NotFoundError("Unknown simulated payment")
+    return {"paymentID": paymentID, "outcome": outcome}
+
+
+@router.post(
+    "/{payment_id}/refund",
+    response_model=PaymentRefundResponse,
+)
+async def refund_payment_endpoint(
+    payment_id: int,
+    request: PaymentRefundRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(
+        require_roles(
+            UserRole.ADMIN,
+            UserRole.DOCTOR,
+        )
+    ),
+):
+    payment = await refund_payment(
+        db=db,
+        payment_id=payment_id,
+        refunded_by=current_user,
+        amount=request.amount,
+        reason=request.reason,
+    )
+
+    await db.commit()
+    await db.refresh(payment)
+
+    return PaymentRefundResponse(
+        payment_id=payment.id,
+        status=payment.status.value,
+        refunded_amount=payment.refunded_amount,
+        refund_transaction_id=payment.refund_transaction_id,
+        refunded_at=payment.refunded_at,
+    )

@@ -74,6 +74,21 @@ async def websocket_endpoint(
             "presence_updates",
             websocket,
         )
+    
+    elif user.role == UserRole.DOCTOR:
+
+        await manager.subscribe(
+            f"doctor_queue:{user.doctor.id}",
+            websocket,
+        )
+
+        logger.info(
+            "Doctor subscribed",
+            extra={
+                "doctor_id": user.doctor.id,
+                "channel": f"doctor_queue:{user.doctor.id}",
+            },
+        )
 
     # PRESENCE ONLINE
 
@@ -307,17 +322,6 @@ async def websocket_endpoint(
                 })
 
 
-
-    # except WebSocketDisconnect:
-
-    #     logger.info(
-    #         "ws_client_disconnected",
-    #         extra={
-    #             "user_id": user_id,
-    #         },
-    #     )
-
-
     except Exception as e:
 
         websocket_errors_total.inc()
@@ -333,72 +337,6 @@ async def websocket_endpoint(
 
     finally:
 
-        # print("FINALLY DISCONNECT:", user_id)
-
-        # if user.role == UserRole.ADMIN:
-
-        #     await manager.unsubscribe(
-        #         "admin_dashboard",
-        #         websocket,
-        #     )
-
-        #     await manager.unsubscribe(
-        #         "presence_updates",
-        #         websocket,
-        #     )
-
-        # await set_user_offline(user_id)
-
-        # await broadcast_presence(
-        #     user_id=user_id,
-        #     online=False,
-        # )
-
-        # await manager.disconnect(
-        #     user_id,
-        #     websocket,
-        # )
-
-
-
-
-        # try:
-        #     if user.role == UserRole.ADMIN:
-
-        #         await manager.unsubscribe(
-        #             "admin_dashboard",
-        #             websocket,
-        #         )
-
-        #         await manager.unsubscribe(
-        #             "presence_updates",
-        #             websocket,
-        #         )
-
-        #     await set_user_offline(user_id)
-
-        #     await broadcast_presence(
-        #         user_id=user_id,
-        #         online=False,
-        #     )
-
-        # except Exception as exc:
-        #     logger.exception(
-        #         "ws_cleanup_failed",
-        #         extra={
-        #             "user_id": user_id,
-        #             "error": str(exc),
-        #         },
-        #     )
-
-        # finally:
-        #     await manager.disconnect(
-        #         user_id,
-        #         websocket,
-        #     )
-
-
-
         try:
             if user.role == UserRole.ADMIN:
                 try:
@@ -410,7 +348,18 @@ async def websocket_endpoint(
                     await manager.unsubscribe("presence_updates", websocket)
                 except Exception:
                     logger.exception("unsubscribe_presence_failed", extra={"user_id": user_id})
-
+            
+            elif user.role == UserRole.DOCTOR:
+                try:
+                    await manager.unsubscribe(
+                        f"doctor_queue:{user.doctor.id}",
+                        websocket,
+                    )
+                except Exception:
+                    logger.exception(
+                        "unsubscribe_doctor_queue_failed",
+                        extra={"user_id": user_id},
+                    )
             try:
                 await set_user_offline(user_id)
             except Exception:

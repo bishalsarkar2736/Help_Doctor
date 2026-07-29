@@ -25,29 +25,43 @@ from app.services.medicine_ai_analytics_service import (
 
 async def get_dashboard_data(
     db: AsyncSession,
+    clinic_id: int,
 ):
 
-    clinic = await get_clinic_analytics(db)
+    clinic = await get_clinic_analytics(
+        db=db,
+        clinic_id=clinic_id,
+    )
 
-    appointments = await get_appointment_analytics(db)
+    appointments = await get_appointment_analytics(
+        db=db,
+        clinic_id=clinic_id,
+    )
 
-    revenue = await get_revenue_analytics(db)
+    revenue = await get_revenue_analytics(
+        db=db,
+        clinic_id=clinic_id,
+    )
 
     revenue_trend = await get_monthly_revenue(
-        db,
+        db=db,
+        clinic_id=clinic_id,
         months=12,
     )
 
     total_requests = await get_total_ai_requests(
-        db
+        db,
+        clinic_id,
     )
 
     total_failures = await get_total_ai_failures(
-        db
+        db,
+        clinic_id,
     )
 
     feedback_summary = await get_feedback_summary(
-        db
+        db,
+        clinic_id,
     )
 
     helpful = feedback_summary["helpful"]
@@ -87,12 +101,14 @@ async def get_dashboard_data(
 
         "average_latency_ms":
             await get_average_latency(
-                db
+                db,
+                clinic_id,
             ),
 
         "estimated_cost":
             await get_estimated_cost(
-                db
+                db,
+                clinic_id,
             ),
     }
 
@@ -106,7 +122,8 @@ async def get_dashboard_data(
 
         "most_disliked_questions":
             await get_most_disliked_questions(
-                db
+                db,
+                clinic_id,
             ),
     }
 

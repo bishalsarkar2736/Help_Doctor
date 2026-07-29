@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from fastapi import FastAPI
+from fastapi import FastAPI, Header, HTTPException
 from contextlib import asynccontextmanager,suppress
 from starlette.responses import JSONResponse
 from slowapi.errors import RateLimitExceeded
@@ -23,10 +23,8 @@ from app.try_except.exceptions import AppException
 from app.try_except.logging import setup_logging
 from app.try_except.middleware import RequestLoggingMiddleware
 
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-
 from app.try_except.correlation_middleware import CorrelationIdMiddleware
-from app.task.appointment_reminders import send_appointment_reminders
+from app.try_except.security_headers_middleware import SecurityHeadersMiddleware
 from app.websocket.redis_listener import redis_listener
 
 import asyncio
@@ -34,19 +32,17 @@ import asyncio
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.tracing import setup_tracing
+from app.core.sentry import setup_sentry
 
 from prometheus_client import (
     generate_latest,
     CONTENT_TYPE_LATEST,
 )
 from fastapi.responses import Response
-from app.task.payment_reconciliation import (
-    payment_reconciliation_job,
-)
-
 from app.api.routes import (
     ALL_ROUTERS,
 )
+from app.services.health_service import HealthService
 
 import logging
 
@@ -58,9 +54,6 @@ settings = get_settings()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
 
-    print("TESTING =", os.getenv("TESTING"))
-
-    scheduler = None
     redis_task = None
 
     if os.getenv("TESTING") != "1":
@@ -74,24 +67,6 @@ async def lifespan(app: FastAPI):
                 "Database startup failed"
             )
             raise
-
-        scheduler = AsyncIOScheduler()
-
-        scheduler.add_job(
-            send_appointment_reminders,
-            trigger="interval",
-            minutes=1,
-            max_instances=1,
-        )
-
-        scheduler.add_job(
-            payment_reconciliation_job,
-            trigger="interval",
-            minutes=5,
-            max_instances=1,
-        )
-
-        scheduler.start()
 
         redis_task = asyncio.create_task(
             redis_listener()
@@ -108,16 +83,14 @@ async def lifespan(app: FastAPI):
             with suppress(asyncio.CancelledError):
                 await redis_task
 
-        if scheduler:
-            scheduler.shutdown()
-
         if os.getenv("TESTING") != "1":
             await engine.dispose()
     
 
 def create_app() -> FastAPI:
     setup_logging(settings.DEBUG)
-    
+    setup_sentry()
+
 
     Path("media/signatures").mkdir(
         parents=True,
@@ -141,10 +114,11 @@ def create_app() -> FastAPI:
 
     app.add_middleware(CorrelationIdMiddleware)
     app.add_middleware(RequestLoggingMiddleware)
+    app.add_middleware(SecurityHeadersMiddleware)
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:5173"],  # frontend URL
+        allow_origins=settings.allowed_origins_list,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -165,24 +139,93 @@ def create_app() -> FastAPI:
             content={"detail": "Too many requests. Try again later."},
         )
 
-    @app.get('/health', tags=["Health"])
-    async def health_check():
+
+
+    @app.get(
+    "/health/live",
+    tags=["Health"],
+    )
+    async def liveness_check():
 
         return {
-            "status": "ok",
+            "status": "alive",
             "app": settings.APP_NAME,
-            "environment": settings.ENV,
-            "version": 1,
-            "services": {
-                "postgres": "up",
-                "redis": "up",
-                "websocket": "up",
-                "outbox_worker": "up",
-            },
         }
     
+
+    @app.get(
+    "/health/ready",
+    tags=["Health"],
+    )
+    async def readiness_check():
+
+        database, redis = await asyncio.gather(
+            HealthService.check_database(),
+            HealthService.check_redis(),
+        )
+
+        ready = (
+            database["status"] == "healthy"
+            and redis["status"] == "healthy"
+        )
+
+        return {
+            "status": (
+                "ready"
+                if ready
+                else "not_ready"
+            ),
+            "services": {
+                "database": database,
+                "redis": redis,
+            },
+        }
+        
+
+    @app.get(
+    "/health",
+    tags=["Health"],
+    )
+    async def health_check():
+
+        database, redis = await asyncio.gather(
+            HealthService.check_database(),
+            HealthService.check_redis(),
+        )
+
+        services = {
+            "database": database,
+            "redis": redis,
+        }
+
+        overall_status = "healthy"
+
+        if (
+            database["status"] == "unhealthy"
+            or redis["status"] == "unhealthy"
+        ):
+            overall_status = "unhealthy"
+
+        return {
+            "status": overall_status,
+            "app": settings.APP_NAME,
+            "environment": settings.ENV,
+            "version": "1.0.0",
+            "services": services,
+        }
+    
+
+
     @app.get("/metrics")
-    async def metrics():
+    async def metrics(
+        authorization: str | None = Header(default=None),
+    ):
+        if settings.METRICS_TOKEN:
+            if authorization != f"Bearer {settings.METRICS_TOKEN}":
+                raise HTTPException(status_code=401, detail="Unauthorized")
+
+        elif settings.ENV == "production":
+            raise HTTPException(status_code=404)
 
         return Response(
             generate_latest(),

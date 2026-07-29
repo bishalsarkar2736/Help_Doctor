@@ -9,6 +9,11 @@ from app.core.time import UTC
 from app.core.celery import celery_app
 from app.task.base import run_async
 
+
+import logging
+
+logger = logging.getLogger(__name__)
+
 REMINDER_WINDOW_MINUTES = 60
 
 # unique lock id for this job
@@ -82,10 +87,14 @@ async def send_appointment_reminders():
                     text("SELECT pg_advisory_unlock(:lock_id)"),
                     {"lock_id": REMINDER_JOB_LOCK_ID},
                 )
-            except Exception as unlock_error:
-                # do NOT crash job if unlock fails
-                print("[Reminder Job] Unlock failed:", unlock_error)
-
+            except Exception:
+                # Don't crash the job if unlock fails
+                logger.exception(
+                    "Failed to release reminder job advisory lock",
+                    extra={
+                        "lock_id": REMINDER_JOB_LOCK_ID,
+                    },
+                )
 
 # 🔁 Celery wrapper
 @celery_app.task(

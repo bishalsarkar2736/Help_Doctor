@@ -6,6 +6,7 @@ from sqlalchemy import (
     String,
     Text,
     func,
+    ForeignKey
 )
 
 from sqlalchemy.orm import (
@@ -45,5 +46,14 @@ class MedicineAIErrorLog(Base):
         DateTime(timezone=True),
         nullable=False,
         server_default=func.now(),
+        index=True,
+    )
+
+    clinic_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "clinics.id",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
         index=True,
     )

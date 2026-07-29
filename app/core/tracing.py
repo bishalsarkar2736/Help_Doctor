@@ -32,6 +32,7 @@ from opentelemetry.trace import (
 from app.core.correlation import (
     correlation_id_ctx,
 )
+from app.config import get_settings
 
 
 def setup_tracing(app):
@@ -41,14 +42,14 @@ def setup_tracing(app):
     })
 
     if os.getenv("TESTING") != "1":
-        
+
         provider = TracerProvider(
             resource=resource,
         )
 
         processor = BatchSpanProcessor(
             OTLPSpanExporter(
-                endpoint="http://localhost:4318/v1/traces"
+                endpoint=get_settings().OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
             )
         )
 

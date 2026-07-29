@@ -9,6 +9,9 @@ __pycache__/
 venv/
 .env
 .env.*
+# ...but the template must be tracked, or a fresh clone can't be configured.
+!.env.example
+.env.docker
 
 # ===== Pytest =====
 .pytest_cache/
@@ -38,3 +41,6 @@ dist/
 
 media/signatures/*
 !media/signatures/.gitkeep
+# Runtime user uploads — real doctor credentials and signatures.
+# These are PHI-adjacent and git history is permanent. Never commit them.
+uploads/

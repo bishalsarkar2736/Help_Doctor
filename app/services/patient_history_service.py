@@ -1,5 +1,5 @@
 
-from sqlalchemy import select
+from sqlalchemy import select,exists
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.patient import Patient
@@ -22,16 +22,18 @@ async def get_patient_history(
 ):
     
     patient = await db.scalar(
-        select(Patient).where(
-            Patient.id == patient_id,
-            Patient.clinic_id == clinic_id,
+        select(Patient)
+        .where(
+            Patient.user_id == patient_id,
+            exists().where(
+                Appointment.patient_id == Patient.user_id,
+                Appointment.clinic_id == clinic_id,
+            ),
         )
     )
 
     if not patient:
-        raise NotFoundError(
-            "Patient not found"
-        )
+        raise NotFoundError("Patient not found")
 
 
     timeline = []

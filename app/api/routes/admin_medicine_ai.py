@@ -16,6 +16,7 @@ from app.security.rbac import (
 from app.services.medicine_matcher_service import (
     match_medicine,
 )
+from app.services.tenant_resolver import resolve_clinic_id
 
 from app.services.medicine_ai_service import (
     MedicineAIService,
@@ -30,6 +31,7 @@ router = APIRouter(
 @router.post("/test")
 async def test_medicine_ai(
     question: str,
+    clinic_id : int,
     db: AsyncSession = Depends(get_db),
     admin : User =Depends(
         require_roles(
@@ -37,6 +39,12 @@ async def test_medicine_ai(
         )
     ),
 ):
+    
+    resolved_clinic_id = await resolve_clinic_id(
+        db=db,
+        user=admin,
+        clinic_id=clinic_id,
+    )
 
     medicine = await match_medicine(
         db=db,
@@ -53,6 +61,7 @@ async def test_medicine_ai(
 
     answer = await service.answer(
         db=db,
+        clinic_id=resolved_clinic_id,
         medicine=medicine,
         question=question,
     )

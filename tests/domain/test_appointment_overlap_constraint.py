@@ -16,6 +16,7 @@ async def test_doctor_cannot_have_overlapping_appointments(
     appt1 = Appointment(
         doctor_id=doctor.id,
         patient_id=patient_user.id,
+        clinic_id=doctor.clinic_id,
         scheduled_at=start,
         status=AppointmentStatus.PENDING,
     )
@@ -26,6 +27,7 @@ async def test_doctor_cannot_have_overlapping_appointments(
     appt2 = Appointment(
         doctor_id=doctor.id,
         patient_id=patient_user.id,
+        clinic_id=doctor.clinic_id,
         scheduled_at=start + timedelta(minutes=15),
         status=AppointmentStatus.PENDING,
     )

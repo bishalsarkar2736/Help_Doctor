@@ -10,7 +10,11 @@ from app.config import get_settings
 from app.models.user import User
 from app.core.time import UTC
 from app.db.postgres import get_db
+from app.try_except.context import user_id_ctx, clinic_id_ctx
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
+
 
 
 settings = get_settings()
@@ -171,6 +175,10 @@ async def get_current_user(
             detail="Inactive user",
         )
 
+    # Make user/clinic available to structured logging for this request.
+    user_id_ctx.set(user.id)
+    clinic_id_ctx.set(user.clinic_id)
+
     return user
 
 # =========================
@@ -221,7 +229,18 @@ async def decode_token_from_ws(websocket: WebSocket) -> User | None:
 
     # 🔹 Fetch user (DB validation)
     async with AsyncSessionLocal() as db:
-        user = await db.get(User, int(user_id))
+
+        result = await db.execute(
+            select(User)
+            .options(
+                selectinload(User.doctor),
+            )
+            .where(User.id == int(user_id))
+        )
+
+        user = result.scalar_one_or_none()
+
+        #user = await db.get(User, int(user_id))
 
         if not user:
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)

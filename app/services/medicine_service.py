@@ -1,9 +1,9 @@
-from sqlalchemy import select,func
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.medicine import Medicine
 from app.db.redis import get_redis
-from app.models.medicine_alias import MedicineAlias
+
 
 
 CACHE_TTL = 86400

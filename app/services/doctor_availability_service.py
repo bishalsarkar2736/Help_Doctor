@@ -1,7 +1,7 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from app.models.doctor import Doctor
+from app.models.doctor import Doctor, DoctorStatus
 from app.models.doctor_availability import DoctorAvailability
 from app.models.user import User, UserRole
 from app.try_except.exceptions import ForbiddenError,NotFoundError,BadRequestError,ConflictError
@@ -22,7 +22,7 @@ async def _get_doctor_or_403(db: AsyncSession, user: User) -> Doctor:
     if not doctor:
         raise NotFoundError("Doctor profile not found")
 
-    if not doctor.is_verified:
+    if doctor.status != DoctorStatus.APPROVED:
         raise ForbiddenError("Doctor not verified")
     
     if not doctor.user.is_active:

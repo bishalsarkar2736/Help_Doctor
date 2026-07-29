@@ -4,6 +4,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from app.core.time import UTC
+from app.core.metrics import prescriptions_issued_total
+from app.models.patient import Patient
+from app.domain.prescribing.allergy import find_allergy_conflicts
 from app.models.appointment import (
     Appointment,
     AppointmentStatus,
@@ -67,26 +70,24 @@ async def create_prescription(
     doctor_user_id = doctor.user_id
 
 
-    appointment_result = await db.execute(
-        select(Appointment).where(
-            Appointment.id == appointment_id,
-            Appointment.doctor_id == doctor.id,
-            Appointment.clinic_id == doctor.clinic_id,
-        )
-    )
-
-    appointment = (
-        appointment_result.scalar_one_or_none()
+    appointment = await db.get(
+        Appointment,
+        appointment_id,
     )
 
     if not appointment:
-        raise BadRequestError(
+        raise NotFoundError(
             "Appointment not found"
         )
 
-    if appointment.doctor_id != doctor_id:
+    if appointment.clinic_id != doctor.clinic_id:
         raise ForbiddenError(
-            "Not allowed"
+            "Appointment belongs to another clinic"
+        )
+
+    if appointment.doctor_id != doctor.id:
+        raise ForbiddenError(
+            "Not your appointment"
         )
 
     if appointment.status not in [
@@ -109,6 +110,21 @@ async def create_prescription(
     if existing.scalar_one_or_none():
         raise BadRequestError(
             "Prescription already exists"
+        )
+
+    # --- Allergy safety net: block prescribing a recorded allergen ---
+    patient = await db.scalar(
+        select(Patient).where(Patient.user_id == appointment.patient_id)
+    )
+    allergy_conflicts = find_allergy_conflicts(
+        patient.allergies if patient else None,
+        [item.medicine_name for item in data.items],
+    )
+    if allergy_conflicts and not data.allergy_override:
+        raise BadRequestError(
+            "Patient has a recorded allergy to: "
+            + ", ".join(allergy_conflicts)
+            + ". Review, then resubmit with override to proceed."
         )
 
     prescription = Prescription(
@@ -177,6 +193,21 @@ async def create_prescription(
         },
     )
 
+    if allergy_conflicts:
+        # An explicit, audited override of the allergy block.
+        await log_audit_event(
+            db=db,
+            event_type="prescription",
+            action="allergy_override",
+            user_id=doctor_user_id,
+            resource="prescription",
+            details={
+                "prescription_id": prescription.id,
+                "patient_id": appointment.patient_id,
+                "conflicts": allergy_conflicts,
+            },
+        )
+
     event = PrescriptionCreatedEvent(
         event_type="PRESCRIPTION_CREATED",
         schema_version=1,
@@ -210,10 +241,50 @@ async def create_prescription(
     return prescription
 
 
+async def get_active_draft_revision(
+    db: AsyncSession,
+    prescription: Prescription,
+) -> Prescription:
+    root_id = (
+        prescription.parent_prescription_id
+        or prescription.id
+    )
+
+    result = await db.execute(
+        select(Prescription)
+        .where(
+            Prescription.clinic_id == prescription.clinic_id,
+            (
+                (Prescription.id == root_id)
+                | (
+                    Prescription.parent_prescription_id
+                    == root_id
+                )
+            ),
+            Prescription.is_latest_revision.is_(True),
+        )
+        .order_by(Prescription.revision_number.desc())
+    )
+
+    revision = result.scalar_one_or_none()
+
+    if not revision:
+        raise NotFoundError("Latest revision not found")
+
+    if revision.status != PrescriptionStatus.DRAFT:
+        raise BadRequestError(
+            "Only draft revisions can be issued"
+        )
+
+    return revision
+
+
+
 async def issue_prescription(
     *,
     db: AsyncSession,
     prescription: Prescription,
+    transition_appointment: bool = True,
 ):
 
     doctor = await db.get(
@@ -265,12 +336,20 @@ async def issue_prescription(
             "Appointment not found"
         )
 
-    if (
-        appointment.status
-        != AppointmentStatus.IN_CONSULTATION
-    ):
+    if transition_appointment:
+        if (
+            appointment.status
+            != AppointmentStatus.IN_CONSULTATION
+        ):
+            raise BadRequestError(
+                "Appointment must be in consultation"
+            )
+    elif appointment.status not in [
+        AppointmentStatus.IN_CONSULTATION,
+        AppointmentStatus.COMPLETED,
+    ]:
         raise BadRequestError(
-            "Appointment must be in consultation"
+            "Appointment must be in consultation or already completed"
         )
 
     prescription.status = (
@@ -281,15 +360,18 @@ async def issue_prescription(
         UTC
     )
 
-    await transition_appointment_locked(
-        db=db,
-        appointment=appointment,
-        new_status=AppointmentStatus.COMPLETED,
-        changed_by=doctor_user_id,
-        actor_role=UserRole.DOCTOR,
-        actor_doctor_id=appointment.doctor_id,
-        emit_event=True,
-    )
+    prescriptions_issued_total.inc()
+
+    if transition_appointment:
+        await transition_appointment_locked(
+            db=db,
+            appointment=appointment,
+            new_status=AppointmentStatus.COMPLETED,
+            changed_by=doctor_user_id,
+            actor_role=UserRole.DOCTOR,
+            actor_doctor_id=appointment.doctor_id,
+            emit_event=True,
+        )
 
     await db.flush()
 
@@ -345,6 +427,7 @@ async def issue_prescription(
     return prescription
 
 
+
 async def get_prescription_by_id(
     db: AsyncSession,
     prescription_id: int,
@@ -359,7 +442,17 @@ async def get_prescription_by_id(
             selectinload(Prescription.patient),
             selectinload(Prescription.appointment),
         )
+        .where(
+            Prescription.id == prescription_id,
+        )
     )
+
+    prescription = await db.scalar(query)
+
+    if not prescription:
+        raise NotFoundError(
+            "Prescription not found"
+        )
 
     if user.role == UserRole.DOCTOR:
 
@@ -370,38 +463,43 @@ async def get_prescription_by_id(
         )
 
         if not doctor:
-            raise NotFoundError("Doctor profile not found")
-
-        prescription = await db.scalar(
-            query.where(
-                Prescription.id == prescription_id,
-                Prescription.doctor_id == doctor.id,
-                Prescription.clinic_id == doctor.clinic_id,
+            raise NotFoundError(
+                "Doctor profile not found"
             )
-        )
+
+        if (
+            prescription.clinic_id
+            != doctor.clinic_id
+        ):
+            raise ForbiddenError(
+                "Cross-clinic access denied"
+            )
+
+        if (
+            prescription.doctor_id
+            != doctor.id
+        ):
+            raise ForbiddenError(
+                "Not allowed"
+            )
 
     elif user.role == UserRole.PATIENT:
 
-        prescription = await db.scalar(
-            query.where(
-                Prescription.id == prescription_id,
-                Prescription.patient_id == user.id,
+        if (
+            prescription.patient_id
+            != user.id
+        ):
+            raise ForbiddenError(
+                "Not allowed"
             )
-        )
 
     elif user.role == UserRole.ADMIN:
-
-        prescription = await db.scalar(
-            query.where(
-                Prescription.id == prescription_id,
-            )
-        )
+        pass
 
     else:
-        raise ForbiddenError("Not allowed")
-
-    if not prescription:
-        raise NotFoundError("Prescription not found")
+        raise ForbiddenError(
+            "Not allowed"
+        )
 
     return prescription
 
@@ -430,9 +528,11 @@ async def get_patient_prescriptions(
             ),
         )
         .where(
-            Prescription.patient_id
-            == patient_id,
-            
+            Prescription.patient_id == patient_id,
+            # Patients only see finalized, current prescriptions —
+            # never drafts (doctor WIP) or superseded old revisions.
+            Prescription.is_latest_revision.is_(True),
+            Prescription.status != PrescriptionStatus.DRAFT,
         )
         .order_by(
             Prescription.created_at.desc()

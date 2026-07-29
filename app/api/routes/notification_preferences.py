@@ -14,7 +14,7 @@ from app.security.rbac import require_roles
 
 from app.services.notification_preference_service import (
     get_or_create_preferences,
-    update_preferences,
+    update_preferences as update_preferences_service,
 )
 
 from app.schemas.notification_preference import (
@@ -66,7 +66,7 @@ async def update_preferences(
         )
     ),
 ):
-    prefs = await update_preferences(
+    prefs = await update_preferences_service(
         db=db,
         user_id=current_user.id,
         email_enabled=payload.email_enabled,

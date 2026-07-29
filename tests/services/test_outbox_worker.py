@@ -1,3 +1,4 @@
+from datetime import date
 
 import pytest
 from sqlalchemy import select
@@ -9,7 +10,7 @@ from app.workers.outbox_worker import process_batch
 from app.models.outbox_event import OutboxEvent
 from app.models.notification import Notification
 from app.models.user import User, UserRole
-from app.models.doctor import Doctor
+from app.models.doctor import Doctor, DoctorStatus
 from app.models.patient import Patient
 from app.models.appointment import Appointment
 from app.websocket.manager import manager
@@ -18,12 +19,15 @@ from sqlalchemy.dialects.postgresql import Range
 from app.models.notification_preference import (
     NotificationPreference,
 )
-
+from app.core.constants import APPOINTMENT_DURATION_MINUTES
 
 
 
 @pytest.mark.asyncio
-async def test_outbox_event_creates_notification(db):
+async def test_outbox_event_creates_notification(
+    db,
+    default_clinic,
+):
 
     # -----------------------------
     # Create user
@@ -58,10 +62,11 @@ async def test_outbox_event_creates_notification(db):
     # doctor
     doctor = Doctor(
         user_id=doctor_user.id,
+        clinic_id=default_clinic.id,
         specialization="Cardiology",
         experience_years=5,
         bio="Test doctor",
-        is_verified=True,
+        status=DoctorStatus.APPROVED,
     )
     db.add(doctor)
     await db.flush()
@@ -71,8 +76,8 @@ async def test_outbox_event_creates_notification(db):
             user_id=patient_user.id,
             phone="01700000000",
             address="Rangpur",
-            date_of_birth="1995-01-01",
-            gender="male",
+            date_of_birth=date(1995, 1, 1),
+            gender="MALE",
     )
     db.add(patient)
     await db.flush()
@@ -86,9 +91,13 @@ async def test_outbox_event_creates_notification(db):
     appointment = Appointment(
         patient_id=patient_user.id,
         doctor_id=doctor.id,
+        clinic_id=default_clinic.id,
         scheduled_at=start,
         status="PENDING",
-        time_range=Range(start, start + timedelta(minutes=30)),
+        time_range=Range(
+            start,
+            start + timedelta(minutes=APPOINTMENT_DURATION_MINUTES),
+        )
     )
 
     db.add(appointment)
@@ -190,23 +199,6 @@ async def test_outbox_event_creates_notification(db):
     # -----------------------------
     calls = manager.notify_user.await_args_list
 
-    
-
-    # assert any(
-    #     (
-    #         call.kwargs.get("user_id") == patient_user.id
-    #         and call.kwargs.get("appointment_id") == appointment.id
-    #         and call.kwargs.get("message", {}).get("event")
-    #             == "appointment_status_changed"
-    #     )
-    #     or
-    #     (
-    #         len(call.args) >= 2
-    #         and call.args[0] == patient_user.id
-    #     )
-    #     for call in calls
-    # )
-    print(manager.notify_user.await_args_list)
 
     assert any(
         call.kwargs.get("user_id")

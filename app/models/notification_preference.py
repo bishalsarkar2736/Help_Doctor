@@ -18,6 +18,12 @@ class NotificationPreference(Base):
         nullable=False,
     )
 
+    whatsapp_enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        nullable=False,
+    )
+
     push_enabled: Mapped[bool] = mapped_column(
         Boolean,
         default=True,

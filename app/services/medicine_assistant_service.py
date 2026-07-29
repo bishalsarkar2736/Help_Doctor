@@ -28,6 +28,8 @@ DISCLAIMER = (
 
 async def answer_medicine_question(
     db: AsyncSession,
+    *,
+    clinic_id: int,
     question: str,
 ) -> str:
 
@@ -42,6 +44,7 @@ async def answer_medicine_question(
 
     await log_medicine_assistant_query(
         db,
+        clinic_id=clinic_id,
         question=question,
         medicine_name=(
             medicine.name
@@ -66,8 +69,10 @@ async def answer_medicine_question(
         ai_service = MedicineAIService()
 
         return await ai_service.answer(
-            medicine,
-            question,
+            db=db,
+            clinic_id=clinic_id,
+            medicine=medicine,
+            question=question,
         )
 
     # ====================================

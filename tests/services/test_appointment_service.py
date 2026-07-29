@@ -8,14 +8,16 @@ from app.services.appointment_service import (
 )
 from app.models.appointment import AppointmentStatus
 from zoneinfo import ZoneInfo
-from sqlalchemy import select
-from app.models.doctor import Doctor
+
 from app.models.doctor_availability import DoctorAvailability
 from app.try_except.exceptions import (
     BadRequestError,
     ForbiddenError,
 )
 from tests.conftest import valid_slot
+from app.core.constants import APPOINTMENT_DURATION_MINUTES
+
+
 
 UTC = ZoneInfo("UTC")
 
@@ -328,7 +330,12 @@ async def test_can_book_non_overlapping_appointment(
         base_time,
     )
 
-    second_time = base_time + timedelta(minutes=30)
+    second_time = base_time + timedelta(
+        minutes=APPOINTMENT_DURATION_MINUTES
+    )
+
+    print("base_time:", base_time)
+    print("second_time:", second_time)
 
     appointment = await book_appointment(
         db,

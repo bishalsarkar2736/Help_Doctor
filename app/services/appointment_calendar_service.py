@@ -23,7 +23,7 @@ from app.schemas.appointment_calendar_schema import (
 )
 
 
-#DEFAULT_APPOINTMENT_DURATION_MINUTES = 30
+
 
 
 async def get_calendar_appointments(
@@ -107,11 +107,9 @@ async def get_calendar_appointments(
                 start=appointment.scheduled_at,
                 end=(
                     appointment.scheduled_at
-                    + Appointment.APPOINTMENT_DURATION
+                    + Appointment.time_range.upper
                 ),
-                status=str(
-                    appointment.status
-                ),
+                status=appointment.status.value
             )
         )
 

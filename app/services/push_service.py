@@ -13,7 +13,6 @@ VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY")
 VAPID_EMAIL = os.getenv("VAPID_EMAIL")
 
 
-from app.db.postgres import AsyncSessionLocal
 
 async def send_push_to_user(
     *,

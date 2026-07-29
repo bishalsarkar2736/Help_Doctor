@@ -8,7 +8,7 @@ import logging
 from sqlalchemy.exc import IntegrityError, DBAPIError
 from app.models.patient import Patient
 from app.models.appointment import Appointment, AppointmentStatus
-from app.models.doctor import Doctor
+from app.models.doctor import Doctor, DoctorStatus
 from app.models.user import User, UserRole
 from app.try_except.exceptions import ForbiddenError,BadRequestError,NotFoundError
 from app.services.appointment_transition_service import transition_appointment_locked
@@ -43,9 +43,6 @@ from app.schemas.event_metadata import (
     EventActor,
 )
 
-from app.schemas.event import (
-    CancelledByInfo,
-)
 
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
@@ -84,7 +81,7 @@ async def _get_verified_doctor_by_user_id(
         select(Doctor)
         .where(
             Doctor.user_id == user_id,
-            Doctor.is_verified.is_(True),
+            Doctor.status == DoctorStatus.APPROVED,
         )
     )
     doctor = result.scalar_one_or_none()
@@ -127,7 +124,7 @@ async def get_appointment_by_id(
             .selectinload(Doctor.user),
 
             selectinload(Appointment.patient)
-            .selectinload(Patient.user),
+            #.selectinload(Patient.user),
         )
         .where(
             Appointment.id == appointment_id,
@@ -173,67 +170,6 @@ async def get_appointment_by_id(
 
     return appointment
 
-
-# async def get_appointment_by_id(
-#     db: AsyncSession,
-#     appointment_id: int,
-#     user: User,
-# ) -> Appointment:
-
-#     query = (
-#         select(Appointment)
-#         .options(
-#             selectinload(Appointment.doctor)
-#             .selectinload(Doctor.user),
-
-#             selectinload(Appointment.patient),
-#         )
-#     )
-
-#     if user.role == UserRole.PATIENT:
-
-#         patient = await db.scalar(
-#             select(Patient).where(
-#                 Patient.user_id == user.id,
-#             )
-#         )
-
-#         if not patient:
-#             raise NotFoundError("Patient not found")
-
-#         query = query.where(
-#             Appointment.id == appointment_id,
-#             Appointment.patient_id == user.id,
-#         )
-
-#     elif user.role == UserRole.DOCTOR:
-
-#         doctor = await _get_verified_doctor_by_user_id(
-#             db,
-#             user.id,
-#         )
-
-#         query = query.where(
-#             Appointment.id == appointment_id,
-#             Appointment.clinic_id == doctor.clinic_id,
-#             Appointment.doctor_id == doctor.id,
-#         )
-
-#     elif user.role == UserRole.ADMIN:
-
-#         query = query.where(
-#             Appointment.id == appointment_id,
-#         )
-
-#     else:
-#         raise ForbiddenError("Access denied")
-
-#     appointment = await db.scalar(query)
-
-#     if not appointment:
-#         raise NotFoundError("Appointment not found")
-
-#     return appointment
 
 
 # =========================
@@ -333,7 +269,6 @@ async def apply_cancellation_side_effects(
                 reason=reason or "",
             )
         )
-
 
     for event in events:
 
@@ -523,6 +458,8 @@ async def apply_booking_side_effects(
     
     for event in events:
 
+    
+
         await publish_domain_event(
             db=db,
             event=event,
@@ -616,7 +553,7 @@ async def _book_appointment_internal(
     if not doctor:
         raise BadRequestError("Invalid doctor")
 
-    if not doctor.is_verified:
+    if doctor.status != DoctorStatus.APPROVED:
         raise ForbiddenError("Doctor not verified")
 
     # 2️⃣ Role check
@@ -667,17 +604,18 @@ async def _book_appointment_internal(
         status=AppointmentStatus.PENDING,
     )
 
+
     db.add(appointment)
 
     try:
         await db.flush()  # triggers exclusion constraint
-
+        
     except IntegrityError:
         raise BadRequestError(
             "Doctor already booked for this time slot"
         )
 
-    except DBAPIError as e:
+    except DBAPIError:
         # 🚫 DO NOT rollback here
         # retry system will handle deadlock
         raise
@@ -749,6 +687,8 @@ async def book_appointment(
                 operation="book_appointment",
             )
 
+           
+
             await db.refresh(appointment)
 
             inject_trace_attributes(
@@ -766,6 +706,8 @@ async def book_appointment(
                 appointment.doctor_id,
             )
 
+       
+
             await apply_booking_side_effects(
                 db=db,
                 appointment=appointment,
@@ -773,7 +715,10 @@ async def book_appointment(
                 correlation_id=correlation_id,
             )
 
+           
+
             #await emit_appointment_event(db, appointment,doctor=doctor)
+            
 
             await log_audit_event(
                 db=db,
@@ -806,6 +751,8 @@ async def book_appointment(
             )
 
             appointment_created_total.inc()
+
+           
 
             return appointment
         
@@ -874,20 +821,10 @@ async def patient_cancel_appointment(
     if user.role != UserRole.PATIENT:
         raise ForbiddenError("Only patients allowed")
     
-    patient = await db.scalar(
-        select(Patient).where(
-            Patient.user_id == user.id,
-        )
-    )
-
-    if not patient:
-        raise NotFoundError("Patient not found")
-
     result = await db.execute(
         select(Appointment)
         .where(
             Appointment.id == appointment_id,
-            Appointment.clinic_id == patient.clinic_id,
         )
         .with_for_update()
     )
@@ -961,35 +898,35 @@ async def patient_reschedule_appointment(
         raise ForbiddenError("Only patients allowed")
 
 
-    patient = await db.scalar(
-        select(Patient).where(
-            Patient.user_id == user.id,
-        )
-    )
-
-    if not patient:
-        raise NotFoundError("Patient not found")
-
-
     #async with db.begin():
     result = await db.execute(
             select(Appointment)
             .where(
                 Appointment.id == appointment_id,
-                Appointment.clinic_id == patient.clinic_id
             )
             .with_for_update()
     )
     appointment = result.scalar_one_or_none()
 
-    if not appointment or appointment.patient_id != user.id:
-        raise ForbiddenError("Not allowed")
+    if not appointment:
+        raise NotFoundError(
+            "Appointment not found"
+        )
+    
 
-    if appointment.status in (
-        AppointmentStatus.CANCELLED,
-        AppointmentStatus.COMPLETED,
+    if appointment.patient_id != user.id:
+        raise ForbiddenError(
+            "Not your appointment"
+        )
+
+    # Only future, not-yet-started appointments can be rescheduled.
+    if appointment.status not in (
+        AppointmentStatus.PENDING,
+        AppointmentStatus.CONFIRMED,
     ):
-        raise BadRequestError("Cannot reschedule closed appointment")
+        raise BadRequestError(
+            "Only pending or confirmed appointments can be rescheduled"
+        )
     
 
     old_date = appointment.scheduled_at.date()  # read old date BEFORE updating
@@ -1018,7 +955,7 @@ async def patient_reschedule_appointment(
             new_datetime,
         )
 
-    except Exception:
+    except BadRequestError:
         doctor_slot_validation_failures_total.labels(
             reason="outside_availability"
         ).inc()
@@ -1053,6 +990,7 @@ async def patient_reschedule_appointment(
     await apply_reschedule_side_effects(
         db=db,
         appointment=appointment,
+        actor=user,
         doctor=doctor,
         notify_doctor=True,
         is_request=True,
@@ -1279,7 +1217,14 @@ async def doctor_reschedule_appointment(
     if appointment.doctor_id != doctor.id:
         raise ForbiddenError("Not your appointment")
 
-    #appointment.scheduled_at = new_datetime
+    # Only future, not-yet-started appointments can be rescheduled.
+    if appointment.status not in (
+        AppointmentStatus.PENDING,
+        AppointmentStatus.CONFIRMED,
+    ):
+        raise BadRequestError(
+            "Only pending or confirmed appointments can be rescheduled"
+        )
 
     old_date = appointment.scheduled_at.date()
 
@@ -1341,6 +1286,7 @@ async def doctor_reschedule_appointment(
     await apply_reschedule_side_effects(
         db=db,
         appointment=appointment,
+        actor=doctor_user,
         doctor=doctor,
         notify_patient=True,
         correlation_id=correlation_id,

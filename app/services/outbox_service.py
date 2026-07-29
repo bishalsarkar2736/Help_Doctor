@@ -1,6 +1,6 @@
 import logging
 from sqlalchemy.ext.asyncio import AsyncSession
-
+import traceback
 from app.models.outbox_event import OutboxEvent
 
 logger = logging.getLogger(__name__)
@@ -14,8 +14,24 @@ async def publish_event(
     payload: dict,
 ) -> OutboxEvent:
     
-    logger.warning(f"publish_event called: {event_type} | payload={payload}")
+    print(
+        "publish",
+        event_type,
+        "appointment_id=",
+        payload.get("appointment_id"),
+        "session=",
+        id(db),
+    )
+    print("session id:", id(db))
+    print("connection:", id(db.sync_session.connection()))
     
+    #logger.warning(f"publish_event called: {event_type} | payload={payload}")
+    
+    print("\n" + "=" * 80)
+    print("PUBLISH EVENT:", event_type)
+    traceback.print_stack(limit=12)
+    print("=" * 80 + "\n")
+
     event = OutboxEvent(
         event_type=event_type,
         payload=payload or {},  # ✅ safety

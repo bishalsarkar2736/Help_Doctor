@@ -10,27 +10,25 @@ from fastapi import UploadFile
 from app.core.time import UTC
 
 
-from app.models.doctor import Doctor
+from app.models.doctor import Doctor, DoctorStatus
 from app.models.user import User
 from app.try_except.exceptions import BadRequestError,NotFoundError
+from app.security.file_validation import ensure_image
 
 from app.schemas.doctor import (
     DoctorProfileUpdate,
+    DoctorProfileCreate,
 )
 
 
 async def create_doctor_profile(
     db: AsyncSession,
     user: User,
-    specialization: str,
-    experience_years: int,
-    bio: str,
+    data: DoctorProfileCreate,
 ) -> Doctor:
     
     DoctorPolicy.can_create_profile(user)
 
-    # if user.role != UserRole.DOCTOR:
-    #     raise ForbiddenError("User is not a doctor")
 
     result = await db.execute(
         select(Doctor).where(Doctor.user_id == user.id)
@@ -41,9 +39,13 @@ async def create_doctor_profile(
 
     doctor = Doctor(
         user_id=user.id,
-        specialization=specialization,
-        experience_years=experience_years,
-        bio=bio,
+        specialization=data.specialization,
+        experience_years=data.experience_years,
+        bio=data.bio,
+        # Invited doctors already carry their clinic (from accepting the
+        # invite); self-applying doctors have it assigned at approval time.
+        clinic_id=user.clinic_id,
+        status=DoctorStatus.PENDING,
     )
 
     db.add(doctor)
@@ -69,7 +71,7 @@ async def verify_doctor(
     if not doctor:
         raise NotFoundError("Doctor not found")
 
-    doctor.is_verified = True
+    doctor.status = DoctorStatus.APPROVED
     await db.flush()
     await db.refresh(doctor)
 
@@ -167,10 +169,20 @@ async def upload_doctor_signature(
             "Only PNG or JPEG allowed"
         )
 
-    extension = ".png"
+    content = await file.read()
 
-    if file.content_type == "image/jpeg":
-        extension = ".jpg"
+    if len(content) > 2 * 1024 * 1024:
+        raise BadRequestError(
+            "File too large"
+        )
+
+    # Never trust the client's Content-Type — verify by magic bytes.
+    try:
+        detected = ensure_image(content, allowed_types)
+    except ValueError:
+        raise BadRequestError("Only PNG or JPEG images are allowed")
+
+    extension = ".jpg" if detected == "image/jpeg" else ".png"
 
     signature_dir = Path(
         "media/signatures"
@@ -181,21 +193,7 @@ async def upload_doctor_signature(
         exist_ok=True,
     )
 
-    filename = (
-        f"doctor_{doctor.id}"
-        f"{extension}"
-    )
-
-    filepath = (
-        signature_dir / filename
-    )
-
-    content = await file.read()
-
-    if len(content) > 2 * 1024 * 1024:
-        raise BadRequestError(
-            "File too large"
-        )
+    filepath = signature_dir / f"doctor_{doctor.id}{extension}"
 
     filepath.write_bytes(content)
 

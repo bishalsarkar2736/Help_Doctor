@@ -6,7 +6,6 @@ from sqlalchemy import func
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.appointment import Appointment
-from app.models.patient import Patient
 
 
 from app.services.revenue_analytics_service import (
@@ -22,30 +21,34 @@ async def get_monthly_patient_growth(
     clinic_id: int,
     months: int = 12,
 ):
-
-
     start_date = (
         date.today().replace(day=1)
         - relativedelta(months=months - 1)
     )
 
+    # First appointment for each patient in this clinic
+    first_visit_subquery = (
+        select(
+            Appointment.patient_id.label("patient_id"),
+            func.min(Appointment.created_at).label("first_visit"),
+        )
+        .where(
+            Appointment.clinic_id == clinic_id,
+        )
+        .group_by(Appointment.patient_id)
+        .subquery()
+    )
+
     result = await db.execute(
         select(
             func.to_char(
-                Patient.created_at,
+                first_visit_subquery.c.first_visit,
                 "YYYY-MM",
             ).label("month"),
-
-            func.count(
-                Patient.id
-            ).label("count"),
+            func.count().label("count"),
         )
         .where(
-            Patient.clinic_id
-            == clinic_id,
-
-            Patient.created_at
-            >= start_date,
+            first_visit_subquery.c.first_visit >= start_date,
         )
         .group_by("month")
         .order_by("month")

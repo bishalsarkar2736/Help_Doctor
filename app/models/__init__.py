@@ -3,6 +3,8 @@ from .patient import Patient
 from .refresh_token import RefreshToken
 from .doctor import Doctor
 from .doctor_availability import DoctorAvailability
+from .doctor_document import DoctorDocument, DoctorDocumentType
+from .doctor_rating import DoctorRating
 from .appointment import Appointment
 from .notification import Notification
 from .appointment_history import AppointmentStatusHistory
@@ -18,3 +20,6 @@ from .notification_preference import NotificationPreference
 from .medicine_alias import MedicineAlias
 from .clinic import Clinic
 from .medicine import Medicine
+from .password_reset_token import PasswordResetToken
+from .email_verification_token import EmailVerificationToken
+from .invitation import Invitation, InvitationStatus

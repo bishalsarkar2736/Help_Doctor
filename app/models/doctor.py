@@ -1,11 +1,14 @@
+from datetime import datetime
+from enum import Enum
+
 from sqlalchemy import (
-    String, 
-    Integer, 
-    Boolean, 
-    ForeignKey, 
+    String,
+    Integer,
+    ForeignKey,
     DateTime,
     text,
     Numeric,
+    Enum as SQLEnum,
 )
 from decimal import Decimal
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -13,6 +16,17 @@ from sqlalchemy.sql import func
 
 from app.db.base import Base
 from app.models.prescription import Prescription
+
+
+class DoctorStatus(str, Enum):
+    """Doctor lifecycle — the single source of truth for verification.
+
+    Values equal names (matches the project's enum convention).
+    """
+    PENDING = "PENDING"      # profile created / applied, awaiting review
+    APPROVED = "APPROVED"    # verified — visible in directory, can practice
+    REJECTED = "REJECTED"    # application declined
+    SUSPENDED = "SUSPENDED"  # previously approved, temporarily disabled
 
 
 class Doctor(Base):
@@ -30,9 +44,37 @@ class Doctor(Base):
     experience_years: Mapped[int] = mapped_column(Integer, default=0)
     bio: Mapped[str] = mapped_column(String(500))
 
-    is_verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    status: Mapped[DoctorStatus] = mapped_column(
+        SQLEnum(DoctorStatus, name="doctor_status", create_type=False),
+        default=DoctorStatus.PENDING,
+        server_default="PENDING",
+        nullable=False,
+        index=True,
+    )
 
-    created_at: Mapped[DateTime] = mapped_column(
+    # --- Approval / rejection audit ---
+    approved_by: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    approved_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    rejected_by: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    rejected_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    rejection_reason: Mapped[str | None] = mapped_column(
+        String(500),
+        nullable=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
     )
@@ -82,11 +124,19 @@ class Doctor(Base):
     
 
     user = relationship(
-        "User", 
+        "User",
         back_populates="doctor",
+        foreign_keys="Doctor.user_id",
         lazy="selectin",
     )
     
+    documents = relationship(
+        "DoctorDocument",
+        back_populates="doctor",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+
     availability = relationship(
         "DoctorAvailability",
         back_populates="doctor",

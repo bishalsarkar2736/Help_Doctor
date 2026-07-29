@@ -1,27 +1,61 @@
-from pydantic import BaseModel, EmailStr, Field,ConfigDict
+from pydantic import BaseModel, EmailStr, Field,ConfigDict, field_validator
 from typing import Optional
 
 from datetime import datetime
 from app.models.user import UserRole
+from app.security.password_policy import StrongPassword
 
 
 
 #Base Schema
 class UserBase(BaseModel):
     email : EmailStr
-    full_name : str
+    full_name : str = Field(max_length=255)
     role: UserRole = UserRole.RECEPTIONIST
     is_active:bool = True
 
 
 # create User (register)
 
+# Patients are the ONLY public users. Everything else is provisioned:
+#   DOCTOR / RECEPTIONIST -> invited by a clinic admin
+#   ADMIN                 -> invited by the super admin
+#   SUPER_ADMIN           -> seeded by scripts/create_super_admin.py only
+# A clinic decides who practises under its name, so a doctor cannot self-attach.
+SELF_REGISTERABLE_ROLES = {UserRole.PATIENT}
+
+
 class UserCreate(UserBase):
-    password : str = Field(
-        min_length= 8,
-        max_length=72,
-        description="User password (min 8 character)"
+    # Patient is the safe default; explicitly NOT inherited from UserBase,
+    # whose RECEPTIONIST default is wrong for public signup.
+    role: UserRole = UserRole.PATIENT
+
+    password: StrongPassword = Field(
+        description="Min 8 chars, at least one letter and one number",
     )
+
+    # Scoped to UserCreate (registration input) only — not UserBase/UserRead —
+    # so reading back pre-existing users never re-validates and fails on
+    # names written before this rule existed.
+    @field_validator("full_name")
+    @classmethod
+    def validate_full_name(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("Full name cannot be empty.")
+        return v
+
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, v: UserRole) -> UserRole:
+        # Without this, anyone could POST /auth/register with
+        # role="super_admin" and mint themselves a platform account.
+        if v not in SELF_REGISTERABLE_ROLES:
+            raise ValueError(
+                "This account type cannot be created by signing up. "
+                "Staff accounts are created by invitation."
+            )
+        return v
 
 # Login Schema
 

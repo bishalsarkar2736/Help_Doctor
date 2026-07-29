@@ -19,6 +19,7 @@ COST_PER_1K_TOKENS = 0.0004
 
 async def get_total_ai_requests(
     db: AsyncSession,
+    clinic_id: int,
 ) -> int:
 
     result = await db.execute(
@@ -27,6 +28,9 @@ async def get_total_ai_requests(
                 MedicineAILog.id
             )
         )
+        .where(
+            MedicineAILog.clinic_id == clinic_id
+        )
     )
 
     return result.scalar_one()
@@ -34,6 +38,7 @@ async def get_total_ai_requests(
 
 async def get_average_latency(
     db: AsyncSession,
+    clinic_id: int,
 ) -> float:
 
     result = await db.execute(
@@ -41,6 +46,9 @@ async def get_average_latency(
             func.avg(
                 MedicineAILog.latency_ms
             )
+        )
+        .where(
+            MedicineAILog.clinic_id == clinic_id
         )
     )
 
@@ -54,6 +62,7 @@ async def get_average_latency(
 
 async def get_prompt_versions(
     db: AsyncSession,
+    clinic_id: int,
 ):
 
     result = await db.execute(
@@ -66,7 +75,13 @@ async def get_prompt_versions(
                 MedicineAILog.latency_ms
             ).label("average_latency_ms"),
         )
+        .where(
+            MedicineAILog.clinic_id == clinic_id
+        )
         .group_by(
+            MedicineAILog.prompt_version
+        )
+        .order_by(
             MedicineAILog.prompt_version.desc()
         )
     )
@@ -94,6 +109,7 @@ async def get_prompt_versions(
 
 async def get_top_ai_questions(
     db: AsyncSession,
+    clinic_id: int,
     limit: int = 20,
 ):
 
@@ -103,6 +119,9 @@ async def get_top_ai_questions(
             func.count(
                 MedicineAILog.id
             ).label("total"),
+        )
+        .where(
+            MedicineAILog.clinic_id == clinic_id
         )
         .group_by(
             MedicineAILog.question
@@ -126,6 +145,7 @@ async def get_top_ai_questions(
 
 async def get_tokens_by_medicine(
     db: AsyncSession,
+    clinic_id: int,
     limit: int = 20,
 ):
 
@@ -136,8 +156,12 @@ async def get_tokens_by_medicine(
                 MedicineAILog.tokens_used
             ).label("tokens"),
         )
+        .where(
+            MedicineAILog.clinic_id == clinic_id,
+            MedicineAILog.medicine_name.is_not(None),
+        )
         .group_by(
-            MedicineAILog.medicine_name.is_not(None)
+            MedicineAILog.medicine_name
         )
         .order_by(
             func.sum(
@@ -163,6 +187,7 @@ async def get_tokens_by_medicine(
 
 async def get_estimated_cost(
     db: AsyncSession,
+    clinic_id: int,
 ):
 
     result = await db.execute(
@@ -173,6 +198,9 @@ async def get_estimated_cost(
                 ),
                 0,
             )
+        )
+        .where(
+            MedicineAILog.clinic_id == clinic_id
         )
     )
 
@@ -196,6 +224,7 @@ async def get_estimated_cost(
 
 async def get_total_ai_failures(
     db: AsyncSession,
+    clinic_id : int,
 ) -> int:
 
     result = await db.execute(
@@ -203,6 +232,9 @@ async def get_total_ai_failures(
             func.count(
                 MedicineAIErrorLog.id
             )
+        )
+        .where(
+            MedicineAIErrorLog.clinic_id == clinic_id
         )
     )
 
@@ -212,6 +244,7 @@ async def get_total_ai_failures(
 
 async def get_common_ai_errors(
     db: AsyncSession,
+    clinic_id : int,
     limit: int = 20,
 ):
 
@@ -221,6 +254,9 @@ async def get_common_ai_errors(
             func.count(
                 MedicineAIErrorLog.id
             ).label("total"),
+        )
+        .where(
+            MedicineAIErrorLog.clinic_id == clinic_id
         )
         .group_by(
             MedicineAIErrorLog.error
@@ -244,6 +280,7 @@ async def get_common_ai_errors(
 
 async def get_feedback_summary(
     db: AsyncSession,
+    clinic_id : int,
 ):
 
     result = await db.execute(
@@ -252,6 +289,14 @@ async def get_feedback_summary(
             func.count(
                 MedicineAIFeedback.id
             ).label("total"),
+        )
+        .join(
+            MedicineAILog,
+            MedicineAILog.id
+            == MedicineAIFeedback.ai_log_id,
+        )
+        .where(
+            MedicineAILog.clinic_id == clinic_id
         )
         .group_by(
             MedicineAIFeedback.helpful
@@ -276,6 +321,7 @@ async def get_feedback_summary(
 
 async def get_most_disliked_questions(
     db: AsyncSession,
+    clinic_id : int,
     limit: int = 20,
 ):
 
@@ -292,7 +338,8 @@ async def get_most_disliked_questions(
             == MedicineAIFeedback.ai_log_id,
         )
         .where(
-            MedicineAIFeedback.helpful.is_(False)
+            MedicineAILog.clinic_id == clinic_id,
+            MedicineAIFeedback.helpful.is_(False),
         )
         .group_by(
             MedicineAILog.question
@@ -316,10 +363,12 @@ async def get_most_disliked_questions(
 
 async def get_helpful_percentage(
     db: AsyncSession,
+    clinic_id: int,
 ) -> float:
 
     summary = await get_feedback_summary(
-        db
+        db,
+        clinic_id
     )
 
     helpful = summary["helpful"]
@@ -339,14 +388,17 @@ async def get_helpful_percentage(
 
 async def get_failure_rate_percentage(
     db: AsyncSession,
+    clinic_id: int,
 ) -> float:
 
     total_requests = await get_total_ai_requests(
-        db
+        db,
+        clinic_id
     )
 
     total_failures = await get_total_ai_failures(
-        db
+        db,
+        clinic_id
     )
 
     if total_requests == 0:

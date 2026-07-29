@@ -1,11 +1,13 @@
 from fastapi import APIRouter, Depends,Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, or_, func
 from app.db.postgres import get_db
 from app.models.user import User
-from app.models.doctor import Doctor
+from app.models.doctor import Doctor, DoctorStatus
+from app.models.clinic import Clinic
 from app.security.rbac import require_roles
 from app.models.user import UserRole
+from app.try_except.exceptions import NotFoundError
 
 from fastapi import UploadFile
 from fastapi import File
@@ -17,57 +19,93 @@ from app.services.doctor_service import (
 from app.schemas.doctor_signature import (
     DoctorSignatureResponse,
 )
+from app.schemas.doctor_document import DoctorDocumentResponse
+from app.models.doctor_document import DoctorDocumentType
+from app.services.doctor_document_service import (
+    upload_doctor_document,
+    list_own_documents,
+)
 
 from app.schemas.doctor import (
     DoctorListItem,
+    DoctorDetail,
+    DoctorMe,
     DoctorProfileUpdate,
+    DoctorProfileResponse,
+    DoctorProfileCreate,
 )
 
 from app.services.doctor_service import (
     create_doctor_profile,
     update_doctor_profile,
 )
+from app.schemas.doctor_search import DoctorSearchOut
+from app.services.doctor_search_service import search_doctors
+
 
 
 router = APIRouter(prefix="/doctors", tags=["Doctors"])
 
 
 
-@router.post("/profile")
+@router.post(
+    "/profile",
+    response_model=DoctorProfileResponse,
+)
 async def create_profile(
-    specialization: str,
-    experience_years: int,
-    bio: str,
+    data: DoctorProfileCreate,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_roles(UserRole.DOCTOR)),
 ):
     return await create_doctor_profile(
-        db,
-        current_user,
-        specialization,
-        experience_years,
-        bio,
+        db=db,
+        user=current_user,
+        data=data,
     )
 
 
 @router.get("", response_model=list[DoctorListItem])
 async def list_doctors(
     db: AsyncSession = Depends(get_db),
+    q: str | None = Query(
+        default=None,
+        description="Search by doctor name or specialization",
+    ),
+    specialization: str | None = Query(default=None),
+    clinic_id: int | None = Query(default=None),
     limit: int = Query(20, le=100),
     offset: int = Query(0),
 ):
-    result = await db.execute(
-        select(Doctor, User)
+    query = (
+        select(Doctor, User, Clinic)
         .join(User, Doctor.user_id == User.id)
+        .outerjoin(Clinic, Doctor.clinic_id == Clinic.id)
         .where(
-            Doctor.is_verified.is_(True),
+            Doctor.status == DoctorStatus.APPROVED,
             User.is_active.is_(True),
         )
-        .limit(limit)
-        .offset(offset)
     )
 
-    rows = result.all()
+    if q:
+        pattern = f"%{q.strip()}%"
+        query = query.where(
+            or_(
+                User.full_name.ilike(pattern),
+                Doctor.specialization.ilike(pattern),
+            )
+        )
+
+    if specialization:
+        query = query.where(
+            func.lower(Doctor.specialization) == specialization.strip().lower()
+        )
+
+    if clinic_id is not None:
+        query = query.where(Doctor.clinic_id == clinic_id)
+
+    query = query.order_by(User.full_name).limit(limit).offset(offset)
+
+    rows = (await db.execute(query)).all()
 
     return [
         DoctorListItem(
@@ -77,8 +115,11 @@ async def list_doctors(
             specialization=doctor.specialization,
             experience_years=doctor.experience_years,
             bio=doctor.bio,
+            consultation_fee=doctor.consultation_fee,
+            clinic_id=doctor.clinic_id,
+            clinic_name=clinic.name if clinic else None,
         )
-        for doctor, user in rows
+        for doctor, user, clinic in rows
     ]
 
 
@@ -117,4 +158,173 @@ async def upload_signature(
     return DoctorSignatureResponse(
         signature_file_path=doctor.signature_file_path,
         signature_uploaded_at=doctor.signature_uploaded_at,
+    )
+
+
+
+@router.get(
+    "/search",
+    response_model=list[DoctorSearchOut],
+)
+async def search_doctors_endpoint(
+    q: str = Query(
+        ...,
+        min_length=1,
+        description="Search doctors by name, email or specialization",
+    ),
+    limit: int = Query(
+        default=20,
+        ge=1,
+        le=100,
+    ),
+    offset: int = Query(
+        default=0,
+        ge=0,
+    ),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(
+        require_roles(
+            UserRole.ADMIN,
+            UserRole.DOCTOR,
+            UserRole.RECEPTIONIST,
+        )
+    ),
+):
+    return await search_doctors(
+        db=db,
+        q=q,
+        limit=limit,
+        offset=offset,
+    )
+
+
+# ---- The signed-in doctor's OWN profile + status ----
+# NOTE: declared BEFORE the dynamic "/{doctor_id}" route so it isn't shadowed.
+# Returns the record regardless of approval status; 404 only if no profile
+# exists yet (so the frontend can show the "complete your profile" form).
+@router.get("/me", response_model=DoctorMe)
+async def get_my_doctor_profile(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.DOCTOR)),
+):
+    result = await db.execute(
+        select(Doctor, Clinic)
+        .outerjoin(Clinic, Doctor.clinic_id == Clinic.id)
+        .where(Doctor.user_id == current_user.id)
+    )
+    row = result.first()
+
+    if row is None:
+        raise NotFoundError("Doctor profile not found")
+
+    doctor, clinic = row
+
+    return DoctorMe(
+        id=doctor.id,
+        user_id=doctor.user_id,
+        specialization=doctor.specialization,
+        experience_years=doctor.experience_years,
+        bio=doctor.bio,
+        qualification=doctor.qualification,
+        medical_registration_number=doctor.medical_registration_number,
+        consultation_fee=doctor.consultation_fee,
+        status=doctor.status,
+        rejection_reason=doctor.rejection_reason,
+        clinic_id=doctor.clinic_id,
+        clinic_name=clinic.name if clinic else None,
+        signature_file_path=doctor.signature_file_path,
+        signature_uploaded_at=doctor.signature_uploaded_at,
+        created_at=doctor.created_at,
+    )
+
+
+# ---- Public: distinct specializations (for the Find Doctors filter) ----
+# NOTE: declared BEFORE the dynamic "/{doctor_id}" route so it isn't shadowed.
+@router.get("/specializations", response_model=list[str])
+async def list_specializations(
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Doctor.specialization)
+        .join(User, Doctor.user_id == User.id)
+        .where(
+            Doctor.status == DoctorStatus.APPROVED,
+            User.is_active.is_(True),
+        )
+        .distinct()
+        .order_by(Doctor.specialization)
+    )
+    return [row[0] for row in result.all()]
+
+
+# ---------------- Credential documents ----------------
+# Uploaded by the doctor while PENDING; reviewed by a clinic admin before
+# approval. MUST be declared BEFORE the dynamic "/{doctor_id}" route —
+# FastAPI matches in declaration order, so /{doctor_id} would otherwise
+# swallow "documents" and fail with 422.
+
+@router.post(
+    "/documents",
+    response_model=DoctorDocumentResponse,
+    status_code=201,
+)
+async def upload_credential_document(
+    doc_type: DoctorDocumentType,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.DOCTOR)),
+):
+    return await upload_doctor_document(
+        db=db,
+        user=current_user,
+        doc_type=doc_type,
+        file=file,
+    )
+
+
+@router.get(
+    "/documents",
+    response_model=list[DoctorDocumentResponse],
+)
+async def list_my_credential_documents(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.DOCTOR)),
+):
+    return await list_own_documents(db=db, user=current_user)
+
+
+# ---- Public: single doctor detail (approved + active only) ----
+@router.get("/{doctor_id}", response_model=DoctorDetail)
+async def get_doctor_detail(
+    doctor_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Doctor, User, Clinic)
+        .join(User, Doctor.user_id == User.id)
+        .outerjoin(Clinic, Doctor.clinic_id == Clinic.id)
+        .where(
+            Doctor.id == doctor_id,
+            Doctor.status == DoctorStatus.APPROVED,
+            User.is_active.is_(True),
+        )
+    )
+    row = result.first()
+
+    if row is None:
+        raise NotFoundError("Doctor not found")
+
+    doctor, user, clinic = row
+
+    return DoctorDetail(
+        id=doctor.id,
+        name=user.full_name,
+        email=user.email,
+        specialization=doctor.specialization,
+        experience_years=doctor.experience_years,
+        bio=doctor.bio,
+        qualification=doctor.qualification,
+        consultation_fee=doctor.consultation_fee,
+        clinic_id=doctor.clinic_id,
+        clinic_name=clinic.name if clinic else None,
     )

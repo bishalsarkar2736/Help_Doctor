@@ -14,7 +14,6 @@ from app.try_except.exceptions import (
 
 
 
-from sqlalchemy import select
 
 
 

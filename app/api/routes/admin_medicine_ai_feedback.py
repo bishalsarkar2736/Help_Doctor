@@ -1,7 +1,10 @@
 from fastapi import (
     APIRouter,
     Depends,
+    HTTPException
 )
+from app.models.medicine_ai_log import MedicineAILog
+from sqlalchemy import select
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,7 +19,7 @@ from app.services.medicine_ai_feedback_service import (
 )
 
 from app.models.user import User,UserRole
-
+from app.services.tenant_resolver import resolve_clinic_id
 
 router = APIRouter(
     prefix="/admin/medicine-ai",
@@ -29,14 +32,34 @@ router = APIRouter(
 )
 async def submit_feedback(
     log_id: int,
+    clinic_id: int,
     payload: MedicineAIFeedbackCreate,
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(
-        require_roles(
-            UserRole.ADMIN,
-        )
+        require_roles(UserRole.ADMIN)
     ),
 ):
+
+    resolved_clinic_id = await resolve_clinic_id(
+        db=db,
+        user=admin,
+        clinic_id=clinic_id,
+    )
+
+    result = await db.execute(
+        select(MedicineAILog).where(
+            MedicineAILog.id == log_id,
+            MedicineAILog.clinic_id == resolved_clinic_id,
+        )
+    )
+
+    log = result.scalar_one_or_none()
+
+    if not log:
+        raise HTTPException(
+            status_code=404,
+            detail="AI log not found.",
+        )
 
     feedback = await create_feedback(
         db=db,

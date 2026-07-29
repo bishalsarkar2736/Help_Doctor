@@ -1,0 +1,27 @@
+# Never bake env files into the image:
+#  - they contain secrets (JWT key, mail password, VAPID private key)
+#  - a copied .env is read by pydantic Settings inside the container, which
+#    conflicts with the values compose injects via env_file (.env.docker) and
+#    breaks on keys Settings doesn't declare (e.g. frontend VITE_* build args).
+# Configuration comes from real environment variables at runtime instead.
+.env
+.env.*
+
+# Local dev / VCS noise
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+.git/
+.github/
+.pytest_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+*.log
+
+# Local artifacts that shouldn't ship in the image
+backups/
+media/
+uploads/
+tests/

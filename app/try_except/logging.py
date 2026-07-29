@@ -2,7 +2,11 @@ import logging
 import json
 from datetime import datetime
 from app.core.time import UTC
-from app.try_except.context import request_id_ctx
+from app.try_except.context import (
+    request_id_ctx,
+    user_id_ctx,
+    clinic_id_ctx,
+)
 from app.core.correlation import (
     correlation_id_ctx,
 )
@@ -16,6 +20,8 @@ class JsonFormatter(logging.Formatter):
             "message": record.getMessage(),
             "request_id": request_id_ctx.get(),
             "correlation_id": correlation_id_ctx.get(),
+            "user_id": user_id_ctx.get(),
+            "clinic_id": clinic_id_ctx.get(),
         }
 
         standard_attrs = {

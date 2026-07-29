@@ -16,7 +16,7 @@ from app.services.notification_preference_service import (
 
 from app.services.notification_receipt_service import (
     mark_email_delivered,
-    mark_delivery_failed,
+    mark_email_failed,
 )
 
 
@@ -96,15 +96,21 @@ async def handle_prescription_issued_email(
         )
 
         await mark_email_delivered(
+            db=db,
             event_id=event_id,
         )
+
+        await db.commit()
 
     except Exception as exc:
 
-        await mark_delivery_failed(
+        await mark_email_failed(
+            db=db,
             event_id=event_id,
             error=str(exc),
         )
+
+        await db.commit()
 
         logger.exception(
             "prescription_email_failed",

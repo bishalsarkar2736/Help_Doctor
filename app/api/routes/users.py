@@ -11,6 +11,7 @@ router = APIRouter(prefix="/users", tags=["users"])
 @router.get("/me")
 async def get_me(
     user: User = Depends(require_roles(
+        UserRole.SUPER_ADMIN,
         UserRole.ADMIN,
         UserRole.DOCTOR,
         UserRole.PATIENT,
@@ -22,6 +23,8 @@ async def get_me(
         "email": user.email,
         "full_name": user.full_name,
         "role": user.role,
+        "clinic_id": user.clinic_id,
+        "mfa_enabled": user.mfa_enabled,
     }
 
 
@@ -30,14 +33,6 @@ def admin_dashboard(
     current_user = Depends(require_roles(UserRole.ADMIN))
 ):
     return {"message" : "Admin access granted"}
-
-
-
-@router.post("/appointments")
-def create_appoinment(
-    cuurent_user = Depends(require_roles(UserRole.RECEPTIONIST))
-):
-    return {"message" : "Appoinment created"}
 
 
 

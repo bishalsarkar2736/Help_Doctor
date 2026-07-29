@@ -1,8 +1,6 @@
-from sqlalchemy import func
-from sqlalchemy import select
+from sqlalchemy import func,select,distinct
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.appointment import Appointment,AppointmentStatus
-from app.models.patient import Patient
 from app.models.payment import Payment
 from datetime import date
 
@@ -25,12 +23,11 @@ async def get_total_patients(
     result = await db.execute(
         select(
             func.count(
-                Patient.id
+                distinct(Appointment.patient_id)
             )
         )
         .where(
-            Patient.clinic_id
-            == clinic_id
+            Appointment.clinic_id == clinic_id
         )
     )
 
@@ -216,13 +213,13 @@ async def get_patients_today(
 
     result = await db.execute(
         select(
-            func.count(Patient.id)
+            func.count(
+                distinct(Appointment.patient_id)
+            )
         )
         .where(
-            Patient.clinic_id == clinic_id,
-            func.date(
-                Patient.created_at
-            ) == today,
+            Appointment.clinic_id == clinic_id,
+            func.date(Appointment.created_at) == today,
         )
     )
 
@@ -240,19 +237,19 @@ async def get_patients_this_month(
 
     result = await db.execute(
         select(
-            func.count(Patient.id)
+            func.count(
+                distinct(Appointment.patient_id)
+            )
         )
         .where(
-            Patient.clinic_id == clinic_id,
-
+            Appointment.clinic_id == clinic_id,
             func.extract(
                 "month",
-                Patient.created_at,
+                Appointment.created_at,
             ) == today.month,
-
             func.extract(
                 "year",
-                Patient.created_at,
+                Appointment.created_at,
             ) == today.year,
         )
     )

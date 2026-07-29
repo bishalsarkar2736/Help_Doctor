@@ -67,6 +67,7 @@ class MedicineAIService:
     async def answer(
         self,
         db: AsyncSession,
+        clinic_id: int,
         medicine,
         question: str,
     ) -> str:
@@ -129,6 +130,7 @@ class MedicineAIService:
 
             await create_ai_log(
                 db=db,
+                clinic_id=clinic_id,
                 medicine_id=medicine.id,
                 medicine_name=medicine.name,
                 question=question,
@@ -167,6 +169,7 @@ class MedicineAIService:
 
             await create_ai_error_log(
                 db=db,
+                clinic_id=clinic_id,
                 question=question,
                 medicine_name=medicine.name,
                 error=str(exc),

@@ -148,15 +148,6 @@ async def notify_user(
 
     try:
         
-        # send_push_notification_task.delay(
-        #     user_id,
-        #     {
-        #         "title": title,
-        #         "body": message,
-        #         "event": "notification",
-        #         "appointment_id": appointment_id,
-        #     }
-        # )
         prefs = await get_or_create_preferences(
             db,
             user_id,

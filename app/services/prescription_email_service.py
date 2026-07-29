@@ -17,11 +17,10 @@ async def send_prescription_email(
 ):
     
     logger.info(
-        "mail_settings",
+        "Sending prescription email",
         extra={
-            "username": settings.MAIL_USERNAME,
-            "host": settings.MAIL_HOST,
-            "port": settings.MAIL_PORT,
+            "prescription_id": prescription_id,
+            "recipient_domain": email.split("@")[-1],
         },
     )   
 

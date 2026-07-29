@@ -36,11 +36,24 @@ class Notification(Base):
             "ix_notification_email_delivered",
             "email_delivered_at",
         ),
+        Index(
+            "ix_notification_email_failed",
+            "email_failed_at",
+        ),
 
         Index(
             "ix_notification_push_delivered",
             "push_delivered_at",
         ),
+        Index(
+            "ix_notification_whatsapp_delivered",
+            "whatsapp_delivered_at",
+        ),
+
+        Index(
+            "ix_notification_whatsapp_failed",
+            "whatsapp_failed_at",
+        )
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -82,12 +95,37 @@ class Notification(Base):
         nullable=True,
     )
 
+    email_failed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    email_error: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+
     delivery_failed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
     )
 
     delivery_error: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+
+    whatsapp_delivered_at : Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    whatsapp_failed_at : Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    whatsapp_error : Mapped[str | None]= mapped_column(
         Text,
         nullable=True,
     )

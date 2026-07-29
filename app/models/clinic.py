@@ -1,11 +1,12 @@
 from datetime import datetime
+from enum import Enum
 
 from sqlalchemy import (
     DateTime,
     Integer,
     String,
     func,
-    
+    Enum as SQLEnum,
 )
 
 from sqlalchemy.orm import (
@@ -16,6 +17,15 @@ from sqlalchemy.orm import (
 from app.db.base import Base
 
 
+class ClinicStatus(str, Enum):
+    """Clinic lifecycle (platform-plane, super-admin controlled).
+
+    Values equal names (project enum convention).
+    """
+    ACTIVE = "ACTIVE"
+    SUSPENDED = "SUSPENDED"   # temporarily disabled; users blocked from login
+    DELETED = "DELETED"       # soft-deleted / archived (never hard-deleted)
+
 
 class Clinic(Base):
 
@@ -24,6 +34,24 @@ class Clinic(Base):
     id: Mapped[int] = mapped_column(
         Integer,
         primary_key=True,
+    )
+
+    status: Mapped[ClinicStatus] = mapped_column(
+        SQLEnum(ClinicStatus, name="clinic_status", create_type=False),
+        default=ClinicStatus.ACTIVE,
+        server_default="ACTIVE",
+        nullable=False,
+        index=True,
+    )
+
+    suspended_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
     )
 
     name: Mapped[str] = mapped_column(
@@ -62,6 +90,15 @@ class Clinic(Base):
         nullable=True,
     )
 
+    # IANA timezone name (e.g. "Asia/Dhaka"). Doctor availability is entered in
+    # this local time; slots are generated / validated against it.
+    timezone: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        server_default="UTC",
+        default="UTC",
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -88,6 +125,12 @@ class Clinic(Base):
 
     payments = relationship(
         "Payment",
+        back_populates="clinic",
+        lazy="selectin",
+    )
+
+    admins = relationship(
+        "User",
         back_populates="clinic",
         lazy="selectin",
     )

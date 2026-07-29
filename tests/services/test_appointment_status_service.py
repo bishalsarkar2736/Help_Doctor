@@ -9,7 +9,8 @@ from app.services.appointment_status_service import (
 from app.core.time import UTC
 from app.try_except.exceptions import BadRequestError, ForbiddenError
 from app.domain.fsm.appointment_transition import transition_appointment
-
+from app.models.user import UserRole
+from app.services.appointment_transition_service import transition_appointment_locked
 
 @pytest.mark.asyncio
 async def test_doctor_can_confirm_pending_appointment(
@@ -20,6 +21,7 @@ async def test_doctor_can_confirm_pending_appointment(
     appointment = Appointment(
         doctor_id=doctor.id,
         patient_id=patient_user.id,
+        clinic_id=doctor.clinic_id,
         scheduled_at=datetime.now(UTC) + timedelta(days=1),
         status=AppointmentStatus.PENDING,
     )
@@ -46,6 +48,7 @@ async def test_patient_cannot_confirm_appointment(
     appointment = Appointment(
         doctor_id=doctor.id,
         patient_id=patient_user.id,
+        clinic_id=doctor.clinic_id,
         scheduled_at=datetime.now(UTC) + timedelta(days=1),
         status=AppointmentStatus.PENDING,
     )
@@ -71,6 +74,7 @@ async def test_cannot_confirm_already_confirmed_appointment(
     appointment = Appointment(
         doctor_id=doctor.id,
         patient_id=patient_user.id,
+        clinic_id=doctor.clinic_id,
         scheduled_at=datetime.now(UTC) + timedelta(days=1),
         status=AppointmentStatus.CONFIRMED,
     )
@@ -88,7 +92,7 @@ async def test_cannot_confirm_already_confirmed_appointment(
 
 
 @pytest.mark.asyncio
-async def test_doctor_can_complete_confirmed_appointment(
+async def test_doctor_can_complete_in_consultation_appointment(
     db,
     doctor,          # Doctor model
     patient_user,
@@ -96,6 +100,7 @@ async def test_doctor_can_complete_confirmed_appointment(
     appointment = Appointment(
         doctor_id=doctor.id,
         patient_id=patient_user.id,
+        clinic_id=doctor.clinic_id,
         scheduled_at=datetime.now(UTC) - timedelta(minutes=40),
         status=AppointmentStatus.PENDING,
     )
@@ -103,11 +108,51 @@ async def test_doctor_can_complete_confirmed_appointment(
     await db.flush()
 
     # Transition to CONFIRMED first
-    await transition_appointment(
+    # await transition_appointment(
+    #     #db=db,
+    #     appointment=appointment,
+    #     new_status=AppointmentStatus.CONFIRMED,
+    #     #changed_by=doctor.user_id,  # ✅ use doctor.user_id
+    # )
+
+    await transition_appointment_locked(
         db=db,
         appointment=appointment,
         new_status=AppointmentStatus.CONFIRMED,
-        changed_by=doctor.user_id,  # ✅ use doctor.user_id
+        changed_by=doctor.user_id,
+        actor_role=UserRole.DOCTOR,
+        actor_doctor_id=doctor.id,
+        emit_event=False,   # recommended for unit tests
+    )
+
+    await transition_appointment_locked(
+    db=db,
+    appointment=appointment,
+    new_status=AppointmentStatus.CHECKED_IN,
+    changed_by=doctor.user_id,
+    actor_role=UserRole.DOCTOR,
+    actor_doctor_id=doctor.id,
+    emit_event=False,
+)
+
+    await transition_appointment_locked(
+        db=db,
+        appointment=appointment,
+        new_status=AppointmentStatus.WAITING,
+        changed_by=doctor.user_id,
+        actor_role=UserRole.DOCTOR,
+        actor_doctor_id=doctor.id,
+        emit_event=False,
+    )
+
+    await transition_appointment_locked(
+        db=db,
+        appointment=appointment,
+        new_status=AppointmentStatus.IN_CONSULTATION,
+        changed_by=doctor.user_id,
+        actor_role=UserRole.DOCTOR,
+        actor_doctor_id=doctor.id,
+        emit_event=False,
     )
 
     await db.flush()
@@ -116,7 +161,7 @@ async def test_doctor_can_complete_confirmed_appointment(
     updated = await complete_appointment(
         db=db,
         appointment=appointment,
-        doctor=doctor,  # ✅ pass Doctor model
+        doctor=doctor,
     )
 
     assert updated.status == AppointmentStatus.COMPLETED
@@ -132,6 +177,7 @@ async def test_cannot_complete_scheduled_appointment(
     appointment = Appointment(
         doctor_id=doctor.id,
         patient_id=patient_user.id,
+        clinic_id=doctor.clinic_id,
         scheduled_at=datetime.now(UTC) - timedelta(minutes=40),
         status=AppointmentStatus.PENDING,
     )
@@ -156,6 +202,7 @@ async def test_cannot_modify_cancelled_appointment(
     appointment = Appointment(
         doctor_id=doctor.id,
         patient_id=patient_user.id,
+        clinic_id=doctor.clinic_id,
         scheduled_at=datetime.now(UTC) - timedelta(minutes=40),
         status=AppointmentStatus.PENDING,
     )
@@ -163,11 +210,21 @@ async def test_cannot_modify_cancelled_appointment(
     await db.flush()
 
     # Transition to CANCELLED
-    await transition_appointment(
+    # await transition_appointment(
+    #     #db=db,
+    #     appointment=appointment,
+    #     new_status=AppointmentStatus.CANCELLED,
+    #     #changed_by=doctor.user_id,
+    # )
+
+    await transition_appointment_locked(
         db=db,
         appointment=appointment,
         new_status=AppointmentStatus.CANCELLED,
         changed_by=doctor.user_id,
+        actor_role=UserRole.DOCTOR,
+        actor_doctor_id=doctor.id,
+        emit_event=False,
     )
 
     await db.flush()

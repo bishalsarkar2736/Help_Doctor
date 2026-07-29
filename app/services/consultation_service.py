@@ -10,7 +10,7 @@ from app.models.user import UserRole
 from app.services.appointment_transition_service import (
     transition_appointment_locked,
 )
-
+from app.models.doctor import Doctor, DoctorStatus
 from app.try_except.audit import log_audit_event
 
 from datetime import datetime
@@ -32,21 +32,40 @@ from app.models.enums.activity_action import (
 from app.services.domain_event_service import (
     publish_domain_event,
 )
+from app.try_except.exceptions import (
+    ForbiddenError,
+    BadRequestError,
+)
+
+
 
 
 async def start_consultation(
     *,
     db: AsyncSession,
     appointment: Appointment,
-    doctor_id: int,
+    doctor: Doctor,
     correlation_id: str | None = None,
 ):
+    
+
+    if doctor.status != DoctorStatus.APPROVED:
+        raise ForbiddenError("Doctor not verified")
+
+    if appointment.doctor_id != doctor.id:
+        raise ForbiddenError("Not your appointment")
+
+    if appointment.status != AppointmentStatus.WAITING:
+        raise BadRequestError(
+            f"Cannot start consultation in {appointment.status.value} state"
+        )
+
 
     updated_appointment = await transition_appointment_locked(
         db=db,
         appointment=appointment,
         new_status=AppointmentStatus.IN_CONSULTATION,
-        changed_by=doctor_id,
+        changed_by=doctor.user_id,
         actor_role=UserRole.DOCTOR,
         actor_doctor_id=appointment.doctor_id,
         emit_event=True,
@@ -57,7 +76,7 @@ async def start_consultation(
         db=db,
         event_type="consultation",
         action="start",
-        user_id=doctor_id,
+        user_id=doctor.user_id,
         resource="appointment",
         details={
             "appointment_id": appointment.id,
@@ -67,7 +86,7 @@ async def start_consultation(
     await log_activity(
         db=db,
         clinic_id=appointment.clinic_id,
-        actor_id=doctor_id,
+        actor_id=doctor.user_id,
         action=ActivityAction.CONSULTATION_STARTED,
         entity_type="appointment",
         entity_id=appointment.id,
@@ -90,7 +109,7 @@ async def start_consultation(
         causation_id=None,
 
         actor={
-            "id": doctor_id,
+            "id": doctor.user_id,
             "role": UserRole.DOCTOR.name,
         },
 

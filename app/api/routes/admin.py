@@ -7,7 +7,6 @@ from app.models.user import User, UserRole
 from app.models.appointment import Appointment
 
 from app.services.appointment_service import admin_force_cancel_appointment
-from app.services.notification_service import notify_user
 
 from app.security.rbac import require_roles
 from app.schemas.admin_user import AdminUserItem
@@ -50,7 +49,16 @@ async def list_users(
     role: UserRole | None = Query(None),
     is_active: bool | None = Query(None),
 ):
-    query = select(User).order_by(User.id.desc())
+    # Clinic admins only ever see/manage their own clinic's staff. This also
+    # naturally excludes patients (who have no clinic_id).
+    if not admin.clinic_id:
+        return []
+
+    query = (
+        select(User)
+        .where(User.clinic_id == admin.clinic_id)
+        .order_by(User.id.desc())
+    )
 
     # 🔍 SEARCH
     if search:
@@ -94,6 +102,10 @@ async def change_user_role(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
+    # A clinic admin may only manage users within their own clinic.
+    if not admin.clinic_id or user.clinic_id != admin.clinic_id:
+        raise HTTPException(status_code=403, detail="Not your clinic's user")
+
     user.role = role
     await db.commit()
 
@@ -111,6 +123,10 @@ async def toggle_user_active(
 
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+
+    # A clinic admin may only manage users within their own clinic.
+    if not admin.clinic_id or user.clinic_id != admin.clinic_id:
+        raise HTTPException(status_code=403, detail="Not your clinic's user")
 
     # toggle
     user.is_active = not user.is_active
@@ -150,27 +166,28 @@ async def force_cancel(
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_roles(UserRole.ADMIN)),  # ✅ FIXED
 ):
-    appointment = await admin_force_cancel_appointment(
+    
+    await admin_force_cancel_appointment(
         db=db,
         admin=admin,
         appointment_id=appointment_id,
         reason=reason,
     )
 
-    await notify_user(
-        db=db,
-        user_id=appointment.patient_id,
-        title="Appointment Cancelled",
-        message="Your appointment was cancelled by admin",
-        appointment_id=appointment.id,
-    )
+    # await notify_user(
+    #     db=db,
+    #     user_id=appointment.patient_id,
+    #     title="Appointment Cancelled",
+    #     message="Your appointment was cancelled by admin",
+    #     appointment_id=appointment.id,
+    # )
 
-    await notify_user(
-        db=db,
-        user_id=appointment.doctor_id,
-        title="Appointment Cancelled",
-        message="Appointment was cancelled by admin",
-        appointment_id=appointment.id,
-    )
+    # await notify_user(
+    #     db=db,
+    #     user_id=appointment.user_id,
+    #     title="Appointment Cancelled",
+    #     message="Appointment was cancelled by admin",
+    #     appointment_id=appointment.id,
+    # )
 
     return {"message": "Appointment cancelled"}

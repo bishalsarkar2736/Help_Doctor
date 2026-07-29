@@ -38,7 +38,7 @@ router = APIRouter(
     response_model=PatientHistoryResponse,
 )
 async def patient_history(
-    patient_id: int,
+    patient_user_id: int,
     clinic_id: int | None = None,
     limit: int = 50,
     offset: int = 0,
@@ -60,7 +60,7 @@ async def patient_history(
     return await get_patient_history(
         db=db,
         clinic_id=clinic_id,
-        patient_id=patient_id,
+        patient_id=patient_user_id,
         limit=limit,
         offset=offset,
     )

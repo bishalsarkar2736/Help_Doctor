@@ -46,9 +46,14 @@ class BkashService:
     async def refund_payment(
         self,
         *,
+        gateway_payment_id: str,
         transaction_id: str,
         amount: Decimal,
+        reason: str,
     ) -> dict:
-        raise NotImplementedError(
-            "Bkash refund API not integrated yet"
+        return await self.client.refund_payment(
+            gateway_payment_id=gateway_payment_id,
+            transaction_id=transaction_id,
+            amount=str(amount),
+            reason=reason,
         )

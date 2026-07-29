@@ -12,25 +12,28 @@ from sqlalchemy import (
 )
 from decimal import Decimal
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-
+from app.core.time import UTC
 import enum
-
+from app.core.constants import APPOINTMENT_DURATION
 from app.db.base import Base
-from datetime import datetime,timedelta
+from datetime import datetime
 from sqlalchemy.dialects.postgresql import TSTZRANGE
 from sqlalchemy.dialects.postgresql import ExcludeConstraint
-from sqlalchemy.dialects.postgresql import Range
+
 
 
 
 class AppointmentStatus(str, enum.Enum):
     PENDING = "PENDING"
     CONFIRMED = "CONFIRMED"
+
+    CHECKED_IN = "CHECKED_IN"
+    WAITING = "WAITING"
+
     IN_CONSULTATION = "IN_CONSULTATION"
     CANCELLED = "CANCELLED"
     COMPLETED = "COMPLETED"
-    SCHEDULED = "SCHEDULED"
-    NO_SHOW = "NO_SHOW" 
+    NO_SHOW = "NO_SHOW"
 
 class Appointment(Base):
     __tablename__ = "appointments"
@@ -47,7 +50,7 @@ class Appointment(Base):
 
    
 
-    APPOINTMENT_DURATION = timedelta(minutes=30)
+    APPOINTMENT_DURATION = APPOINTMENT_DURATION
 
     id: Mapped[int] = mapped_column(primary_key=True)
 
@@ -103,6 +106,21 @@ class Appointment(Base):
         nullable=True,
     )
 
+    checked_in_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    waiting_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    consultation_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
     reminder_sent: Mapped[bool] = mapped_column(
         Boolean,
         default=False,
@@ -135,6 +153,12 @@ class Appointment(Base):
         nullable=False,
         default=Decimal("0.00"),
         server_default=text("0.00"),
+    )
+
+    queue_number: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+        index=True,
     )
 
     clinic = relationship(
@@ -175,21 +199,6 @@ class Appointment(Base):
         lazy="selectin",
     )
 
-
-    
-@event.listens_for(Appointment, "before_insert")
-@event.listens_for(Appointment, "before_update")
-def set_time_range(mapper, connection, target):
-    if target.scheduled_at:
-        start = target.scheduled_at
-        end = start + Appointment.APPOINTMENT_DURATION
-        #target.time_range = func.tstzrange(start, end, "[)")
-        target.time_range = Range(start, end, bounds="[)")
-
-
-from sqlalchemy import event
-from datetime import datetime
-from app.core.time import UTC
 
 
 @event.listens_for(Appointment, "before_insert")

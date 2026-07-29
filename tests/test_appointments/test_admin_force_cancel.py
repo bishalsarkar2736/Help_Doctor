@@ -20,6 +20,7 @@ async def test_admin_force_cancel(
         db=db,
         admin=admin_user,   
         appointment_id=appointment.id,
+        clinic_id=appointment.clinic_id,
         reason="Violation of policy",
     )
 

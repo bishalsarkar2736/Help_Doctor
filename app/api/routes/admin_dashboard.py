@@ -53,7 +53,8 @@ from app.services.doctor_performance_service import (
 
 from app.services.clinic_growth_service import get_growth_dashboard
 from app.services.tenant_resolver import resolve_clinic_id
-
+from app.schemas.payment_dashboard import PaymentDashboardResponse
+from app.services.payment_dashboard_service import get_payment_dashboard_metrics
 
 router = APIRouter(
     prefix="/admin",
@@ -63,6 +64,7 @@ router = APIRouter(
 
 @router.get("/dashboard")
 async def dashboard(
+    clinic_id : int,
     db: AsyncSession = Depends(get_db),
     admin : User =Depends(
         require_roles(
@@ -70,8 +72,16 @@ async def dashboard(
         )
     ),
 ):
+    
+    resolved_clinic_id = await resolve_clinic_id(
+        db=db,
+        user=admin,
+        clinic_id=clinic_id,
+    )
+
     return await get_dashboard_data(
         db=db,
+        clinic_id=resolved_clinic_id,
     )
 
 
@@ -278,3 +288,31 @@ async def doctor_performance_scorecard(
 
         )
     )
+
+
+@router.get(
+    "/dashboard/payment",
+    response_model=PaymentDashboardResponse,
+)
+async def get_payment_dashboard_endpoint(
+    clinic_id: int | None = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(
+        require_roles(
+            UserRole.ADMIN,
+            UserRole.DOCTOR,
+        )
+    ),
+):
+    resolved_clinic_id = await resolve_clinic_id(
+        db=db,
+        user=current_user,
+        clinic_id=clinic_id,
+    )
+
+    metrics = await get_payment_dashboard_metrics(
+        db=db,
+        clinic_id=resolved_clinic_id,
+    )
+
+    return PaymentDashboardResponse(**metrics)

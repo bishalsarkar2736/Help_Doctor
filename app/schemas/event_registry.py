@@ -11,6 +11,8 @@ from app.schemas.event import (
     PrescriptionUpdatedEvent,
     PrescriptionRevisedEvent,
     PaymentRefundedEvent,
+    PatientNextInQueueEvent,
+    ConsultationCompletedEvent
 )
 
 EVENT_SCHEMAS = {
@@ -41,6 +43,12 @@ EVENT_SCHEMAS = {
     "CONSULTATION_STARTED": 
         ConsultationStartedEvent,
 
+    "PATIENT_NEXT_IN_QUEUE": 
+        PatientNextInQueueEvent,
+
+    "CONSULTATION_COMPLETED":
+        ConsultationCompletedEvent,
+
     "PRESCRIPTION_UPDATED": 
         PrescriptionUpdatedEvent,
 
@@ -49,4 +57,5 @@ EVENT_SCHEMAS = {
     
     "PAYMENT_REFUNDED" :
         PaymentRefundedEvent,
+
 }

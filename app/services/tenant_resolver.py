@@ -3,7 +3,6 @@ from sqlalchemy import select
 
 from app.models.user import User, UserRole
 from app.models.doctor import Doctor
-from app.models.patient import Patient
 from app.try_except.exceptions import ForbiddenError
 
 
@@ -14,12 +13,19 @@ async def resolve_clinic_id(
 ) -> int:
 
     # -------------------------
-    # ADMIN: clinic must be passed explicitly
+    # ADMIN: bound to one clinic
     # -------------------------
     if user.role == UserRole.ADMIN:
-        if not clinic_id:
+        if not user.clinic_id:
+            raise ForbiddenError("Admin not assigned to clinic")
+
+        if clinic_id is None:
             raise ForbiddenError("clinic_id required for admin")
-        return clinic_id
+        
+        if clinic_id is not None and clinic_id != user.clinic_id:
+            raise ForbiddenError("Admin not authorized for this clinic")
+
+        return user.clinic_id
 
     # -------------------------
     # DOCTOR: from doctor profile
@@ -34,21 +40,15 @@ async def resolve_clinic_id(
         if not doctor.clinic_id:
             raise ForbiddenError("Doctor not assigned to clinic")
 
+        if clinic_id is not None and clinic_id != doctor.clinic_id:
+            raise ForbiddenError("Doctor not authorized for this clinic")
+
         return doctor.clinic_id
 
     # -------------------------
-    # PATIENT: from patient profile
+    # PATIENT / OTHER ROLES: not clinic-scoped
     # -------------------------
-    if user.role == UserRole.PATIENT:
-        patient = await db.scalar(
-            select(Patient).where(Patient.user_id == user.id)
-        )
-        if not patient:
-            raise ForbiddenError("Patient profile not found")
-
-        if not patient.clinic_id:
-            raise ForbiddenError("Patient not assigned to clinic")
-
-        return patient.clinic_id
+    if user.role in {UserRole.PATIENT, UserRole.RECEPTIONIST}:
+        return clinic_id
 
     raise ForbiddenError("Invalid role")

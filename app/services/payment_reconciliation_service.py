@@ -50,7 +50,7 @@ async def reconcile_pending_payments(
                 response.get("transactionStatus") or ""
             ).strip().lower()
 
-            if transaction_status == "Completed":
+            if transaction_status == "completed":
 
                 paid_amount = Decimal(response["amount"])
 
@@ -91,9 +91,9 @@ async def reconcile_pending_payments(
                 )
 
             elif transaction_status in {
-                "Failed",
-                "Cancelled",
-                "Expired",
+                "failed",
+                "cancelled",
+                "expired",
             }:
 
                 updated_payment = await mark_payment_failed(

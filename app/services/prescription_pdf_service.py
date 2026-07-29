@@ -49,10 +49,13 @@ def draw_superseded_watermark(
     prescription: Prescription,
 ):
     """
-    Draw watermark for superseded prescriptions.
+    Draw watermark for superseded or locked prescriptions.
     """
 
-    if prescription.status != PrescriptionStatus.SUPERSEDED:
+    if prescription.status not in [
+        PrescriptionStatus.SUPERSEDED,
+        PrescriptionStatus.LOCKED,
+    ]:
         return
 
     canvas.saveState()
@@ -117,17 +120,22 @@ def generate_prescription_pdf(
 
             if logo_path.exists():
 
-                elements.append(
-                    Image(
-                        str(logo_path),
-                        width=120,
-                        height=60,
+                try:
+                    elements.append(
+                        Image(
+                            str(logo_path),
+                            width=120,
+                            height=60,
+                        )
                     )
-                )
 
-                elements.append(
-                    Spacer(1, 10)
-                )
+                    elements.append(
+                        Spacer(1, 10)
+                    )
+
+                except Exception:
+                    # Ignore broken logo
+                    pass
 
         elements.append(
             Paragraph(
@@ -359,7 +367,10 @@ def generate_prescription_pdf(
         )
     )
 
-    if prescription.status == PrescriptionStatus.SUPERSEDED:
+    if prescription.status in [
+        PrescriptionStatus.SUPERSEDED,
+        PrescriptionStatus.LOCKED,
+    ]:
 
         elements.append(
             Spacer(1, 10)

@@ -1,3 +1,4 @@
+from datetime import date
 import os
 import uuid
 
@@ -14,8 +15,9 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.pool import NullPool
 from sqlalchemy import event,select
-from app.models.user import User, UserRole
-from app.models.doctor import Doctor
+from app.models.user import User, UserRole,AuthProvider
+from app.models.doctor import Doctor, DoctorStatus
+from app.models.patient import Patient
 from app.models.appointment import Appointment, AppointmentStatus
 from app.models.doctor_availability import DoctorAvailability
 from app.domain.fsm.appointment_transition import transition_appointment
@@ -35,7 +37,7 @@ from app.models.prescription import (
     PrescriptionItem,
 )
 from app.models.clinic import Clinic
-
+from app.core.constants import APPOINTMENT_DURATION_MINUTES
 
 
 fastapi_app = create_app()
@@ -64,9 +66,8 @@ def async_session_factory(engine):
         expire_on_commit=False,
     )
 
-@pytest_asyncio.fixture(scope="session")
-async def setup_database():
 
+async def reset_database():
     engine = create_async_engine(
         TEST_DATABASE_URL,
         echo=False,
@@ -74,23 +75,14 @@ async def setup_database():
     )
 
     async with engine.begin() as conn:
-
-        await conn.execute(
-            text("DROP SCHEMA public CASCADE")
-        )
-
-        await conn.execute(
-            text("CREATE SCHEMA public")
-        )
+        await conn.execute(text("DROP SCHEMA public CASCADE"))
+        await conn.execute(text("CREATE SCHEMA public"))
 
     alembic_cfg = Config("alembic.ini")
 
     alembic_cfg.set_main_option(
         "sqlalchemy.url",
-        TEST_DATABASE_URL.replace(
-            "+asyncpg",
-            "",
-        )
+        TEST_DATABASE_URL.replace("+asyncpg", "")
     )
 
     command.upgrade(
@@ -100,11 +92,64 @@ async def setup_database():
 
     await engine.dispose()
 
+
+# @pytest_asyncio.fixture(scope="session")
+# async def setup_database():
+
+#     engine = create_async_engine(
+#         TEST_DATABASE_URL,
+#         echo=False,
+#         poolclass=NullPool,
+#     )
+
+#     async with engine.begin() as conn:
+
+#         await conn.execute(
+#             text("DROP SCHEMA public CASCADE")
+#         )
+
+#         await conn.execute(
+#             text("CREATE SCHEMA public")
+#         )
+
+#     alembic_cfg = Config("alembic.ini")
+
+#     alembic_cfg.set_main_option(
+#         "sqlalchemy.url",
+#         TEST_DATABASE_URL.replace(
+#             "+asyncpg",
+#             "",
+#         )
+#     )
+
+#     command.upgrade(
+#         alembic_cfg,
+#         "head",
+#     )
+
+#     await engine.dispose()
+
+#     yield
+
+
+@pytest_asyncio.fixture(scope="session")
+async def setup_database():
+    await reset_database()
     yield
+    
+
+@pytest_asyncio.fixture
+async def isolated_database():
+    await reset_database()
+
+    yield
+
+    await reset_database()
 
 
 @pytest_asyncio.fixture
 async def engine(setup_database):
+
 
     engine = create_async_engine(
         TEST_DATABASE_URL,
@@ -113,7 +158,7 @@ async def engine(setup_database):
     )
 
     yield engine
-
+  
     await engine.dispose()
 
 
@@ -148,6 +193,13 @@ async def db(engine):
         finally:
             await session.close()
             await transaction.rollback()
+
+
+# @pytest_asyncio.fixture(autouse=True)
+# async def clean_outbox(db):
+#     await db.execute(delete(OutboxEvent))
+#     await db.flush()
+#     yield
             
 
 
@@ -172,9 +224,6 @@ async def client(db):
 
     #fastapi_app.dependency_overrides.clear()
     del fastapi_app.dependency_overrides[get_db]
-
-
-
 
 # ---------------------------
 # Fake Redis for ALL tests
@@ -201,6 +250,21 @@ async def fake_redis(monkeypatch):
     await fake.aclose()
 
 
+
+@pytest_asyncio.fixture
+async def outbox_event(db):
+    event = OutboxEvent(
+        event_type="TEST_EVENT",
+        payload={},
+    )
+
+    db.add(event)
+    await db.flush()
+    await db.refresh(event)
+
+    return event
+
+
 # USER
 
 @pytest_asyncio.fixture
@@ -220,6 +284,7 @@ async def user(db: AsyncSession):
 
 @pytest_asyncio.fixture
 async def patient_user(db: AsyncSession):
+
     user = User(
         email="patient@test.com",
         hashed_password="test-hash",
@@ -228,6 +293,18 @@ async def patient_user(db: AsyncSession):
     )
     db.add(user)
     await db.flush()
+
+    patient = Patient(
+        user_id=user.id,
+        phone="01711111111",
+        address="Dhaka",
+        date_of_birth=date(1995, 1, 1),
+        gender="MALE",
+    )
+
+    db.add(patient)
+    await db.flush()
+
     await db.refresh(user)
 
     return user
@@ -235,6 +312,7 @@ async def patient_user(db: AsyncSession):
 
 @pytest_asyncio.fixture
 async def another_patient_user(db: AsyncSession):
+
     user = User(
         email="another_patient@test.com",
         hashed_password="x",
@@ -243,18 +321,20 @@ async def another_patient_user(db: AsyncSession):
     )
     db.add(user)
     await db.flush()
+
     await db.refresh(user)
 
     return user
 
 
 @pytest_asyncio.fixture
-async def admin_user(db: AsyncSession):
+async def admin_user(db: AsyncSession, default_clinic):
     user = User(
         email="admin@test.com",
         hashed_password="test-hash",
         role=UserRole.ADMIN,
         is_active=True,
+        clinic_id = default_clinic.id,
     )
     db.add(user)
     await db.flush()
@@ -279,10 +359,6 @@ async def doctor_user(db: AsyncSession):
     await db.refresh(user)
 
     return user  # ✅ RETURN USER, NOT DOCTOR
-
-
-
-
 
 
 # -----------------------------
@@ -317,11 +393,13 @@ async def cancelled_appointment(
     doctor: Doctor,
     patient_user: User,
     admin_user: User,
+    default_clinic,
 ):
     # 1️⃣ Create appointment in valid initial state
     appt = Appointment(
         doctor_id=doctor.id,
         patient_id=patient_user.id,
+        clinic_id=default_clinic.id,
         scheduled_at=datetime.now(timezone.utc) - timedelta(days=1),
         status=AppointmentStatus.PENDING,
     )
@@ -346,7 +424,11 @@ async def cancelled_appointment(
 #DOCTOR
 
 @pytest_asyncio.fixture
-async def doctor(db: AsyncSession, doctor_user: User):
+async def doctor(
+    db: AsyncSession, 
+    doctor_user: User,
+    default_clinic,
+):
     result = await db.execute(
         select(Doctor).where(Doctor.user_id == doctor_user.id)
     )
@@ -357,10 +439,11 @@ async def doctor(db: AsyncSession, doctor_user: User):
 
     doctor = Doctor(
         user_id=doctor_user.id,
+        clinic_id=default_clinic.id,
         specialization="General Medicine",
         experience_years=5,
         bio="Test doctor",
-        is_verified=True,
+        status=DoctorStatus.APPROVED,
     )
 
     db.add(doctor)
@@ -370,7 +453,10 @@ async def doctor(db: AsyncSession, doctor_user: User):
 
 
 @pytest_asyncio.fixture
-async def another_doctor(db: AsyncSession):
+async def another_doctor(
+    db: AsyncSession,
+    default_clinic,
+):
     # create separate user first
     another_user = User(
         email="another_doctor@test.com",
@@ -384,17 +470,17 @@ async def another_doctor(db: AsyncSession):
     # create doctor profile
     another_doctor = Doctor(
         user_id=another_user.id,
+        clinic_id=default_clinic.id,
         specialization="Cardiology",
         experience_years=3,
         bio="Another test doctor",
-        is_verified=True,
+        status=DoctorStatus.APPROVED,
     )
     db.add(another_doctor)
     await db.flush()
     await db.refresh(another_doctor)
 
     return another_doctor
-
 
 
 
@@ -418,22 +504,25 @@ async def doctor_availability(db: AsyncSession, doctor: Doctor):
     return items
 
 
-@pytest_asyncio.fixture
-async def outbox_event(db):
-    event = OutboxEvent(
-        event_type="APPOINTMENT_RESCHEDULED",
-        payload={
-            "user_id": 1,
-            "appointment_id": 1,
-        },
-    )
-    db.add(event)
-    await db.flush()
-    return event
+# @pytest_asyncio.fixture
+# async def outbox_event(db):
+#     event = OutboxEvent(
+#         event_type="APPOINTMENT_RESCHEDULED",
+#         payload={
+#             "user_id": 1,
+#             "appointment_id": 1,
+#         },
+#     )
+#     db.add(event)
+#     await db.flush()
+#     return event
+
 
 def valid_slot(dt: datetime) -> datetime:
     dt = dt.astimezone(UTC).replace(second=0, microsecond=0)
-    minute = 0 if dt.minute < 30 else 30
+
+    minute = dt.minute - (dt.minute % APPOINTMENT_DURATION_MINUTES)
+
     return dt.replace(minute=minute)
 
 
@@ -573,7 +662,10 @@ async def issued_prescription(
 
 
 @pytest_asyncio.fixture
-async def auth_doctor(db: AsyncSession):
+async def auth_doctor(
+    db: AsyncSession,
+    default_clinic,
+):
 
     user = User(
         email="doctor@test.com",
@@ -588,10 +680,11 @@ async def auth_doctor(db: AsyncSession):
 
     doctor = Doctor(
         user_id=user.id,
+        clinic_id=default_clinic.id,
         specialization="Medicine",
         experience_years=5,
         bio="Doctor",
-        is_verified=True,
+        status=DoctorStatus.APPROVED,
     )
 
     db.add(doctor)
@@ -614,6 +707,8 @@ async def auth_doctor(db: AsyncSession):
     }
 
 
+
+
 @pytest_asyncio.fixture
 async def auth_patient(db):
 
@@ -626,6 +721,17 @@ async def auth_patient(db):
 
     db.add(user)
 
+    await db.flush()
+
+    patient = Patient(
+        user_id=user.id,
+        phone="01711111111",
+        address="Dhaka",
+        date_of_birth=date(1995, 1, 1),
+        gender="MALE",
+    )
+
+    db.add(patient)
     await db.flush()
 
     token = create_access_token(
@@ -686,6 +792,91 @@ async def auth_another_doctor(another_doctor):
             "Authorization": f"Bearer {token}"
         }
     }
+
+
+@pytest_asyncio.fixture
+async def auth_admin(db, default_clinic):
+    user = User(
+        email="admin@test.com",
+        hashed_password="hash",
+        role=UserRole.ADMIN,
+        is_active=True,
+        clinic_id=default_clinic.id,
+    )
+
+    db.add(user)
+    await db.flush()
+
+    token = create_access_token(
+        data={
+            "sub": str(user.id),
+            "role": UserRole.ADMIN.value,
+        }
+    )
+
+    return {
+        "user": user,
+        "headers": {
+            "Authorization": f"Bearer {token}",
+        },
+    }
+
+
+@pytest_asyncio.fixture
+async def auth_super_admin(db):
+    # Platform super admin: not bound to any clinic.
+    user = User(
+        email=f"superadmin-{uuid.uuid4()}@test.com",
+        hashed_password="hash",
+        role=UserRole.SUPER_ADMIN,
+        is_active=True,
+    )
+
+    db.add(user)
+    await db.flush()
+
+    token = create_access_token(
+        data={
+            "sub": str(user.id),
+            "role": UserRole.SUPER_ADMIN.value,
+        }
+    )
+
+    return {
+        "user": user,
+        "headers": {
+            "Authorization": f"Bearer {token}",
+        },
+    }
+
+
+@pytest_asyncio.fixture
+async def auth_receptionist(db):
+
+    user = User(
+        email=f"receptionist-{uuid.uuid4()}@test.com",
+        hashed_password="x",
+        role=UserRole.RECEPTIONIST,
+        is_active=True,
+    )
+
+    db.add(user)
+    await db.flush()
+
+    token = create_access_token(
+        data={
+            "sub": str(user.id),
+            "role": UserRole.RECEPTIONIST.value,
+        }
+    )
+
+    return {
+        "user": user,
+        "headers": {
+            "Authorization": f"Bearer {token}"
+        },
+    }
+
 
 
 @pytest_asyncio.fixture
@@ -811,8 +1002,8 @@ async def prescription_updated_event(
 
     return event
 
-
-@pytest_asyncio.fixture(autouse=True)
+#(autouse=True)
+@pytest_asyncio.fixture
 async def default_clinic(db):
 
     clinic = await db.scalar(
@@ -835,3 +1026,22 @@ async def default_clinic(db):
         await db.refresh(clinic)
 
     return clinic
+
+
+@pytest_asyncio.fixture
+async def google_user(db):
+
+    user = User(
+        email="google@test.com",
+        hashed_password=None,
+        google_id="google-123",
+        auth_provider=AuthProvider.GOOGLE,
+        role=UserRole.PATIENT,
+        is_active=True,
+    )
+
+    db.add(user)
+    await db.flush()
+    await db.refresh(user)
+
+    return user

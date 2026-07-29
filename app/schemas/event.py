@@ -106,9 +106,40 @@ class AppointmentStatusChangedEvent(BaseEvent):
     appointment_id: int
     doctor_id: int
 
-    changed_by: int
+    changed_by: int | None = None
     new_status: str
 
+
+class PatientNextInQueueEvent(BaseEvent):
+
+    event_type: Literal[
+        "PATIENT_NEXT_IN_QUEUE"
+    ]
+
+    patient_id: int
+    appointment_id: int
+    doctor_id: int
+
+
+class ConsultationStartedEvent(BaseEvent):
+
+    event_type: Literal[
+        "CONSULTATION_STARTED"
+    ]
+
+    appointment_id: int
+    patient_id: int
+    doctor_id: int
+
+
+class ConsultationCompletedEvent(BaseEvent):
+
+    event_type: Literal["CONSULTATION_COMPLETED"]
+
+    patient_id: int
+    appointment_id: int
+    doctor_id: int
+    
 
 # =========================
 # PAYMENT SUCCESS
@@ -163,15 +194,6 @@ class PrescriptionIssuedEvent(BaseEvent):
     issued_at: str
 
 
-class ConsultationStartedEvent(BaseEvent):
-
-    event_type: Literal[
-        "CONSULTATION_STARTED"
-    ]
-
-    appointment_id: int
-    patient_id: int
-    doctor_id: int
 
 
 class PrescriptionUpdatedEvent(BaseEvent):

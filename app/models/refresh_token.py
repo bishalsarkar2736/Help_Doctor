@@ -1,6 +1,5 @@
 from sqlalchemy import Column,Integer,String,DateTime,Boolean,ForeignKey
 from sqlalchemy.orm import relationship
-from sqlalchemy import DateTime
 from app.db.base import Base
 from sqlalchemy.sql import func
 
@@ -18,6 +17,7 @@ class RefreshToken(Base):
 
     expires_at = Column(DateTime(timezone=True), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
 
 
     def __repr__(self):

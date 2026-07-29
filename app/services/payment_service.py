@@ -5,6 +5,7 @@ from app.models.payment import Payment
 from app.models.appointment import Appointment, AppointmentStatus
 from app.try_except.exceptions import BadRequestError, NotFoundError
 from app.utils.db_retry import with_retry
+from app.core.metrics import payments_success_total
 from datetime import datetime
 from app.core.time import UTC
 from app.services.appointment_transition_service import (
@@ -81,7 +82,6 @@ async def create_payment(
             
             if appointment.status not in {
                 AppointmentStatus.PENDING,
-                AppointmentStatus.SCHEDULED,
             }:
                 raise BadRequestError(
                     "Payment is not allowed for this appointment"
@@ -423,6 +423,8 @@ async def mark_payment_success(
                 )
                 raise BadRequestError("Transaction already processed")
 
+
+            payments_success_total.inc()
 
             inject_trace_attributes(
                 user_id=payment.patient_id,

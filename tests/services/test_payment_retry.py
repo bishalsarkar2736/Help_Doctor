@@ -1,16 +1,20 @@
+from datetime import date
 import pytest
 from datetime import datetime
 
 from app.core.time import UTC
 from app.models.user import User, UserRole
-from app.models.doctor import Doctor
+from app.models.doctor import Doctor, DoctorStatus
 from app.models.patient import Patient
 from app.models.appointment import Appointment
 from app.models.payment import Payment
 
 
 @pytest.mark.asyncio
-async def test_retry_payment_allowed(db):
+async def test_retry_payment_allowed(
+    db,
+    default_clinic,
+):
 
     # -----------------------------
     # Create users
@@ -35,10 +39,11 @@ async def test_retry_payment_allowed(db):
     # -----------------------------
     doctor = Doctor(
         user_id=doctor_user.id,
+        clinic_id=default_clinic.id,
         specialization="Cardiology",
         experience_years=5,
         bio="Cardiology specialist",
-        is_verified=True,
+        status=DoctorStatus.APPROVED,
     )
 
     db.add(doctor)
@@ -51,8 +56,8 @@ async def test_retry_payment_allowed(db):
         user_id=patient_user.id,
         phone="01700000000",
         address="Rangpur",
-        date_of_birth="1995-01-01",
-        gender="male",
+        date_of_birth=date(1995, 1, 1),
+        gender="MALE",
     )
 
     db.add(patient)
@@ -64,6 +69,7 @@ async def test_retry_payment_allowed(db):
     appointment = Appointment(
         patient_id=patient.user_id,
         doctor_id=doctor.id,
+        clinic_id=default_clinic.id,
         scheduled_at=datetime.now(UTC),
         status="CONFIRMED",
     )
@@ -77,6 +83,7 @@ async def test_retry_payment_allowed(db):
     failed_payment = Payment(
         appointment_id=appointment.id,
         patient_id=patient_user.id,
+        clinic_id=default_clinic.id,
         amount=500,
         method="bkash",
         status="FAILED",
@@ -91,6 +98,7 @@ async def test_retry_payment_allowed(db):
     retry_payment = Payment(
         appointment_id=appointment.id,
         patient_id=patient_user.id,
+        clinic_id=default_clinic.id,
         amount=500,
         method="bkash",
         status="PENDING",

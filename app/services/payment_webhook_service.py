@@ -4,9 +4,13 @@ import logging
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.integrations.bkash.bkash_service import BkashService
+from app.integrations.payment_gateway_factory import get_payment_gateway
+# Kept importable so tests can patch BkashService.execute_payment; the live
+# gateway is resolved via get_payment_gateway() (real BkashService unless fake).
+from app.integrations.bkash.bkash_service import BkashService  # noqa: F401
 from app.models.idempotency_key import IdempotencyKey
 from app.models.payment import Payment
+from app.core.metrics import payments_failed_total
 from app.schemas.payment_webhook import BkashWebhookSchema
 from app.services.idempotency_service import (
     create_request_hash,
@@ -50,7 +54,7 @@ async def process_bkash_webhook(
         return stored_response
 
     try:
-        bkash = BkashService()
+        bkash = get_payment_gateway()
 
         result = await bkash.execute_payment(
             gateway_payment_id=gateway_payment_id,
@@ -192,6 +196,8 @@ async def _handle_failed_bkash_payment(
         gateway_payment_id=gateway_payment_id,
         reason=transaction_status or "unknown",
     )
+
+    payments_failed_total.inc()
 
     await create_payment_audit_log(
         db=db,

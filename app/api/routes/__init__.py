@@ -23,6 +23,7 @@ from .admin_medicine_ai_logs import router as admin_medicine_ai_logs_router
 from .admin_medicine_ai_analytics import router as admin_medicine_ai_analytics_router
 from .admin_medicine_ai_feedback import router as admin_medicine_ai_feedback_router
 from .admin_clinic import router as admin_clinic_router
+from .admin_clinic import clinics_router as admin_clinics_list_router
 from .admin_clinic_analytics import router as admin_clinic_analytics_router
 from .admin_revenue_analytics import router as admin_revenue_analytics_router
 from .admin_dashboard import router as admin_dashboard_router
@@ -32,6 +33,10 @@ from .patient_history import router as patient_history_router
 from .appointment_calendar import router as appointment_calender_router
 from .doctor_dashboard import router as doctor_dashboard_router
 from .prescription_templates import router as prescription_tamplates_router
+from .invitations import router as invitations_router
+from .clinics import router as public_clinics_router
+from .doctor_ratings import router as doctor_ratings_router
+from .admin_doctor_ratings import router as admin_doctor_ratings_router
 
 ALL_ROUTERS = [
     admin_router,
@@ -39,9 +44,11 @@ ALL_ROUTERS = [
     auth_router,
     doctor_availability_router,
     doctor_dashboard_router,
-    appointments_router,
     appointment_calender_router,
+    appointments_router,
     admin_doctors_router,
+    admin_doctor_ratings_router,
+    doctor_ratings_router,
     notification_router,
     patients_router,
     patient_history_router,
@@ -49,6 +56,8 @@ ALL_ROUTERS = [
     metric_router,
     prescription_router,
     prescription_tamplates_router,
+    invitations_router,
+    public_clinics_router,
     payment_router,
     slot_router,
     admin_analytics_router,
@@ -63,6 +72,7 @@ ALL_ROUTERS = [
     admin_medicine_ai_analytics_router,
     admin_medicine_ai_feedback_router,
     admin_clinic_router,
+    admin_clinics_list_router,
     admin_clinic_analytics_router,
     admin_revenue_analytics_router,
     admin_dashboard_router,

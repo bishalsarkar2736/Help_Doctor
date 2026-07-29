@@ -9,6 +9,12 @@ celery_app = Celery(
     "helpdoctor",
     broker=settings.REDIS_URL,
     backend=settings.REDIS_URL,
+    include=[
+        "app.task.appointment_reminders",
+        "app.task.slot_generation",
+        "app.task.payment_reconciliation",
+        "app.task.notification_tasks",
+    ],
 )
 
 celery_app.conf.update(
@@ -20,6 +26,10 @@ celery_app.conf.update(
 
     # reliability settings
     task_acks_late=True,
+    # With acks_late, a task is only acked after it completes. If a worker is
+    # hard-killed (SIGKILL / OOM) mid-task, this requeues it instead of losing
+    # it — the two must be set together.
+    task_reject_on_worker_lost=True,
     worker_prefetch_multiplier=1,
     broker_connection_retry_on_startup=True,
 
@@ -48,5 +58,3 @@ celery_app.conf.beat_schedule = {
     },
 
 }
-
-celery_app.autodiscover_tasks(["app.tasks"])

@@ -1,19 +1,123 @@
 version: "3.9"
 
+# Bounded, rotated, compressed container logs (the `local` driver compresses
+# rotated files automatically). 5 x 10 MB = 50 MB retained per container, so
+# logs can never fill the disk.
+x-logging: &default-logging
+  driver: local
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
+  # One-shot: apply DB migrations, then exit. Everything that touches the DB
+  # waits for this to finish, so migrations run exactly once per release and
+  # multiple api/worker replicas never race to migrate.
+  migrate:
+    build: .
+    container_name: helpdoctor_migrate
+    command: alembic upgrade head
+    env_file:
+      - .env.docker
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
   api:
     build: .
     container_name: helpdoctor_api
     env_file:
-      - .env
+      - .env.docker
     ports:
       - "8000:8000"
     depends_on:
-      - postgres
-      - redis
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     volumes:
-      - .:/app
-    restart: always
+      - uploads_data:/app/uploads
+      - media_data:/app/media
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health/live"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    logging: *default-logging
+
+  # Frontend SPA served by nginx (built from the sibling repo). VITE_API_URL is
+  # baked in at build time — point it at the public API origin in production.
+  web:
+    build:
+      context: ../helpdoctor-frontend
+      args:
+        # Vite inlines these at BUILD time, so they must be build args — a
+        # runtime env var on the container has no effect. All three are public
+        # values (they ship inside the browser bundle anyway). Override per
+        # environment by exporting them before `docker compose build`.
+        # NOTE: deliberately NOT sourced from .env — that file is the backend's
+        # own config and its Settings model rejects unknown keys.
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
+        VITE_GOOGLE_CLIENT_ID: ${VITE_GOOGLE_CLIENT_ID:-339449117887-g6n4qn68ofspacja5bvl7l86u4elmhbc.apps.googleusercontent.com}
+        VITE_VAPID_PUBLIC_KEY: ${VITE_VAPID_PUBLIC_KEY:-BKbGoq0W2_ReS1ep6dFOOGikg1Y-wfpXIqUJ0CktdD6zifotRnR5tKny5Nyb8UU8gGS-2NTySVCR8rPHTClZE08}
+    container_name: helpdoctor_web
+    ports:
+      - "5173:80"
+    depends_on:
+      - api
+    restart: unless-stopped
+    logging: *default-logging
+
+  celery_worker:
+    build: .
+    container_name: helpdoctor_celery_worker
+    command: celery -A app.core.celery worker --loglevel=info
+    env_file:
+      - .env.docker
+    # Override the image's HTTP healthcheck — this service runs no web server.
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.core.celery inspect ping -d celery@$$HOSTNAME || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - uploads_data:/app/uploads
+      - media_data:/app/media
+    restart: unless-stopped
+    logging: *default-logging
+
+  celery_beat:
+    build: .
+    container_name: helpdoctor_celery_beat
+    command: celery -A app.core.celery beat --loglevel=info
+    env_file:
+      - .env.docker
+    # beat has no web server and no inspectable worker — disable the inherited
+    # HTTP healthcheck rather than report a permanently false "unhealthy".
+    healthcheck:
+      disable: true
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: *default-logging
 
   postgres:
     image: postgres:16
@@ -26,21 +130,72 @@ services:
       - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    logging: *default-logging
+
+  db_backup:
+    image: postgres:16
+    container_name: helpdoctor_db_backup
+    env_file:
+      - .env.docker
+    environment:
+      # pg_dump talks to the postgres service, not localhost
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      BACKUP_DIR: /backups
+      RETENTION_DAYS: "7"
+      BACKUP_INTERVAL_SECONDS: "3600"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./scripts/backup_db.sh:/backup_db.sh:ro
+      - db_backups:/backups
+    entrypoint: >-
+      bash -c 'while true; do /backup_db.sh || echo "backup failed";
+      sleep "$${BACKUP_INTERVAL_SECONDS}"; done'
+    restart: unless-stopped
+    logging: *default-logging
 
   redis:
     image: redis:7
     container_name: helpdoctor_redis
     ports:
       - "6379:6379"
-    restart: always
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    logging: *default-logging
+
+  # Dev-only SMTP catcher. Captures every outgoing email (OTP codes, invitation
+  # links, password resets) instead of delivering it, so flows are testable
+  # without real deliverability. Web inbox: http://localhost:8025
+  # NOT for production — mail is stored in memory and never actually sent.
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: helpdoctor_mailhog
+    ports:
+      - "1025:1025"   # SMTP
+      - "8025:8025"   # web UI
+    restart: unless-stopped
+    logging: *default-logging
 
   jaeger:
-  
     image: jaegertracing/all-in-one:latest
+    container_name: helpdoctor_jaeger
     ports:
       - "16686:16686"
       - "4318:4318"
+    restart: unless-stopped
+    logging: *default-logging
 
   prometheus:
     image: prom/prometheus
@@ -50,18 +205,21 @@ services:
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml
       - ./alerts.yml:/etc/prometheus/alerts.yml
-    restart: always
+    restart: unless-stopped
+    logging: *default-logging
 
   grafana:
     image: grafana/grafana
     container_name: helpdoctor_grafana
     ports:
       - "3000:3000"
-    restart: always
+    restart: unless-stopped
+    logging: *default-logging
 
 
 volumes:
   postgres_data:
-
-
+  uploads_data:
+  media_data:
+  db_backups:
 

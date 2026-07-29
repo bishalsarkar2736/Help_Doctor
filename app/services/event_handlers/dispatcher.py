@@ -58,6 +58,12 @@ EVENT_HANDLERS = {
     "CONSULTATION_STARTED":
         handle_notification_event,
 
+    "PATIENT_NEXT_IN_QUEUE":
+        handle_notification_event,
+    
+    "CONSULTATION_COMPLETED":
+        handle_notification_event,
+
     "PRESCRIPTION_CREATED":
         handle_notification_event,
 
@@ -88,9 +94,6 @@ async def dispatch_event(
     #handler = EVENT_HANDLERS.get(event_type)
 
     handler = EVENT_HANDLERS.get(normalized_event_type)
-
-    print("EVENT TYPE:", event_type)
-    print("HANDLER:", handler)
 
     if not handler:
         return

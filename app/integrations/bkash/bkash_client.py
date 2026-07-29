@@ -184,9 +184,32 @@ class BkashClient:
     async def refund_payment(
         self,
         *,
+        gateway_payment_id: str,
         transaction_id: str,
         amount: str,
+        sku: str = "refund",
+        reason: str = "Customer requested refund",
     ) -> dict:
-        raise NotImplementedError(
-            "Bkash refund API not integrated yet"
+        token = await self.get_token()
+
+        url = f"{settings.BKASH_BASE_URL}/tokenized/checkout/payment/refund"
+
+        payload = {
+            "paymentID": gateway_payment_id,
+            "amount": amount,
+            "trxID": transaction_id,
+            "sku": sku,
+            "reason": reason,
+        }
+
+        headers = {
+            "Authorization": token,
+            "X-APP-Key": settings.BKASH_APP_KEY,
+            "Content-Type": "application/json",
+        }
+
+        return await self._post(
+            url=url,
+            payload=payload,
+            headers=headers,
         )

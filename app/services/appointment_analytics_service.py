@@ -30,14 +30,14 @@ async def get_appointment_analytics(
         func.count(Appointment.id)
         .filter(
             Appointment.status
-            == AppointmentStatus.SCHEDULED
+            == AppointmentStatus.PENDING
         )
         .label("scheduled_total"),
 
         func.count(Appointment.id)
         .filter(
             Appointment.status
-            == AppointmentStatus.SCHEDULED,
+            == AppointmentStatus.PENDING,
 
             Appointment.created_at
             >= month_start,

@@ -1,12 +1,16 @@
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.appointment import Appointment
 from app.models.doctor_availability import DoctorAvailability
+from app.models.doctor import Doctor
+from app.models.clinic import Clinic
+from app.core.time import UTC
+from app.core.tz import to_zoneinfo
 from app.try_except.exceptions import BadRequestError
 
-APPOINTMENT_DURATION_MINUTES = 30
+
 
 
 async def validate_doctor_availability(
@@ -15,13 +19,24 @@ async def validate_doctor_availability(
     scheduled_at: datetime,
 ) -> None:
     
-    #appointment_end = scheduled_at + timedelta(minutes=APPOINTMENT_DURATION_MINUTES)
-    appointment_end = scheduled_at + Appointment.APPOINTMENT_DURATION
-    
-    
-    weekday = scheduled_at.weekday()
-    start_time = scheduled_at.time()
-    end_time = appointment_end.time()
+    # Availability is stored in the clinic's local time, so compare the booking
+    # (UTC) against the doctor's clinic timezone — not raw UTC wall-clock.
+    tz_name = await db.scalar(
+        select(Clinic.timezone)
+        .join(Doctor, Doctor.clinic_id == Clinic.id)
+        .where(Doctor.id == doctor_id)
+    )
+    tz = to_zoneinfo(tz_name)
+
+    if scheduled_at.tzinfo is None:
+        scheduled_at = scheduled_at.replace(tzinfo=UTC)
+
+    local_start = scheduled_at.astimezone(tz)
+    local_end = (scheduled_at + Appointment.APPOINTMENT_DURATION).astimezone(tz)
+
+    weekday = local_start.weekday()
+    start_time = local_start.time()
+    end_time = local_end.time()
 
     result = await db.execute(
         select(DoctorAvailability.id).where(

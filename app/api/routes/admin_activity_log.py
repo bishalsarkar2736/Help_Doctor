@@ -39,7 +39,7 @@ async def list_activity_logs(
     offset: int = 0,
     action: str | None = None,
     entity_type: str | None = None,
-    actor_id: int | None = None,
+    actor_user_id: int | None = None,
 
     start_date: datetime | None = None,
     end_date: datetime | None = None,
@@ -64,7 +64,7 @@ async def list_activity_logs(
         offset=offset,
         action=action,
         entity_type=entity_type,
-        actor_id=actor_id,
+        actor_id=actor_user_id,
         start_date=start_date,
         end_date=end_date,
     )

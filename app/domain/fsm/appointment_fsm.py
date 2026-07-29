@@ -1,42 +1,3 @@
-# from app.models.appointment import AppointmentStatus
-# from app.try_except.exceptions import BadRequestError
-
-# class AppointmentFSM:
-
-#     _transitions = {
-#         AppointmentStatus.PENDING: {
-#             AppointmentStatus.CONFIRMED,
-#             AppointmentStatus.CANCELLED,
-#         },
-#         AppointmentStatus.CONFIRMED: {
-#             AppointmentStatus.COMPLETED,
-#             AppointmentStatus.CANCELLED,
-#             AppointmentStatus.NO_SHOW,
-#         },
-#         AppointmentStatus.SCHEDULED: {
-#             AppointmentStatus.CONFIRMED,
-#             AppointmentStatus.CANCELLED,
-#         },
-
-#         # terminal states
-#         AppointmentStatus.CANCELLED: set(),
-#         AppointmentStatus.COMPLETED: set(),
-#         AppointmentStatus.NO_SHOW: set(),
-#     }
-
-#     @classmethod
-#     def can_transition(cls, current, target):
-#         if isinstance(current, str):
-#             current = AppointmentStatus(current.upper())
-
-#         allowed = cls._transitions.get(current, set())
-
-#         if target not in allowed:
-#             raise BadRequestError(
-#                 f"Invalid appointment transition: {current} → {target}"
-#             )
-
-
 import logging
 from types import MappingProxyType
 from app.models.appointment import AppointmentStatus
@@ -53,14 +14,30 @@ class AppointmentFSM:
             AppointmentStatus.CANCELLED,
         },
 
-        AppointmentStatus.SCHEDULED: {
-            AppointmentStatus.CONFIRMED,
-            AppointmentStatus.CANCELLED,
-        },
-
         AppointmentStatus.CONFIRMED: {
             AppointmentStatus.IN_CONSULTATION,
+
+            AppointmentStatus.CHECKED_IN,
+
             AppointmentStatus.COMPLETED,
+            AppointmentStatus.CANCELLED,
+            AppointmentStatus.NO_SHOW,
+
+            # Reschedule re-opens confirmation: a rescheduled CONFIRMED
+            # appointment returns to PENDING for the doctor to re-confirm.
+            AppointmentStatus.PENDING,
+        },
+
+        AppointmentStatus.CHECKED_IN: {
+            # WAITING is optional — a checked-in patient can be taken
+            # straight in when the doctor is free.
+            AppointmentStatus.WAITING,
+            AppointmentStatus.IN_CONSULTATION,
+            AppointmentStatus.CANCELLED,
+        },
+        
+        AppointmentStatus.WAITING: {
+            AppointmentStatus.IN_CONSULTATION,
             AppointmentStatus.CANCELLED,
             AppointmentStatus.NO_SHOW,
         },

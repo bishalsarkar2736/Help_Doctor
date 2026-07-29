@@ -4,7 +4,7 @@ from datetime import datetime, timezone,timedelta
 from sqlalchemy.exc import IntegrityError,DBAPIError
 from app.models.appointment import Appointment
 from sqlalchemy import select, func
-from app.models.doctor import Doctor
+from app.models.doctor import Doctor, DoctorStatus
 from app.models.user import User,UserRole
 from app.services.appointment_service import book_appointment
 from app.try_except.exceptions import BadRequestError
@@ -15,6 +15,7 @@ from app.models.clinic import Clinic
 
 @pytest.mark.asyncio
 async def test_doctor_overlap_is_prevented_under_concurrency(
+    isolated_database,
     async_session_factory,
 ):
     async with async_session_factory() as session:
@@ -49,10 +50,11 @@ async def test_doctor_overlap_is_prevented_under_concurrency(
 
         doctor = Doctor(
             user_id=doctor_owner.id,
+            clinic_id=clinic.id,
             specialization="General",
             experience_years=5,
             bio="Test",
-            is_verified=True,
+            status=DoctorStatus.APPROVED,
         )
 
         session.add(doctor)
@@ -77,6 +79,8 @@ async def test_doctor_overlap_is_prevented_under_concurrency(
         doctor_id = doctor.id
         patient_id = patient.id
 
+        
+
 
     async def create_appointment():
         async with async_session_factory() as session:
@@ -96,6 +100,7 @@ async def test_doctor_overlap_is_prevented_under_concurrency(
             except (BadRequestError, IntegrityError, DBAPIError):
                 await session.rollback()
                 return "error"
+          
 
 
     # 🔥 THIS WAS MISSING
@@ -117,6 +122,8 @@ async def test_doctor_overlap_is_prevented_under_concurrency(
         )
 
     assert count == 1
+
+    
 
 
     

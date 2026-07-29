@@ -97,9 +97,9 @@ class Payment(Base):
     )
 
     refunded_amount: Mapped[Decimal | None] = mapped_column(
-    Numeric(10, 2),
-    nullable=True,
-)
+        Numeric(10, 2),
+        nullable=True,
+    )
 
     refunded_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),

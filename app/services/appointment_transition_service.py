@@ -1,17 +1,19 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 import logging
-
+from app.schemas.event_metadata import EventActor
 from app.models.appointment import Appointment, AppointmentStatus
 from app.models.user import UserRole
 from app.domain.fsm.appointment_transition import transition_appointment
 from app.services.appointment_audit_service import log_appointment_transition
 from app.try_except.exceptions import ConflictError,ForbiddenError
 from sqlalchemy.orm.exc import StaleDataError
-from app.services.outbox_service import publish_event
 from datetime import datetime
 from app.core.time import UTC
 from app.utils.db_retry import with_retry
 
+from app.services.appointment_side_effects import (
+    handle_appointment_transition_side_effects,
+)
 
 from app.services.domain_event_service import (
     publish_domain_event,
@@ -33,6 +35,14 @@ from app.core.tracing import (
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
+
+
+QUEUE_DASHBOARD_STATUSES = {
+    AppointmentStatus.CHECKED_IN,
+    AppointmentStatus.WAITING,
+    AppointmentStatus.IN_CONSULTATION,
+    AppointmentStatus.COMPLETED,
+}
 
 
 async def transition_appointment_locked(
@@ -98,135 +108,155 @@ async def transition_appointment_locked(
 
             
 
-        if actor_role == UserRole.DOCTOR and actor_doctor_id is not None:
-            if appointment.doctor_id != actor_doctor_id:
-                raise ForbiddenError("Not your appointment")
-            
-    
-        #old_status = appointment.status
-
-        if old_status == new_status:
-            return appointment
-
-
-        async def _run():
-
-            # 1️⃣ FSM
-            await transition_appointment(
-                db=db,
-                appointment=appointment,
-                new_status=new_status,
-                changed_by=changed_by,
-            )
-
-            # 2️⃣ LOG
-            logger.info(
-                "appointment_transition",
-                extra={
-                    "appointment_id": appointment.id,
-                    "from": str(old_status),
-                    "to": str(new_status),
-                    "changed_by": changed_by,
-                }
-            )
-
-            # 3️⃣ TIMESTAMPS
-            now = datetime.now(UTC)
-            occurred_at = now.isoformat()
-
-            if new_status == AppointmentStatus.CONFIRMED:
-                appointment.confirmed_at = appointment.confirmed_at or now
-
-            elif new_status == AppointmentStatus.COMPLETED:
-                appointment.completed_at = appointment.completed_at or now
-
-            elif new_status == AppointmentStatus.CANCELLED:
-                appointment.cancelled_at = appointment.cancelled_at or now
-
-            # 4️⃣ AUDIT
-            await log_appointment_transition(
-                db=db,
-                appointment_id=appointment.id,
-                from_status=old_status,
-                to_status=new_status,
-                changed_by=changed_by,
-            )
-
-            
-
-            # 5️⃣ OUTBOX
-            if emit_event:
-                # await publish_event(
-                #     db=db,
-                #     event_type="APPOINTMENT_STATUS_CHANGED",
-                #     payload={
-                #         "appointment_id": appointment.id,
-                #         "new_status": new_status.value,
-                #         "changed_by": changed_by,
-                #         "doctor_id": appointment.doctor_id,
-                #         "patient_id": appointment.patient_id,
-                #         "occurred_at": occurred_at,
-                        
-                #     }
-                # )
-                event = AppointmentStatusChangedEvent(
-                    event_type="APPOINTMENT_STATUS_CHANGED",
-
-                    schema_version=1,
-                    occurred_at=occurred_at,
-
-                    aggregate_type="appointment",
-                    aggregate_id=appointment.id,
-
-                    correlation_id=correlation_id,
-                    causation_id=None,
-
-                    actor={
-                        "id": changed_by,
-                        "role": actor_role.name,
-                    },
-
-                    patient_id=appointment.patient_id,
-                    appointment_id=appointment.id,
-                    doctor_id=appointment.doctor_id,
-                    changed_by=changed_by,
-                    new_status=new_status.value,
-                )
-
-                await publish_domain_event(
-                    db=db,
-                    event=event,
-                )
+            if actor_role == UserRole.DOCTOR and actor_doctor_id is not None:
+                if appointment.doctor_id != actor_doctor_id:
+                    raise ForbiddenError("Not your appointment")
                 
         
+            #old_status = appointment.status
 
-            await db.flush()
-            return appointment
-
-    
-        result =  await with_retry(
-            _run,
-            db,
-            operation="appointment_transition",
-        )
+            if old_status == new_status:
+                return appointment
 
 
-        span.set_status(
-            Status(StatusCode.OK)
-        )
+            async def _run():
 
-        return result
-    
-    
-    except StaleDataError:
+                # 1️⃣ FSM
+                await transition_appointment(
+                    #db=db,
+                    appointment=appointment,
+                    new_status=new_status,
+                    #changed_by=changed_by,
+                )
 
-        span = trace.get_current_span()
+                # 2️⃣ LOG
+                logger.info(
+                    "appointment_transition",
+                    extra={
+                        "appointment_id": appointment.id,
+                        "from": str(old_status),
+                        "to": str(new_status),
+                        "changed_by": changed_by,
+                    }
+                )
 
-        span.record_exception(
-            ConflictError(
-                "Appointment was modified by another user"
+                # 3️⃣ TIMESTAMPS
+               
+                now = datetime.now(UTC)
+                occurred_at = now.isoformat()
+
+                if new_status == AppointmentStatus.CONFIRMED:
+                    appointment.confirmed_at = appointment.confirmed_at or now
+
+                elif new_status == AppointmentStatus.CHECKED_IN:
+                    appointment.checked_in_at = (
+                        appointment.checked_in_at or now
+                    )
+
+                elif new_status == AppointmentStatus.WAITING:
+                    appointment.waiting_started_at = (
+                        appointment.waiting_started_at or now
+                    )
+
+                elif new_status == AppointmentStatus.IN_CONSULTATION:
+                    appointment.consultation_started_at = (
+                        appointment.consultation_started_at or now
+                    )
+                   
+
+                elif new_status == AppointmentStatus.COMPLETED:
+                    appointment.completed_at = (
+                        appointment.completed_at or now
+                    )
+                  
+
+                elif new_status == AppointmentStatus.CANCELLED:
+                    appointment.cancelled_at = (
+                        appointment.cancelled_at or now
+                    )
+                 
+
+                # 4️⃣ AUDIT
+                await log_appointment_transition(
+                    db=db,
+                    appointment_id=appointment.id,
+                    from_status=old_status,
+                    to_status=new_status,
+                    changed_by=changed_by,
+                )
+
+                
+
+                # 5️⃣ OUTBOX
+                if emit_event:
+
+                    actor = (
+                        EventActor(
+                            id=changed_by,
+                            role=actor_role.name,
+                        )
+                        if changed_by is not None
+                        else None
+                    )
+
+                    event = AppointmentStatusChangedEvent(
+                        event_type="APPOINTMENT_STATUS_CHANGED",
+
+                        schema_version=1,
+                        occurred_at=occurred_at,
+
+                        aggregate_type="appointment",
+                        aggregate_id=appointment.id,
+
+                        correlation_id=correlation_id,
+                        causation_id=None,
+                        actor=actor,
+
+                        patient_id=appointment.patient_id,
+                        appointment_id=appointment.id,
+                        doctor_id=appointment.doctor_id,
+                        changed_by=changed_by,
+                        new_status=new_status.value,
+                    )
+
+                    await publish_domain_event(
+                        db=db,
+                        event=event,
+                    )
+                    
+            
+
+                await db.flush()
+
+
+                await handle_appointment_transition_side_effects(
+                    db=db,
+                    appointment=appointment,
+                    new_status=new_status,
+                )
+
+                return appointment
+
+        
+            result =  await with_retry(
+                _run,
+                db,
+                operation="appointment_transition",
             )
-        )
+
+
+            span.set_status(
+                Status(StatusCode.OK)
+            )
+
+            return result
+        
+
+        
+    
+    except StaleDataError as e:
+
+        span.record_exception(e)
 
         span.set_status(
             Status(
@@ -257,10 +287,5 @@ async def transition_appointment_locked(
         )
 
         raise
-
-
-
-
-
 
 

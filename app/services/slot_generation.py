@@ -4,10 +4,13 @@ from sqlalchemy import select, text
 from app.db.postgres import AsyncSessionLocal
 from app.models.doctor_availability import DoctorAvailability
 from app.models.doctor_slot import DoctorSlot
+from app.models.doctor import Doctor
+from app.models.clinic import Clinic
 from app.core.time import UTC
+from app.core.tz import to_zoneinfo
+from app.core.constants import APPOINTMENT_DURATION_MINUTES as SLOT_DURATION_MINUTES
 
 
-SLOT_DURATION_MINUTES = 30
 DAYS_AHEAD = 7
 
 # 🔒 unique lock id (any constant int)
@@ -31,8 +34,12 @@ async def generate_slots():
             return
 
         try:
-            now = datetime.now(UTC)
-            end_date = now + timedelta(days=DAYS_AHEAD)
+            # doctor_id -> clinic IANA timezone (availability is local to it)
+            tz_rows = await db.execute(
+                select(Doctor.id, Clinic.timezone)
+                .join(Clinic, Doctor.clinic_id == Clinic.id, isouter=True)
+            )
+            tz_by_doctor = {did: name for did, name in tz_rows.all()}
 
             # get all availability rules
             result = await db.execute(select(DoctorAvailability))
@@ -43,16 +50,24 @@ async def generate_slots():
                 if not rule.is_available:
                     continue
 
-                current_date = now.date()
+                tz = to_zoneinfo(tz_by_doctor.get(rule.doctor_id))
+                now_local = datetime.now(tz)
+                end_local_date = (now_local + timedelta(days=DAYS_AHEAD)).date()
+                current_date = now_local.date()
 
-                while current_date <= end_date.date():
+                while current_date <= end_local_date:
 
                     if current_date.weekday() != rule.day_of_week:
                         current_date += timedelta(days=1)
                         continue
 
-                    start_dt = datetime.combine(current_date, rule.start_time, tzinfo=UTC)
-                    end_dt = datetime.combine(current_date, rule.end_time, tzinfo=UTC)
+                    # The availability window is clinic-local; store slots in UTC.
+                    start_dt = datetime.combine(
+                        current_date, rule.start_time, tzinfo=tz
+                    ).astimezone(UTC)
+                    end_dt = datetime.combine(
+                        current_date, rule.end_time, tzinfo=tz
+                    ).astimezone(UTC)
 
                     slot_start = start_dt
 

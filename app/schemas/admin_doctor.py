@@ -1,4 +1,9 @@
-from pydantic import BaseModel,ConfigDict
+from datetime import datetime
+
+from pydantic import BaseModel, ConfigDict
+
+from app.models.doctor import DoctorStatus
+
 
 class AdminDoctorListItem(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -9,8 +14,14 @@ class AdminDoctorListItem(BaseModel):
     specialization: str
     experience_years: int
     bio: str | None
-    is_verified: bool
+    status: DoctorStatus
     is_active: bool
 
-    # class Config:
-    #     from_attributes = True
+    # Audit
+    approved_at: datetime | None = None
+    rejected_at: datetime | None = None
+    rejection_reason: str | None = None
+
+
+class DoctorRejectRequest(BaseModel):
+    reason: str | None = None

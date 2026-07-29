@@ -1,16 +1,24 @@
 from fastapi import APIRouter, Depends, Request, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from datetime import datetime
-
+from datetime import datetime,date
 from app.db.postgres import get_db
 from app.security.jwt import get_current_user
 from app.security.rbac import require_roles
 
 from app.models.user import User, UserRole
 from app.models.appointment import AppointmentStatus
-
-from app.schemas.appointment import AppointmentOut, DoctorAppointmentView
-from app.try_except.exceptions import BadRequestError
+from app.schemas.waiting_queue import QueuePositionOut
+from app.schemas.appointment import (
+    AppointmentOut, 
+    DoctorAppointmentView,
+    AppointmentSearchOut
+)
+from app.services.tenant_resolver import resolve_clinic_id
+from app.try_except.exceptions import (
+    BadRequestError,
+    ForbiddenError,
+    NotFoundError,
+)
 from app.services.appointment_service import (
     book_appointment,
     get_patient_appointments,
@@ -21,9 +29,10 @@ from app.services.appointment_service import (
     doctor_today_appointments,
     doctor_pending_with_patient,
     doctor_confirmed_with_patient,
+    get_appointment_by_id
 )
 from app.schemas.appointment import AppointmentCreate
-
+from app.services.appointment_search_service import search_appointments
 from app.services.idempotency_service import (
     get_existing_key,
     store_key,
@@ -32,13 +41,29 @@ from app.services.idempotency_service import (
 )
 from app.schemas.appointment import AppointmentDetailOut
 from app.mappers.appointment_mapper import to_appointment_detail
-from app.services.appointment_service import get_appointment_by_id
 
-from app.models.appointment import Appointment
-from app.try_except.exceptions import NotFoundError
-from app.services.consultation_service import start_consultation
+from app.services.consultation_service import (
+    start_consultation,
+)
+from app.services.appointment_status_service import (
+    check_in_patient,
+    move_to_waiting,
+    complete_appointment,
+)
+from app.services.pres_doctor_profile_service import get_doctor_profile
+from app.services.waiting_queue_service import (
+    get_doctor_queue_summary,
+    get_patient_position,
+    estimate_wait_from_position
+)
 
-
+from app.schemas.waiting_queue import (
+    WaitingQueueSummary,
+    QueueStatsOut,
+)
+from app.services.waiting_queue_service import (
+    get_queue_stats,
+)
 
 
 router = APIRouter(
@@ -60,13 +85,25 @@ async def create_appointment(
     doctor_id = data.doctor_id
     scheduled_at = data.scheduled_at
 
+    # Resolve the patient we are booking for. Patients always book for
+    # themselves; only RECEPTIONIST / ADMIN may book on behalf of a patient.
+    booking_patient = user
+    if data.patient_id is not None and data.patient_id != user.id:
+        if user.role not in (UserRole.RECEPTIONIST, UserRole.ADMIN):
+            raise ForbiddenError(
+                "Only reception or admin can book for another patient"
+            )
+        booking_patient = await db.get(User, data.patient_id)
+        if booking_patient is None or booking_patient.role != UserRole.PATIENT:
+            raise NotFoundError("Patient not found")
+
     # 🔥 1. GET KEY FROM HEADER
     idempotency_key = request.headers.get("Idempotency-Key")
 
     if not idempotency_key:
         # fallback (optional)
         appointment = await book_appointment(
-            db, user, doctor_id, scheduled_at
+            db, booking_patient, doctor_id, scheduled_at
         )
 
         return {
@@ -118,7 +155,7 @@ async def create_appointment(
 
     appointment = await book_appointment(
         db,
-        user,
+        booking_patient,
         doctor_id,
         scheduled_at,
     )
@@ -206,6 +243,52 @@ async def my_appointments(
     user: User = Depends(get_current_user),
 ):
     return await get_patient_appointments(db, user)
+
+
+
+
+
+@router.get(
+    "/search",
+    response_model=list[AppointmentSearchOut],
+)
+async def search_appointments_endpoint(
+    clinic_id: int,
+    patient: str | None = Query(default=None),
+    doctor: str | None = Query(default=None),
+    status: AppointmentStatus | None = Query(default=None),
+    date: date | None = Query(default=None),
+    start_date: date | None = Query(default=None),
+    end_date: date | None = Query(default=None),
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(
+        require_roles(
+            UserRole.ADMIN,
+            UserRole.DOCTOR,
+            UserRole.RECEPTIONIST,
+        )
+    ),
+):
+    resolved_clinic_id = await resolve_clinic_id(
+        db=db,
+        user=current_user,
+        clinic_id=clinic_id,
+    )
+
+    return await search_appointments(
+        db=db,
+        clinic_id=resolved_clinic_id,
+        patient=patient,
+        doctor=doctor,
+        status=status,
+        date=date,
+        start_date=start_date,
+        end_date=end_date,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.get(
@@ -315,6 +398,160 @@ async def doctor_confirmed(
 
 
 
+@router.get(
+    "/doctor/queue",
+    response_model=WaitingQueueSummary,
+)
+async def doctor_queue(
+    db: AsyncSession = Depends(get_db),
+    doctor: User = Depends(
+        require_roles(UserRole.DOCTOR),
+    ),
+):
+    """
+    Return the doctor's live consultation queue.
+    """
+
+    doctor_profile = await get_doctor_profile(
+        db=db,
+        user_id=doctor.id,
+    )
+
+    return await get_doctor_queue_summary(
+        db=db,
+        doctor_id=doctor_profile.id,
+    )
+
+
+@router.get(
+    "/doctor/queue/stats",
+    response_model=QueueStatsOut,
+)
+async def doctor_queue_stats(
+    db: AsyncSession = Depends(get_db),
+    doctor: User = Depends(
+        require_roles(UserRole.DOCTOR),
+    ),
+):
+    """
+    Return compact statistics for the doctor's live queue.
+    """
+
+    doctor_profile = await get_doctor_profile(
+        db=db,
+        user_id=doctor.id,
+    )
+
+    return await get_queue_stats(
+        db=db,
+        doctor_id=doctor_profile.id,
+    )
+
+
+
+@router.post(
+    "/{appointment_id}/check-in",
+    response_model=AppointmentDetailOut,
+)
+async def check_in(
+    appointment_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(
+        require_roles(
+            UserRole.DOCTOR,
+            UserRole.RECEPTIONIST,
+            UserRole.ADMIN,
+        )
+    ),
+):
+    appointment = await get_appointment_by_id(
+        db=db,
+        appointment_id=appointment_id,
+        user=current_user,
+    )
+
+    appointment = await check_in_patient(
+        db=db,
+        appointment=appointment,
+        current_user=current_user,
+    )
+
+    await db.flush()
+    await db.refresh(appointment)
+
+    return to_appointment_detail(appointment)
+
+
+@router.post(
+    "/{appointment_id}/move-to-waiting",
+    response_model=AppointmentDetailOut,
+)
+async def move_patient_to_waiting(
+    appointment_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(
+        require_roles(
+            UserRole.DOCTOR,
+            UserRole.RECEPTIONIST,
+            UserRole.ADMIN,
+        )
+    ),
+):
+    appointment = await get_appointment_by_id(
+        db=db,
+        appointment_id=appointment_id,
+        user=current_user,
+    )
+
+    appointment = await move_to_waiting(
+        db=db,
+        appointment=appointment,
+        current_user=current_user,
+    )
+
+    await db.flush()
+    await db.refresh(appointment)
+
+    return to_appointment_detail(appointment)
+
+
+
+@router.get(
+    "/{appointment_id}/queue-position",
+    response_model=QueuePositionOut,
+)
+async def get_queue_position(
+    appointment_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    appointment = await get_appointment_by_id(
+        db=db,
+        appointment_id=appointment_id,
+        user=user,
+    )
+
+    position = await get_patient_position(
+        db=db,
+        doctor_id=appointment.doctor_id,
+        appointment_id=appointment.id,
+    )
+
+    # estimated_wait = await estimate_wait_time(
+    #     db=db,
+    #     doctor_id=appointment.doctor_id,
+    #     appointment_id=appointment.id,
+    # )
+    estimated_wait = estimate_wait_from_position(position)
+
+    return QueuePositionOut(
+        appointment_id=appointment.id,
+        patient_name=appointment.patient.full_name or "",
+        position=position,
+        estimated_wait_minutes=estimated_wait,
+    )
+
+
 
 @router.post("/{appointment_id}/start-consultation")
 async def start_consultation_endpoint(
@@ -322,20 +559,52 @@ async def start_consultation_endpoint(
     db: AsyncSession = Depends(get_db),
     doctor: User = Depends(require_roles(UserRole.DOCTOR)),
 ):
-    appointment = await db.get(
-        Appointment,
-        appointment_id,
+    
+    appointment = await get_appointment_by_id(
+        db=db,
+        appointment_id=appointment_id,
+        user=doctor,
     )
 
-    if not appointment:
-        raise NotFoundError("Appointment not found")
+    doctor_profile = await get_doctor_profile(
+        db=db,
+        user_id=doctor.id,
+    )
 
     await start_consultation(
         db=db,
         appointment=appointment,
-        doctor_id=doctor.id,
+        doctor=doctor_profile,
     )
 
     return {
         "message": "consultation_started"
     }
+
+
+@router.post("/{appointment_id}/complete-consultation")
+async def complete_consultation_endpoint(
+    appointment_id: int,
+    db: AsyncSession = Depends(get_db),
+    doctor: User = Depends(require_roles(UserRole.DOCTOR)),
+):
+    appointment = await get_appointment_by_id(
+        db=db,
+        appointment_id=appointment_id,
+        user=doctor,
+    )
+
+    doctor_profile = await get_doctor_profile(
+        db=db,
+        user_id=doctor.id,
+    )
+
+    updated_appointment = await complete_appointment(
+        db=db,
+        appointment=appointment,
+        doctor=doctor_profile,
+    )
+
+    return to_appointment_detail(updated_appointment)
+
+

@@ -2,6 +2,7 @@ from sqlalchemy import (
     Integer,
     String,
     DateTime,
+    ForeignKey
 )
 
 from sqlalchemy.orm import mapped_column
@@ -18,6 +19,15 @@ class MedicineAssistantQuery(Base):
     id = mapped_column(
         Integer,
         primary_key=True,
+    )
+
+    clinic_id = mapped_column(
+        ForeignKey(
+            "clinics.id",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
+        index=True,
     )
 
     question = mapped_column(

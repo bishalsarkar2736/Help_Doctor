@@ -1,6 +1,6 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends,Query
 from sqlalchemy.ext.asyncio import AsyncSession
-
+from datetime import date
 from app.db.postgres import get_db
 from app.schemas.prescription import (
     PrescriptionCreate,
@@ -13,6 +13,7 @@ from app.models.prescription import Prescription,PrescriptionStatus
 from app.services.prescription_service import (
     create_prescription,
     issue_prescription,
+    get_active_draft_revision,
     get_prescription_by_id,
     get_patient_prescriptions,
     get_appointment_prescription,
@@ -40,7 +41,8 @@ from app.schemas.prescription import (
     PrescriptionUpdate,
     PrescriptionRevisionCreate,
     PrescriptionRevisionResponse,
-    PrescriptionRevisionHistoryResponse
+    PrescriptionRevisionHistoryResponse,
+    PrescriptionSearchOut
 )
 
 from app.try_except.audit import log_audit_event
@@ -78,6 +80,13 @@ from app.mappers.prescription_mapper import (
 from app.services.clinic_service import (
     get_clinic_by_id,
 )
+from app.services.prescription_search_service import (
+    search_prescriptions,
+)
+from app.services.tenant_resolver import (
+    resolve_clinic_id,
+)
+
 
 
 
@@ -168,21 +177,6 @@ async def issue_prescription_endpoint(
         raise NotFoundError(
             "Prescription not found"
         )
-    
-
-    if not prescription:
-        raise NotFoundError("Prescription not found")
-
-    result = await db.execute(
-        select(Doctor).where(
-            Doctor.user_id == doctor.id
-        )
-    )
-
-    doctor_profile = result.scalar_one_or_none()
-
-    if not doctor_profile:
-        raise ForbiddenError("Doctor profile not found")
 
     if prescription.doctor_id != doctor_profile.id:
         raise ForbiddenError("Not allowed")
@@ -196,6 +190,49 @@ async def issue_prescription_endpoint(
 
     return {
         "message": "prescription_issued"
+    }
+
+
+@router.post(
+    "/{prescription_id}/revisions/issue",
+)
+async def issue_draft_revision_endpoint(
+    prescription_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.DOCTOR)),
+):
+    result = await db.execute(
+        select(Doctor).where(Doctor.user_id == current_user.id)
+    )
+    doctor = result.scalar_one_or_none()
+
+    if not doctor:
+        raise ForbiddenError("Doctor profile not found")
+
+    prescription = await get_prescription_by_id(
+        db=db,
+        prescription_id=prescription_id,
+        user=current_user,
+    )
+
+    if prescription.doctor_id != doctor.id:
+        raise ForbiddenError("Not allowed")
+
+    revision = await get_active_draft_revision(
+        db=db,
+        prescription=prescription,
+    )
+
+    await issue_prescription(
+        db=db,
+        prescription=revision,
+        transition_appointment=False,
+    )
+
+    await db.commit()
+
+    return {
+        "message": "prescription_revision_issued"
     }
 
 
@@ -272,6 +309,53 @@ async def create_revision(
         raise
     
 
+
+@router.get(
+    "/search",
+    response_model=list[PrescriptionSearchOut],
+)
+async def search_prescriptions_endpoint(
+    clinic_id: int,
+    patient: str | None = Query(default=None),
+    doctor: str | None = Query(default=None),
+    medication: str | None = Query(default=None),
+    status: PrescriptionStatus | None = Query(default=None),
+    issue_date: date | None = Query(default=None),
+    limit: int = Query(
+        default=20,
+        ge=1,
+        le=100,
+    ),
+    offset: int = Query(
+        default=0,
+        ge=0,
+    ),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(
+        require_roles(
+            UserRole.ADMIN,
+            UserRole.DOCTOR,
+            UserRole.RECEPTIONIST,
+        )
+    ),
+):
+    resolved_clinic_id = await resolve_clinic_id(
+        db=db,
+        user=current_user,
+        clinic_id=clinic_id,
+    )
+
+    return await search_prescriptions(
+        db=db,
+        clinic_id=resolved_clinic_id,
+        patient=patient,
+        doctor=doctor,
+        medication=medication,
+        status=status,
+        issue_date=issue_date,
+        limit=limit,
+        offset=offset,
+    )
     
 
 @router.get(
@@ -311,6 +395,46 @@ async def get_revision_history(
 
 
 
+# NOTE: static "/me" MUST be declared before the dynamic "/{prescription_id}"
+# route, otherwise "me" is matched as a prescription id (→ 422).
+@router.get(
+    "/me",
+    response_model=list[PrescriptionResponse],
+)
+async def my_prescriptions_endpoint(
+    db: AsyncSession = Depends(get_db),
+    patient: User = Depends(
+        require_roles(UserRole.PATIENT)
+    ),
+):
+
+    prescriptions = await get_patient_prescriptions(
+        db=db,
+        patient_id=patient.id,
+    )
+
+    all_medicine_names = {
+        item.medicine_name
+        for prescription in prescriptions
+        for item in prescription.items
+    }
+
+    existing_medicines = (
+        await get_existing_medicine_names(
+            db,
+            list(all_medicine_names),
+        )
+    )
+
+    return [
+        to_prescription_response(
+            prescription,
+            existing_medicines,
+        )
+        for prescription in prescriptions
+    ]
+
+
 @router.get(
     "/{prescription_id}",
     response_model=PrescriptionResponse,
@@ -330,16 +454,6 @@ async def get_prescription_endpoint(
         prescription_id=prescription_id,
         user=user,
     )
-
-    # RBAC ownership checks
-
-    # if user.role == UserRole.DOCTOR:
-
-    #     if not user.doctor:
-    #         raise ForbiddenError("Doctor profile not found")
-
-    #     if prescription.doctor_id != user.doctor.id:
-    #         raise ForbiddenError("Not allowed")
 
     if user.role == UserRole.DOCTOR:
 
@@ -381,44 +495,6 @@ async def get_prescription_endpoint(
         prescription,
         existing_medicines,
     )
-
-
-@router.get(
-    "/me",
-    response_model=list[PrescriptionResponse],
-)
-async def my_prescriptions_endpoint(
-    db: AsyncSession = Depends(get_db),
-    patient: User = Depends(
-        require_roles(UserRole.PATIENT)
-    ),
-):
-
-    prescriptions = await get_patient_prescriptions(
-        db=db,
-        patient_id=patient.id,
-    )
-
-    all_medicine_names = {
-        item.medicine_name
-        for prescription in prescriptions
-        for item in prescription.items
-    }
-
-    existing_medicines = (
-        await get_existing_medicine_names(
-            db,
-            list(all_medicine_names),
-        )
-    )
-
-    return [
-        to_prescription_response(
-            prescription,
-            existing_medicines,
-        )
-        for prescription in prescriptions
-    ]
 
 
 @router.get(

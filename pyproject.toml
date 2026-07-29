@@ -1,0 +1,24 @@
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+extend-exclude = ["venv", "alembic/versions", "app/try_except/logging.py"]
+
+[tool.ruff.lint]
+# Start with a high-signal, low-noise ruleset. Import sorting (I) and the
+# full style catalogue (E) are intentionally left out of the enforced set
+# for now - the codebase predates the linter and a mass reformat would be a
+# huge diff. Run `ruff check --fix && ruff format` in a dedicated cleanup
+# commit, then widen this `select` list.
+select = ["F"]
+ignore = [
+    "F401",  # unused imports - many are intentional re-exports; clean up separately
+    "F403",  # `from x import *` - used by app/models and alembic
+    "F405",  # names possibly from star imports
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]
+"tests/*" = ["F811", "F841"]
+
+[tool.ruff.format]
+quote-style = "double"

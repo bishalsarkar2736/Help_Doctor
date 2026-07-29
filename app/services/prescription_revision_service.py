@@ -1,10 +1,7 @@
 from datetime import datetime
-
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.core.time import UTC
-
 from app.models.doctor import Doctor
 from app.models.prescription import (
     Prescription,
@@ -12,7 +9,6 @@ from app.models.prescription import (
     PrescriptionStatus,
 )
 from app.models.user import UserRole
-
 from app.schemas.event import (
     PrescriptionRevisedEvent,
 )
@@ -46,6 +42,8 @@ from app.try_except.exceptions import (
     NotFoundError,
 )
 
+from app.schemas.event_metadata import EventActor
+
 
 async def create_prescription_revision(
     *,
@@ -61,9 +59,9 @@ async def create_prescription_revision(
 
     ISSUED (latest)
         ↓
-    SUPERSEDED
+    LOCKED
         ↓
-    NEW ISSUED REVISION
+    NEW DRAFT REVISION
     """
 
     clinic_id = prescription.clinic_id
@@ -145,7 +143,7 @@ async def create_prescription_revision(
     # ====================================================
 
     prescription.status = (
-        PrescriptionStatus.SUPERSEDED
+        PrescriptionStatus.LOCKED
     )
 
     prescription.is_latest_revision = False
@@ -194,8 +192,8 @@ async def create_prescription_revision(
         patient_id=prescription.patient_id,
         clinic_id=prescription.clinic_id,
         notes=data.notes,
-        status=PrescriptionStatus.ISSUED,
-        issued_at=datetime.now(UTC),
+        status=PrescriptionStatus.DRAFT,
+        issued_at=None,
         parent_prescription_id=root_id,
         revision_number=next_revision_number,
         is_latest_revision=True,
@@ -280,10 +278,10 @@ async def create_prescription_revision(
         aggregate_id=new_revision.id,
         correlation_id=None,
         causation_id=None,
-        actor={
-            "id": doctor.user_id,
-            "role": UserRole.DOCTOR.name,
-        },
+        actor=EventActor(
+            id=doctor.user_id,
+            role=UserRole.DOCTOR.name,
+        ),
         old_prescription_id=prescription.id,
         new_prescription_id=new_revision.id,
         appointment_id=new_revision.appointment_id,

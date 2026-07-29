@@ -10,7 +10,10 @@ from app.services.appointment_no_show_service import mark_no_show_appointments
 
 
 @pytest.mark.asyncio
-async def test_mark_no_show_appointments(db):
+async def test_mark_no_show_appointments(
+    db,
+    default_clinic,
+):
     # Create patient
     patient = User(
         email="patient@test.com",
@@ -32,6 +35,7 @@ async def test_mark_no_show_appointments(db):
 
     doctor = Doctor(
         user_id=doctor_user.id,
+        clinic_id=default_clinic.id,
         specialization="General",
         experience_years=5,
         bio="Test doctor",
@@ -44,6 +48,7 @@ async def test_mark_no_show_appointments(db):
     appointment = Appointment(
         doctor_id=doctor.id,
         patient_id=patient.id,
+        clinic_id=default_clinic.id,
         scheduled_at=datetime.now(timezone.utc) - timedelta(hours=2),
         status="CONFIRMED",
     )

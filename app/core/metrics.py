@@ -1,4 +1,4 @@
-from prometheus_client import Counter, Histogram,Counter, Histogram, Gauge
+from prometheus_client import Counter, Histogram, Gauge
 
 
 # ---------------- API Metrics ----------------
@@ -30,6 +30,45 @@ appointment_confirmed_total = Counter(
     "appointment_confirmed_total",
     "Total appointments confirmed",
     ["actor"],
+)
+
+prescriptions_issued_total = Counter(
+    "prescriptions_issued_total",
+    "Total prescriptions issued (draft -> issued)",
+)
+
+# =========================
+# PAYMENT METRICS
+# =========================
+
+payments_success_total = Counter(
+    "payments_success_total",
+    "Total payments completed successfully",
+)
+
+payments_failed_total = Counter(
+    "payments_failed_total",
+    "Total payments that failed",
+)
+
+# =========================
+# AUTH METRICS
+# =========================
+
+login_attempts_total = Counter(
+    "login_attempts_total",
+    "Total login attempts",
+    ["result"],  # "success" | "failure"
+)
+
+# =========================
+# LIVE QUEUE METRICS
+# =========================
+
+doctor_queue_length = Gauge(
+    "doctor_queue_length",
+    "Number of patients waiting in a doctor's live queue",
+    ["doctor_id"],
 )
 
 # =========================

@@ -9,6 +9,10 @@ class AppointmentCreate(BaseModel):
     doctor_id: int
     scheduled_at: datetime   # ✅ THIS FIXES YOUR ERROR
     notes: str | None = None
+
+    # Book on behalf of a patient. Honored only when the caller is a
+    # RECEPTIONIST or ADMIN; ignored for patients (they book for themselves).
+    patient_id: int | None = None
     
 
 class AppointmentOut(BaseModel):
@@ -79,5 +83,22 @@ class AppointmentDetailOut(BaseModel):
     doctor: DoctorPublic
     patient: UserPublic
 
-    # class Config:
-    #     from_attributes = Trues
+
+
+class AppointmentSearchOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    
+    id: int
+    scheduled_at: datetime
+    status: AppointmentStatus
+
+    patient_id: int
+    patient_name: str
+    patient_email: str
+
+    doctor_id: int
+    doctor_name: str
+    doctor_email: str
+
+    clinic_id: int
+
