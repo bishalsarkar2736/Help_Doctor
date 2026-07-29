@@ -9,7 +9,7 @@ class RefreshToken(Base):
     id = Column(Integer, primary_key=True, index=True)
     token = Column(String,unique=True,index=True,nullable=False)
 
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     user = relationship("User", back_populates="refresh_tokens")
 
     revoked = Column(Boolean, default=False)

@@ -55,16 +55,14 @@ class Doctor(Base):
     # --- Approval / rejection audit ---
     approved_by: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"),
-        nullable=True,
-    )
+        nullable=True, index=True)
     approved_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
     )
     rejected_by: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"),
-        nullable=True,
-    )
+        nullable=True, index=True)
     rejected_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,

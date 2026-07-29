@@ -165,8 +165,7 @@ class PrescriptionItem(Base):
 
     prescription_id: Mapped[int] = mapped_column(
         ForeignKey("prescriptions.id", ondelete="CASCADE"),
-        nullable=False,
-    )
+        nullable=False, index=True)
 
     medicine_name: Mapped[str] = mapped_column(String(255), nullable=False)
 

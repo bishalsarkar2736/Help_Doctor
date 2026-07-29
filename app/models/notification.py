@@ -67,8 +67,7 @@ class Notification(Base):
 
     related_appointment_id: Mapped[int | None] = mapped_column(
         ForeignKey("appointments.id", ondelete="SET NULL"),
-        nullable=True,
-    )
+        nullable=True, index=True)
 
     created_at: Mapped[DateTime] = mapped_column(
         DateTime(timezone=True),

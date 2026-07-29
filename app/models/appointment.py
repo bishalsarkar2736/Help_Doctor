@@ -86,8 +86,7 @@ class Appointment(Base):
     # 🔹 AUDIT FIELDS
     cancelled_by: Mapped[int | None] = mapped_column(
         ForeignKey("users.id"),
-        nullable=True
-    )
+        nullable=True, index=True)
     cancel_reason: Mapped[str | None] = mapped_column(Text)
     cancelled_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True))
 

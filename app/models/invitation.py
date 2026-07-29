@@ -79,13 +79,11 @@ class Invitation(Base):
 
     invited_by_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"),
-        nullable=True,
-    )
+        nullable=True, index=True)
 
     accepted_user_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"),
-        nullable=True,
-    )
+        nullable=True, index=True)
 
     expires_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

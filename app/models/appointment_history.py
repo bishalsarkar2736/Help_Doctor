@@ -14,8 +14,7 @@ class AppointmentStatusHistory(Base):
 
     appointment_id: Mapped[int] = mapped_column(
         ForeignKey("appointments.id", ondelete="CASCADE"),
-        nullable=False,
-    )
+        nullable=False, index=True)
 
     old_status: Mapped[AppointmentStatus] = mapped_column(
         Enum(AppointmentStatus),
@@ -30,6 +29,7 @@ class AppointmentStatusHistory(Base):
     changed_by: Mapped[int | None] = mapped_column(
         ForeignKey("users.id"),
         nullable=True,  # NULL = system action
+        index=True,
     )
 
     changed_at: Mapped[datetime] = mapped_column(
