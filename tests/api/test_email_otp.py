@@ -15,6 +15,7 @@ from app.core.limiter import limiter
 from app.models.user import User
 from app.models.email_verification_token import EmailVerificationToken
 from app.security.tokens import generate_otp, hash_token
+from app.security.jwt import verify_password
 from app.services.auth_service import MAX_OTP_ATTEMPTS
 
 
@@ -154,7 +155,13 @@ async def test_otp_is_not_stored_in_plaintext(client, db):
         )
     )
     assert row.token_hash != code
-    assert row.token_hash == hash_token(code)
+
+    # Stored under a KDF, NOT a bare digest. A SHA-256 of a 6-digit code has
+    # only ~20 bits behind it and is reversible in under a second, so anyone
+    # who can read this table would recover every outstanding code.
+    assert row.token_hash != hash_token(code)
+    assert row.token_hash.startswith("$argon2")
+    assert verify_password(code, row.token_hash)
 
 
 @pytest.mark.asyncio

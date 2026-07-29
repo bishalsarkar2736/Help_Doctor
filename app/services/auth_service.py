@@ -20,6 +20,8 @@ from app.try_except.exceptions import BadRequestError,UnauthorizedError,Forbidde
 from app.try_except.audit import log_audit_event
 from app.models.email_verification_token import (
     EmailVerificationToken,
+    TOKEN_TYPE_LINK,
+    TOKEN_TYPE_OTP,
 )
 from app.models.password_reset_token import PasswordResetToken
 from app.security.tokens import (
@@ -627,7 +629,12 @@ async def _issue_verification_otp(
     db.add(
         EmailVerificationToken(
             user_id=user.id,
-            token_hash=hash_token(code),
+            token_type=TOKEN_TYPE_OTP,
+            # Argon2, not SHA-256: a 6-digit code has only ~20 bits of
+            # entropy, so a bare digest of it is trivially reversible by
+            # anyone who can read this table. Lookup is by user_id, so a
+            # non-deterministic hash costs us nothing here.
+            token_hash=hash_password(code),
             expires_at=datetime.now(UTC)
             + timedelta(minutes=OTP_EXPIRY_MINUTES),
         )
@@ -681,6 +688,7 @@ async def verify_email_otp(
         .where(
             EmailVerificationToken.user_id == user.id,
             EmailVerificationToken.used.is_(False),
+            EmailVerificationToken.token_type == TOKEN_TYPE_OTP,
         )
         .order_by(EmailVerificationToken.created_at.desc())
     )
@@ -696,7 +704,7 @@ async def verify_email_otp(
             "Too many incorrect attempts. Please request a new code."
         )
 
-    if not verify_token_hash(code, verification.token_hash):
+    if not verify_password(code, verification.token_hash):
         verification.attempts += 1
 
         await log_audit_event(
@@ -753,6 +761,7 @@ async def _issue_verification_email(
 
     verification = EmailVerificationToken(
         user_id=user.id,
+        token_type=TOKEN_TYPE_LINK,
         token_hash=hash_token(raw_token),
         expires_at=datetime.now(UTC)
         + timedelta(hours=24),
@@ -823,10 +832,14 @@ async def verify_email(
 
     token_hash = hash_token(token)
 
+    # LINK tokens only. A global hash lookup is acceptable for a 256-bit
+    # token_urlsafe(32); it is NOT acceptable for a 6-digit OTP, which lives in
+    # this same table. Without this filter the endpoint silently became an
+    # unthrottled oracle for OTPs, bypassing their attempt cap and rate limit.
     result = await db.execute(
         select(EmailVerificationToken).where(
-            EmailVerificationToken.token_hash
-            == token_hash,
+            EmailVerificationToken.token_hash == token_hash,
+            EmailVerificationToken.token_type == TOKEN_TYPE_LINK,
         )
     )
 

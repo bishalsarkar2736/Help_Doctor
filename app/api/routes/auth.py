@@ -179,13 +179,18 @@ async def send_verification_endpoint(
 
 
 @router.post("/verify-email")
+# The token_type filter in verify_email() is what actually stops this endpoint
+# being used as an OTP oracle; this limit is defence in depth, and also caps
+# blind guessing against the link tokens themselves.
+@limiter.limit("10/minute")
 async def verify_email_endpoint(
-    request: VerifyEmailRequest,
+    request: Request,
+    payload: VerifyEmailRequest,
     db: AsyncSession = Depends(get_db),
 ):
     return await verify_email_service(
         db=db,
-        token=request.token,
+        token=payload.token,
     )
 
 
