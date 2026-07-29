@@ -31,6 +31,14 @@ def real_jpeg() -> bytes:
     return buf.getvalue()
 
 
+def real_jpeg_large() -> bytes:
+    """Big enough that a truncation actually removes scan data."""
+
+    buf = io.BytesIO()
+    Image.new("RGB", (800, 600), (200, 60, 40)).save(buf, format="JPEG")
+    return buf.getvalue()
+
+
 # The exact shape of the file that broke PDF generation.
 HEADER_ONLY_PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 400
 
@@ -56,6 +64,36 @@ def test_truncated_png_is_rejected():
     full = real_png(size=(300, 300))
     with pytest.raises(ValueError):
         ensure_image(full[: len(full) // 2], IMAGE_TYPES)
+
+
+@pytest.mark.parametrize("keep", [0.9, 0.6, 0.3])
+def test_truncated_jpeg_is_rejected(keep):
+    """The case that needs the second decode pass.
+
+    JPEG has no per-chunk checksums, so a truncated one sails through
+    Image.verify(); only a full load() notices the scan data is missing.
+    Signatures accept JPEG, so this is a real upload path, not a hypothetical.
+    """
+
+    full = real_jpeg_large()
+    with pytest.raises(ValueError, match="not a readable image"):
+        ensure_image(full[: int(len(full) * keep)], IMAGE_TYPES)
+
+
+def test_verify_alone_would_miss_a_truncated_jpeg():
+    """Pins *why* ensure_decodable_image does two passes.
+
+    If Pillow ever makes verify() catch this, the second pass becomes
+    redundant and this test should fail loudly to say so.
+    """
+
+    truncated = real_jpeg_large()[:3000]
+
+    img = Image.open(io.BytesIO(truncated))
+    img.verify()  # passes — no exception
+
+    with pytest.raises(OSError):
+        Image.open(io.BytesIO(truncated)).load()
 
 
 def test_non_image_bytes_still_rejected_by_magic():

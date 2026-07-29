@@ -53,9 +53,17 @@ def ensure_decodable_image(content: bytes) -> None:
     """Prove the pixels actually parse, not just that the header looks right.
 
     Raises ValueError if the image is corrupt, truncated, or a decompression
-    bomb. Pillow's ``verify()`` catches structural corruption but consumes the
-    object and stops short of decoding, so the image is reopened and fully
-    loaded — that second pass is what catches truncation.
+    bomb.
+
+    Both passes are needed, and which one fires depends on the format:
+
+    * PNG stores per-chunk CRCs, so ``verify()`` catches truncation on its own.
+    * JPEG has no such checksums — a truncated JPEG passes ``verify()`` cleanly
+      and only fails when the scan data is actually decoded. ``verify()`` also
+      consumes the object, hence the reopen.
+
+    Signatures accept JPEG, so dropping the ``load()`` pass would let a
+    truncated JPEG through to the PDF renderer.
     """
 
     try:
