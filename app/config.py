@@ -26,6 +26,16 @@ class Settings(BaseSettings):
     POSTGRES_USER: str
     POSTGRES_PASSWORD: str
 
+    # Connection pool, applied PER PROCESS. The ceiling is
+    #   (api procs + celery children + beat) x (POOL_SIZE + MAX_OVERFLOW)
+    # and it must stay under the server's max_connections, or Postgres starts
+    # refusing connections outright — an outage, not degradation.
+    #
+    # Defaults budget for max_connections=100 with celery at --concurrency=4:
+    #   api 1 x 15 + celery 4 x 15 + beat 1 x 15 = 90, under the 97 usable.
+    # Raise max_connections (or add pgbouncer) before scaling either number.
+    DB_POOL_SIZE: int = Field(default=5, ge=1, le=100)
+    DB_MAX_OVERFLOW: int = Field(default=10, ge=0, le=100)
 
     REDIS_URL: str = "redis://localhost:6379/0"
 

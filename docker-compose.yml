@@ -76,7 +76,12 @@ services:
   celery_worker:
     build: .
     container_name: helpdoctor_celery_worker
-    command: celery -A app.core.celery worker --loglevel=info
+    # --concurrency is pinned deliberately. Celery defaults to one prefork
+    # child per CPU (16 on this host), and each child holds its own DB pool,
+    # so the default silently multiplies the connection ceiling by the core
+    # count of whatever machine it lands on. The work here is I/O-bound, so
+    # more children buy little anyway.
+    command: celery -A app.core.celery worker --loglevel=info --concurrency=4
     env_file:
       - .env.docker
     # Override the image's HTTP healthcheck — this service runs no web server.
