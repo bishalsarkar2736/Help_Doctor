@@ -36,6 +36,16 @@ celery_app.conf.update(
     # task limits
     task_time_limit=30,
     task_soft_time_limit=20,
+
+    # Pinned here rather than as a --concurrency CLI flag, so it holds however
+    # the worker is launched — compose, systemd, a bare shell, or the command
+    # printed in README/OPERATIONS/DEPLOYMENT.
+    #
+    # Celery otherwise forks one child per CPU, and each child opens its own DB
+    # pool. On a 16-core host that is 16 x (DB_POOL_SIZE + DB_MAX_OVERFLOW)
+    # connections from this service alone, which overruns Postgres. The work is
+    # I/O-bound, so extra children buy little. See DB_POOL_SIZE in config.py.
+    worker_concurrency=settings.CELERY_WORKER_CONCURRENCY,
 )
 
 # periodic scheduler

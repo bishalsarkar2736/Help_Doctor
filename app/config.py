@@ -37,6 +37,11 @@ class Settings(BaseSettings):
     DB_POOL_SIZE: int = Field(default=5, ge=1, le=100)
     DB_MAX_OVERFLOW: int = Field(default=10, ge=0, le=100)
 
+    # Celery prefork children. Each one holds its own DB pool, so this is a
+    # direct multiplier on the connection ceiling above — raise the two
+    # together, never one alone.
+    CELERY_WORKER_CONCURRENCY: int = Field(default=4, ge=1, le=64)
+
     REDIS_URL: str = "redis://localhost:6379/0"
 
     # Redis
