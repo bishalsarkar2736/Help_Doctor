@@ -39,6 +39,11 @@ celery -A app.core.celery inspect active      # running tasks
 celery -A app.core.celery inspect scheduled   # queued/eta tasks
 ```
 
+> **Concurrency is set in config**, not on the command line —
+> `CELERY_WORKER_CONCURRENCY` (default 4). Do not add `--concurrency`:
+> it overrides the config and can exhaust the DB connection budget.
+> See [CONFIGURATION.md](CONFIGURATION.md#celery).
+
 If push notifications or reminders "stop working", first check that **both** the
 worker and beat processes are alive and connected to Redis.
 

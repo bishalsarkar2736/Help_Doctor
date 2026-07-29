@@ -75,6 +75,11 @@ celery -A app.core.celery worker --loglevel=info
 celery -A app.core.celery beat   --loglevel=info
 ```
 
+> **Concurrency is set in config**, not on the command line —
+> `CELERY_WORKER_CONCURRENCY` (default 4). Do not add `--concurrency`:
+> it overrides the config and can exhaust the DB connection budget.
+> See [CONFIGURATION.md](docs/CONFIGURATION.md#celery).
+
 ---
 
 ## Quick start (Docker Compose)
@@ -131,5 +136,5 @@ tests/                 # pytest suite
 
 This backend has had a production-hardening pass. What is done and what still
 depends on your hosting decisions is tracked in
-[docs/DEPLOYMENT.md § Production checklist](docs/DEPLOYMENT.md#production-checklist)
+[docs/DEPLOYMENT.md § Production checklist](docs/DEPLOYMENT.md#5-production-checklist)
 and [docs/SECURITY.md](docs/SECURITY.md).

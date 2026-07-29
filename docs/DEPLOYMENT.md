@@ -13,7 +13,7 @@ The application is **not a single process**. A complete deployment runs:
 | Process        | Command                                        | Purpose |
 |----------------|------------------------------------------------|---------|
 | API            | `uvicorn app.main:app --host 0.0.0.0 --port 8000` | HTTP + WebSocket |
-| Celery worker  | `celery -A app.core.celery worker`             | Executes background tasks (push, slot gen, reconciliation, reminders) |
+| Celery worker  | `celery -A app.core.celery worker`             | Background tasks (push, slot gen, reconciliation, reminders). Concurrency comes from `CELERY_WORKER_CONCURRENCY`, **not** a CLI flag. |
 | Celery beat    | `celery -A app.core.celery beat`               | Schedules the periodic tasks |
 | Outbox worker  | `python -m app.workers.run_outbox_worker`      | Drains the transactional outbox → downstream effects |
 
@@ -121,7 +121,7 @@ docker build -t helpdoctor-web:<version> \
   version serves traffic.
 - Set up backups — see [OPERATIONS.md § Backups](OPERATIONS.md#backups).
 
-### 4.4 TLS / reverse proxy  ⚠️ not yet included
+### 4.4 TLS and reverse proxy (not yet included)
 
 The app serves plain HTTP on port 8000. **You must terminate TLS in front of
 it.** Two common paths:
@@ -143,8 +143,9 @@ that origin to the API's `ALLOWED_ORIGINS`.
 
 ### 4.5 Horizontal scaling caveats
 
-- **API** scales horizontally freely. Run **one** Celery beat regardless of API
-  replica count.
+- **API** scales horizontally freely *up to the*
+  [connection budget](CONFIGURATION.md#connection-budget) — each replica adds
+  a full DB pool. Run **one** Celery beat regardless of API replica count.
 - **Local-disk uploads:** clinic logos and doctor signatures are written to
   local paths (`uploads/`, `media/`). With multiple API replicas behind a load
   balancer, a file written by one replica isn't visible to the others. Before
@@ -165,7 +166,7 @@ that origin to the API's `ALLOWED_ORIGINS`.
 - [x] CORS driven by `ALLOWED_ORIGINS`; security headers middleware
 - [x] Secrets removed from source; `DEBUG`-in-prod guard active
 - [x] Rate limiting on auth, payment webhook, and AI endpoints
-- [x] File upload validation (type + size)
+- [x] File upload validation (size, magic bytes, and full image decode)
 - [x] CI: automated tests + lint on every push/PR
 - [x] Automated DB backup script + scheduled backup service
 
@@ -176,10 +177,18 @@ that origin to the API's `ALLOWED_ORIGINS`.
 - [ ] Rotate all dev secrets before go-live (JWT, DB, VAPID, mail)
 - [ ] Move uploads to shared storage before scaling the API past one replica (§4.5)
 - [ ] Verify a backup **restore** actually works (OPERATIONS.md)
+- [ ] Check the [connection budget](CONFIGURATION.md#connection-budget) against
+      your Postgres `max_connections` before adding API replicas or raising
+      `CELERY_WORKER_CONCURRENCY` — exhausting it refuses connections outright.
 
 **Deliberate product/compliance decisions**
 
-- [ ] Patient/prescription records currently hard-delete via `ON DELETE CASCADE`
-      — decide on soft-delete / retention for medical records.
+- [x] Medical and financial records survive account deletion: users are
+      soft-deleted and the FKs are `RESTRICT`, so the database refuses a hard
+      delete. See [SECURITY.md](SECURITY.md#compliance-considerations-decide-deliberately).
+- [ ] No **retention window** — nothing is ever purged. Set one if your
+      jurisdiction requires it.
+- [ ] No **anonymisation path** for GDPR right-to-erasure (scrub identity,
+      keep clinical rows). Needs a jurisdiction decision first.
 - [ ] PHI fields are stored relying on DB/disk-level protection (no app-level
       field encryption) — confirm this meets your regulatory bar.

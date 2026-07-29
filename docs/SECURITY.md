@@ -20,7 +20,10 @@ exist, how they're configured, and what remains the operator's responsibility.
 
 ## Authorization (RBAC)
 
-- Roles: `ADMIN`, `DOCTOR`, `RECEPTIONIST`, `PATIENT`.
+- Roles: `SUPER_ADMIN`, `ADMIN`, `DOCTOR`, `RECEPTIONIST`, `PATIENT`.
+  `SUPER_ADMIN` is **platform-plane only** (clinics as entities, billing,
+  platform analytics) — deliberately *not* a superset of `ADMIN`, so the
+  platform operator has no standing access to any clinic's patient data.
 - Enforced with `require_roles(...)` dependencies
   ([`app/security/rbac.py`](../app/security/rbac.py)) applied on admin and
   clinical routes.
@@ -35,7 +38,7 @@ exist, how they're configured, and what remains the operator's responsibility.
   `Strict-Transport-Security`, `X-Frame-Options: DENY`,
   `X-Content-Type-Options: nosniff`, `Referrer-Policy`, `Permissions-Policy`.
 - **TLS is not terminated by the app** — you must front it with HTTPS
-  (see [DEPLOYMENT.md §4.4](DEPLOYMENT.md#44-tls--reverse-proxy--not-yet-included)).
+  (see [DEPLOYMENT.md §4.4](DEPLOYMENT.md#44-tls-and-reverse-proxy-not-yet-included)).
   The HSTS header only takes effect once the app is actually served over HTTPS.
 
 ## CORS
@@ -82,10 +85,23 @@ as traffic patterns emerge.
 
 - All queries go through SQLAlchemy ORM / parameterized statements — no raw SQL
   string interpolation.
-- **File uploads** (clinic logos, doctor signatures) validate content-type
-  against an allowlist and enforce a size cap
-  ([`app/services/clinic_logo_service.py`](../app/services/clinic_logo_service.py),
-  [`app/services/doctor_service.py`](../app/services/doctor_service.py)).
+- **File uploads** (clinic logos, doctor signatures, doctor credential
+  documents) are validated in three stages by
+  [`app/security/file_validation.py`](../app/security/file_validation.py):
+
+  1. **Size cap**, before anything else.
+  2. **Magic bytes**, not the `Content-Type` header — that header is supplied
+     by the client and is therefore attacker-controlled. A `.php` renamed to
+     `.png` is rejected here.
+  3. **Full decode** for images (Pillow `verify()` then `load()`). Correct
+     magic bytes do not mean a usable image: a valid PNG header followed by
+     garbage, or a truncated JPEG, passes stage 2 and then fails much later
+     inside PDF rendering. Rejecting at upload keeps the error next to the
+     action that caused it. This also catches decompression bombs.
+
+  PDFs skip stage 3 — Pillow cannot open them. Prescription rendering
+  additionally tolerates an unreadable signature or logo already on disk
+  rather than failing the whole document.
 
 ## Error handling & information disclosure
 
@@ -118,9 +134,22 @@ as traffic patterns emerge.
   plaintext columns, relying on database/disk-level encryption. If your
   regulatory context (e.g. HIPAA-equivalent) requires application-level field
   encryption, that must be added.
-- **Data retention:** patient/prescription records currently hard-delete via
-  `ON DELETE CASCADE` from the user. Medical-record retention usually calls for
-  soft-delete instead — a product/legal decision.
+- **Data retention:** users are **soft-deleted** (`users.deleted_at`), and the
+  foreign keys from appointments, prescriptions, payments and ratings are
+  `RESTRICT` — the database refuses a hard delete rather than cascading it
+  away. Deleting revokes sessions and blocks login, but the clinical and
+  financial record survives. Ephemeral rows (tokens, notifications, push
+  subscriptions) still cascade, as they should.
+
+  Two related decisions remain open:
+
+  - **Retention window.** Nothing is ever purged. If your jurisdiction sets a
+    maximum retention period, that expiry and its purge job still need writing.
+  - **Right to erasure (GDPR Art. 17).** Erasure conflicts with medical
+    retention, which usually wins under the legal-obligation exemption. The
+    usual resolution is to anonymise the identity (name, email, phone) while
+    keeping the clinical rows — not implemented, and it needs a jurisdiction
+    call first.
 
 ---
 

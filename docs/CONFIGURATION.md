@@ -31,10 +31,50 @@ Copy [`.env.example`](../.env.example) to `.env` as a starting point.
 | `POSTGRES_DB`       | **yes**  | —       | |
 | `POSTGRES_USER`     | **yes**  | —       | |
 | `POSTGRES_PASSWORD` | **yes**  | —       | URL-encoded automatically for the connection string. |
+| `DB_POOL_SIZE`      | no       | `5`     | Pooled connections **per process**. See the budget below. |
+| `DB_MAX_OVERFLOW`   | no       | `10`    | Extra connections above the pool under burst, **per process**. |
 
 The async connection URL is built from these (`database_url` property). The
-engine uses `pool_size=10, max_overflow=20, pool_pre_ping=True,
-pool_recycle=1800` — see [`app/db/postgres.py`](../app/db/postgres.py).
+engine also sets `pool_pre_ping=True, pool_recycle=1800` — see
+[`app/db/postgres.py`](../app/db/postgres.py).
+
+### Connection budget
+
+The pool is **per process**, and every process that touches the database opens
+its own — including each Celery prefork child. The ceiling is therefore:
+
+```
+(api processes + celery children + beat) x (DB_POOL_SIZE + DB_MAX_OVERFLOW)
+```
+
+That total must stay below the server's `max_connections`. Postgres does not
+degrade when it runs out — it refuses new connections outright, which takes the
+API down with it.
+
+With the defaults, against a stock `max_connections = 100`:
+
+| Process | Count | Per process | Total |
+|---------|-------|-------------|-------|
+| api     | 1     | 15          | 15    |
+| celery  | 4     | 15          | 60    |
+| beat    | 1     | 15          | 15    |
+| **Ceiling** | | | **90** (of ~97 usable, after superuser reserve) |
+
+Consequences worth knowing before you tune anything:
+
+- **`CELERY_WORKER_CONCURRENCY` is a multiplier on this budget.** Raising it
+  without raising `max_connections` is the easiest way to exhaust the server.
+- **Running more than one API replica multiplies it too.** Two replicas with
+  the defaults is +15.
+- Past roughly one replica and a handful of workers, put **pgbouncer** in front
+  rather than continuing to grow `max_connections`.
+
+Check what a running system actually holds:
+
+```sql
+SELECT state, count(*) FROM pg_stat_activity
+WHERE datname = 'helpdoctor_db' GROUP BY state;
+```
 
 ## Redis
 
@@ -43,6 +83,22 @@ pool_recycle=1800` — see [`app/db/postgres.py`](../app/db/postgres.py).
 | `REDIS_URL`  | no       | `redis://localhost:6379/0` | Used as the Celery broker/backend, cache, and pub/sub. |
 | `REDIS_HOST` | no       | `localhost`                | |
 | `REDIS_PORT` | no       | `6379`                     | |
+
+## Celery
+
+| Variable                     | Required | Default | Notes |
+|------------------------------|----------|---------|-------|
+| `CELERY_WORKER_CONCURRENCY`  | no       | `4`     | Prefork children per worker. **Multiplies the [connection budget](#connection-budget).** |
+
+Set in [`app/core/celery.py`](../app/core/celery.py) as `worker_concurrency`,
+deliberately **not** as a `--concurrency` CLI flag, so the bound holds however
+the worker is started. Do not add the flag back: it overrides the config and
+reintroduces two places to keep in sync.
+
+Left unset, Celery forks **one child per CPU**. On a 16-core host that is 16
+children each holding a full DB pool — far past what Postgres will accept. The
+workload here is I/O-bound (email, push, reconciliation), so extra children buy
+little throughput while multiplying connections.
 
 ## Auth / JWT
 
