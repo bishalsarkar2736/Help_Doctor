@@ -7,6 +7,7 @@ from app.models.user import User, UserRole
 from app.models.appointment import Appointment
 
 from app.services.appointment_service import admin_force_cancel_appointment
+from app.services.user_deletion_service import soft_delete_user
 
 from app.security.rbac import require_roles
 from app.schemas.admin_user import AdminUserItem
@@ -56,7 +57,9 @@ async def list_users(
 
     query = (
         select(User)
-        .where(User.clinic_id == admin.clinic_id)
+        # Deleted accounts are retained for their medical/financial history,
+        # but they are not staff any more — keep them out of the roster.
+        .where(User.clinic_id == admin.clinic_id, User.deleted_at.is_(None))
         .order_by(User.id.desc())
     )
 
@@ -113,6 +116,29 @@ async def change_user_role(
 
 
 # 🔹 Activate / Deactivate
+@router.delete("/users/{user_id}")
+async def delete_user(
+    user_id: int,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_roles(UserRole.ADMIN)),
+):
+    """Soft-delete a user.
+
+    The account is tombstoned and its sessions revoked, but every appointment,
+    prescription and payment is retained — the FKs are RESTRICT, so a hard
+    delete is refused by the database.
+    """
+
+    user = await soft_delete_user(db=db, actor=admin, user_id=user_id)
+    await db.commit()
+
+    return {
+        "message": "User deleted",
+        "user_id": user.id,
+        "deleted_at": user.deleted_at,
+    }
+
+
 @router.post("/users/{user_id}/toggle-active")
 async def toggle_user_active(
     user_id: int,
@@ -127,6 +153,13 @@ async def toggle_user_active(
     # A clinic admin may only manage users within their own clinic.
     if not admin.clinic_id or user.clinic_id != admin.clinic_id:
         raise HTTPException(status_code=403, detail="Not your clinic's user")
+
+    # Deletion is permanent. Without this, toggling would flip is_active back
+    # to True on a soft-deleted account and silently resurrect it.
+    if user.deleted_at is not None:
+        raise HTTPException(
+            status_code=400, detail="User is deleted and cannot be reactivated"
+        )
 
     # toggle
     user.is_active = not user.is_active

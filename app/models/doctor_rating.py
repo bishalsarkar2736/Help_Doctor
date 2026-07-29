@@ -56,13 +56,13 @@ class DoctorRating(Base):
     # Mirrors appointments.patient_id, which references users.id (not
     # patients.id) — keeping them the same makes the join trivial.
     patient_id: Mapped[int] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"),
+        ForeignKey("users.id", ondelete="RESTRICT"),
         nullable=False,
         index=True,
     )
 
     doctor_id: Mapped[int] = mapped_column(
-        ForeignKey("doctors.id", ondelete="CASCADE"),
+        ForeignKey("doctors.id", ondelete="RESTRICT"),
         nullable=False,
         index=True,
     )

@@ -35,12 +35,12 @@ class Payment(Base):
     )
 
     appointment_id: Mapped[int] = mapped_column(
-        ForeignKey("appointments.id", ondelete="CASCADE"),
+        ForeignKey("appointments.id", ondelete="RESTRICT"),
         index=True,
     )
 
     patient_id: Mapped[int] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"),
+        ForeignKey("users.id", ondelete="RESTRICT"),
         index=True,
     )
 

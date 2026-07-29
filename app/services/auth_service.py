@@ -198,6 +198,9 @@ async def authenticate_google_user(
 
     if user:
 
+        if user.deleted_at is not None:
+            raise ForbiddenError("This account has been deleted")
+
         if not user.is_active:
             raise ForbiddenError("Inactive user")
 
@@ -258,6 +261,11 @@ async def authentication_user(
 
         if not verify_password(password, user.hashed_password):
             raise UnauthorizedError("Invalid email or password")
+
+        # Checked before is_active so a deleted account never reads as merely
+        # suspended — deletion is permanent and cannot be toggled back on.
+        if user.deleted_at is not None:
+            raise ForbiddenError("This account has been deleted")
 
         if not user.is_active:
             raise ForbiddenError("Inactive user")

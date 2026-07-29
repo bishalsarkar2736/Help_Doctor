@@ -47,6 +47,19 @@ class User(Base):
         Boolean, default=True,nullable=False
     )
 
+    # Soft delete — mirrors Clinic.deleted_at. Users are NEVER hard-deleted:
+    # their appointments, prescriptions and payments carry medical/financial
+    # retention obligations, and the FKs to this table are RESTRICT so the
+    # database refuses a hard delete outright.
+    #
+    # is_active=False  -> temporarily suspended, can be re-enabled
+    # deleted_at set   -> gone for good; cannot authenticate
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        index=True,
+    )
+
     clinic_id: Mapped[int | None] = mapped_column(
         ForeignKey("clinics.id", ondelete="SET NULL"),
         nullable=True,
