@@ -1,6 +1,9 @@
+import logging
 from datetime import datetime
 from io import BytesIO
 from xml.sax.saxutils import escape
+
+from app.security.file_validation import ensure_decodable_image
 from reportlab.lib.colors import Color
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
@@ -26,6 +29,8 @@ from app.core.prescription_qr import (
 )
 
 
+
+logger = logging.getLogger(__name__)
 
 def format_utc(
     dt: datetime | None,
@@ -120,7 +125,12 @@ def generate_prescription_pdf(
 
             if logo_path.exists():
 
+                # Same lazy-Image trap as the signature below: reportlab does
+                # not touch the file until doc.build(), so a try/except around
+                # the constructor never fires. Check the bytes instead.
                 try:
+                    ensure_decodable_image(logo_path.read_bytes())
+
                     elements.append(
                         Image(
                             str(logo_path),
@@ -133,9 +143,11 @@ def generate_prescription_pdf(
                         Spacer(1, 10)
                     )
 
-                except Exception:
-                    # Ignore broken logo
-                    pass
+                except (ValueError, OSError):
+                    logger.warning(
+                        "prescription_pdf_logo_unreadable",
+                        extra={"logo_path": str(logo_path)},
+                    )
 
         elements.append(
             Paragraph(
@@ -613,28 +625,50 @@ def generate_prescription_pdf(
 
         if signature_path.exists():
 
-            elements.append(
-                Paragraph(
-                    "Doctor Signature:",
-                    styles["Normal"],
+            # Uploads are decode-checked now, but files predating that check
+            # (or corrupted on disk) must not take the whole prescription down
+            # with them. An unsigned prescription beats a 500 on a clinical
+            # path — the doctor's printed name still follows either way.
+            #
+            # reportlab's Image is lazy: it only reads the file during
+            # doc.build(), so wrapping the constructor catches nothing. The
+            # bytes have to be checked here instead.
+            signature_ok = True
+            try:
+                ensure_decodable_image(signature_path.read_bytes())
+            except (ValueError, OSError):
+                signature_ok = False
+                logger.warning(
+                    "prescription_pdf_signature_unreadable",
+                    extra={
+                        "prescription_id": prescription.id,
+                        "signature_path": str(signature_path),
+                    },
                 )
-            )
 
-            elements.append(
-                Spacer(1, 10)
-            )
-
-            elements.append(
-                Image(
-                    str(signature_path),
-                    width=160,
-                    height=60,
+            if signature_ok:
+                elements.append(
+                    Paragraph(
+                        "Doctor Signature:",
+                        styles["Normal"],
+                    )
                 )
-            )
 
-            elements.append(
-                Spacer(1, 5)
-            )
+                elements.append(
+                    Spacer(1, 10)
+                )
+
+                elements.append(
+                    Image(
+                        str(signature_path),
+                        width=160,
+                        height=60,
+                    )
+                )
+
+                elements.append(
+                    Spacer(1, 5)
+                )
 
     elements.append(
         Paragraph(

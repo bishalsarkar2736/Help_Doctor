@@ -3,7 +3,17 @@
 The client-supplied ``Content-Type`` header is attacker-controlled and must
 never be trusted for security decisions. These helpers sniff the actual bytes so
 an upload can be verified to really be the image type it claims.
+
+Magic bytes alone are not enough for images. An eight-byte PNG header followed
+by garbage passes a header check but explodes later, when reportlab asks Pillow
+to render it into a prescription PDF — turning a bad upload into a 500 on a
+clinical path, far away from the request that caused it. So images are also
+decoded here, at the point of upload, where the error is actionable.
 """
+
+import io
+
+from PIL import Image, UnidentifiedImageError
 
 
 def sniff_image_type(content: bytes) -> str | None:
@@ -30,15 +40,47 @@ def ensure_document(content: bytes, allowed: set[str]) -> str:
     detected = sniff_document_type(content)
     if detected is None or detected not in allowed:
         raise ValueError("File content is not a valid PDF or image")
+
+    # Only images get decoded — Pillow cannot open a PDF, and a credential
+    # image that will not render is useless to the reviewing admin.
+    if detected != "application/pdf":
+        ensure_decodable_image(content)
+
     return detected
 
 
+def ensure_decodable_image(content: bytes) -> None:
+    """Prove the pixels actually parse, not just that the header looks right.
+
+    Raises ValueError if the image is corrupt, truncated, or a decompression
+    bomb. Pillow's ``verify()`` catches structural corruption but consumes the
+    object and stops short of decoding, so the image is reopened and fully
+    loaded — that second pass is what catches truncation.
+    """
+
+    try:
+        with Image.open(io.BytesIO(content)) as img:
+            img.verify()
+
+        with Image.open(io.BytesIO(content)) as img:
+            img.load()
+
+    except Image.DecompressionBombError:
+        # Pillow's pixel-count guard: a small file that expands enormously.
+        raise ValueError("Image dimensions are too large")
+
+    except (UnidentifiedImageError, OSError, SyntaxError, ValueError):
+        raise ValueError("File is not a readable image")
+
+
 def ensure_image(content: bytes, allowed: set[str]) -> str:
-    """Verify uploaded bytes are one of the allowed image types.
+    """Verify uploaded bytes are a readable image of an allowed type.
 
     Raises ValueError with a caller-friendly message otherwise.
     """
     detected = sniff_image_type(content)
     if detected is None or detected not in allowed:
         raise ValueError("File content is not a valid image")
+
+    ensure_decodable_image(content)
     return detected
