@@ -7,7 +7,6 @@ from .admin_doctors import router as admin_doctors_router
 from .notifications import router as notification_router
 from .patients import router as patients_router
 from .users import router as users_router
-from .metric import router as metric_router
 from .prescription import router as prescription_router
 from .payments import router as payment_router
 from .slots import router as slot_router
@@ -53,7 +52,6 @@ ALL_ROUTERS = [
     patients_router,
     patient_history_router,
     users_router,
-    metric_router,
     prescription_router,
     prescription_tamplates_router,
     invitations_router,
