@@ -76,8 +76,32 @@ async def list_doctors(
     limit: int = Query(20, le=100),
     offset: int = Query(0),
 ):
+    # Select COLUMNS, not ORM entities.
+    #
+    # `select(Doctor, User, Clinic)` returns mapped instances, and Doctor, User
+    # and Clinic each declare relationships with lazy="selectin" — which load
+    # eagerly on every fetch and cascade into one another
+    # (Doctor -> Clinic -> every doctor/appointment/prescription/payment/admin
+    # in that clinic). Loading a single doctor that way emitted 41 SQL
+    # statements and cost ~90ms, and the cost scaled with clinic size rather
+    # than with the page of results.
+    #
+    # This endpoint only ever reads the nine scalars below, so selecting them
+    # directly avoids entity hydration altogether: one statement, no eager
+    # loading, and no change to any model — nothing outside this query is
+    # affected.
     query = (
-        select(Doctor, User, Clinic)
+        select(
+            Doctor.id.label("doctor_id"),
+            Doctor.specialization,
+            Doctor.experience_years,
+            Doctor.bio,
+            Doctor.consultation_fee,
+            Doctor.clinic_id,
+            User.full_name,
+            User.email,
+            Clinic.name.label("clinic_name"),
+        )
         .join(User, Doctor.user_id == User.id)
         .outerjoin(Clinic, Doctor.clinic_id == Clinic.id)
         .where(
@@ -109,17 +133,18 @@ async def list_doctors(
 
     return [
         DoctorListItem(
-            id=doctor.id,
-            name=user.full_name,
-            email=user.email,
-            specialization=doctor.specialization,
-            experience_years=doctor.experience_years,
-            bio=doctor.bio,
-            consultation_fee=doctor.consultation_fee,
-            clinic_id=doctor.clinic_id,
-            clinic_name=clinic.name if clinic else None,
+            id=row.doctor_id,
+            name=row.full_name,
+            email=row.email,
+            specialization=row.specialization,
+            experience_years=row.experience_years,
+            bio=row.bio,
+            consultation_fee=row.consultation_fee,
+            clinic_id=row.clinic_id,
+            # outerjoin: NULL when the doctor is not attached to a clinic.
+            clinic_name=row.clinic_name,
         )
-        for doctor, user, clinic in rows
+        for row in rows
     ]
 
 
