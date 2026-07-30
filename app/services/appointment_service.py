@@ -3,7 +3,7 @@ from app.core.time import UTC
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import lazyload, selectinload
 import logging
 from sqlalchemy.exc import IntegrityError, DBAPIError
 from app.models.patient import Patient
@@ -77,8 +77,18 @@ async def _get_verified_doctor_by_user_id(
     db: AsyncSession,
     user_id: int,
 ) -> Doctor:
+    # lazyload("*") restores SQLAlchemy's DEFAULT lazy behaviour for this query
+    # only, overriding the model's lazy="selectin". Loading a Doctor entity
+    # otherwise cascades into Clinic and from there into every doctor,
+    # appointment, prescription, payment and admin of that clinic — on a helper
+    # that runs on ELEVEN doctor endpoints.
+    #
+    # Safe because callers read only column attributes off the result
+    # (.id, .clinic_id, .user_id); no relationship is touched. If that ever
+    # changes, the access raises rather than silently re-adding the cascade.
     result = await db.execute(
         select(Doctor)
+        .options(lazyload("*"))
         .where(
             Doctor.user_id == user_id,
             Doctor.status == DoctorStatus.APPROVED,
@@ -1331,8 +1341,20 @@ async def doctor_today_appointments(db: AsyncSession, user: User):
 
 
 
+    # to_appointment_detail reads appointment.doctor and appointment.patient, so
+    # those two must be loaded — but nothing else. lazyload("*") switches off
+    # the model's blanket selectin, and the trailing .lazyload("*") on each
+    # stops Doctor/User cascading onward into the rest of the clinic.
+    # DoctorPublic and UserPublic contain only scalar columns, so nothing
+    # deeper is required.
     result = await db.execute(
-        select(Appointment).where(
+        select(Appointment)
+        .options(
+            lazyload("*"),
+            selectinload(Appointment.doctor).lazyload("*"),
+            selectinload(Appointment.patient).lazyload("*"),
+        )
+        .where(
             Appointment.doctor_id == doctor.id,
             Appointment.clinic_id == doctor.clinic_id,
             Appointment.scheduled_at >= start,
@@ -1379,8 +1401,18 @@ async def doctor_pending_with_patient(
     doctor = await _get_verified_doctor_by_user_id(db, user.id)
 
 
+    # Columns, not entities: the route reads six scalars, but selecting
+    # Appointment and User as mapped objects pulled in their lazy="selectin"
+    # relationships and cascaded across the clinic.
     result = await db.execute(
-        select(Appointment, User)
+        select(
+            Appointment.id,
+            Appointment.scheduled_at,
+            Appointment.status,
+            Appointment.notes,
+            User.full_name.label("patient_name"),
+            User.email.label("patient_email"),
+        )
         .join(User, Appointment.patient_id == User.id)
         .where(
             Appointment.doctor_id == doctor.id,
@@ -1427,8 +1459,18 @@ async def doctor_confirmed_with_patient(
     doctor = await _get_verified_doctor_by_user_id(db, user.id)
 
 
+    # Columns, not entities: the route reads six scalars, but selecting
+    # Appointment and User as mapped objects pulled in their lazy="selectin"
+    # relationships and cascaded across the clinic.
     result = await db.execute(
-        select(Appointment, User)
+        select(
+            Appointment.id,
+            Appointment.scheduled_at,
+            Appointment.status,
+            Appointment.notes,
+            User.full_name.label("patient_name"),
+            User.email.label("patient_email"),
+        )
         .join(User, Appointment.patient_id == User.id)
         .where(
             Appointment.doctor_id == doctor.id,

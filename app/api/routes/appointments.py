@@ -364,14 +364,14 @@ async def doctor_pending(
 
     return [
         DoctorAppointmentView(
-            id=appointment.id,
-            scheduled_at=appointment.scheduled_at,
-            status=appointment.status.value,
-            patient_name=patient.full_name,
-            patient_email=patient.email,
-            notes=appointment.notes,
+            id=row.id,
+            scheduled_at=row.scheduled_at,
+            status=row.status.value,
+            patient_name=row.patient_name,
+            patient_email=row.patient_email,
+            notes=row.notes,
         )
-        for appointment, patient in rows
+        for row in rows
     ]
 
 
@@ -386,14 +386,14 @@ async def doctor_confirmed(
 
     return [
         DoctorAppointmentView(
-            id=appointment.id,
-            scheduled_at=appointment.scheduled_at,
-            status=appointment.status.value,
-            patient_name=patient.full_name,
-            patient_email=patient.email,
-            notes=appointment.notes,
+            id=row.id,
+            scheduled_at=row.scheduled_at,
+            status=row.status.value,
+            patient_name=row.patient_name,
+            patient_email=row.patient_email,
+            notes=row.notes,
         )
-        for appointment, patient in rows
+        for row in rows
     ]
 
 
