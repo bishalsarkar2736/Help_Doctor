@@ -13,7 +13,7 @@ from app.db.postgres import get_db
 from app.try_except.context import user_id_ctx, clinic_id_ctx
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import lazyload, selectinload
 
 
 
@@ -161,7 +161,21 @@ async def get_current_user(
             detail="Invalid token payload",
         )
 
-    user = await db.get(User, int(user_id))
+    # lazyload("*") on the hottest query in the application.
+    #
+    # User declares `clinic` and `patient_prescriptions` as lazy="selectin", so
+    # a plain db.get() eagerly loaded both on EVERY authenticated request — and
+    # `clinic` cascades onward into every doctor, appointment, prescription,
+    # payment and admin of that clinic. That cost ~25ms per request before the
+    # endpoint did any work of its own.
+    #
+    # Audited before changing: nothing anywhere reads a relationship off the
+    # object this returns. The decisive evidence is that User's other seven
+    # relationships are ALREADY lazy, and reading a lazy relationship under
+    # asyncio raises MissingGreenlet — so had any code path done it, the app
+    # would already be failing. This only makes the remaining two behave like
+    # the other seven.
+    user = await db.get(User, int(user_id), options=[lazyload("*")])
 
     if not user:
         raise HTTPException(
