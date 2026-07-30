@@ -14,9 +14,14 @@ router = APIRouter(prefix="/clinics", tags=["Clinic"])
 async def list_public_clinics(
     db: AsyncSession = Depends(get_db),
 ):
+    # PublicClinic exposes only id and name, but selecting the Clinic entity
+    # pulled in its five lazy="selectin" relationships — every doctor,
+    # appointment, prescription, payment and admin of every active clinic —
+    # to render two fields. Measured at ~67ms with one clinic; it would grow
+    # with the whole platform's data.
     result = await db.execute(
-        select(Clinic)
+        select(Clinic.id, Clinic.name)
         .where(Clinic.status == ClinicStatus.ACTIVE)
         .order_by(Clinic.name)
     )
-    return list(result.scalars())
+    return [PublicClinic(id=row.id, name=row.name) for row in result]

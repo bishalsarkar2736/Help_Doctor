@@ -324,8 +324,23 @@ async def get_doctor_detail(
     doctor_id: int,
     db: AsyncSession = Depends(get_db),
 ):
+    # Columns, not entities — same reason as the list endpoint above: selecting
+    # Doctor/User/Clinic as mapped objects drags in their lazy="selectin"
+    # relationships and cascades across the whole clinic. Measured at 136ms for
+    # a single doctor.
     result = await db.execute(
-        select(Doctor, User, Clinic)
+        select(
+            Doctor.id.label("doctor_id"),
+            Doctor.specialization,
+            Doctor.experience_years,
+            Doctor.bio,
+            Doctor.qualification,
+            Doctor.consultation_fee,
+            Doctor.clinic_id,
+            User.full_name,
+            User.email,
+            Clinic.name.label("clinic_name"),
+        )
         .join(User, Doctor.user_id == User.id)
         .outerjoin(Clinic, Doctor.clinic_id == Clinic.id)
         .where(
@@ -339,17 +354,16 @@ async def get_doctor_detail(
     if row is None:
         raise NotFoundError("Doctor not found")
 
-    doctor, user, clinic = row
-
     return DoctorDetail(
-        id=doctor.id,
-        name=user.full_name,
-        email=user.email,
-        specialization=doctor.specialization,
-        experience_years=doctor.experience_years,
-        bio=doctor.bio,
-        qualification=doctor.qualification,
-        consultation_fee=doctor.consultation_fee,
-        clinic_id=doctor.clinic_id,
-        clinic_name=clinic.name if clinic else None,
+        id=row.doctor_id,
+        name=row.full_name,
+        email=row.email,
+        specialization=row.specialization,
+        experience_years=row.experience_years,
+        bio=row.bio,
+        qualification=row.qualification,
+        consultation_fee=row.consultation_fee,
+        clinic_id=row.clinic_id,
+        # outerjoin: NULL when the doctor is not attached to a clinic.
+        clinic_name=row.clinic_name,
     )
