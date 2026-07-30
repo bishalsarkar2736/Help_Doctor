@@ -20,6 +20,7 @@ from pathlib import Path
 
 from sqlalchemy import select
 
+from app.config import get_settings
 from app.db.postgres import AsyncSessionLocal
 from app.models.clinic import Clinic
 from app.models.doctor import Doctor, DoctorStatus
@@ -87,7 +88,60 @@ ACCOUNTS: list[dict] = [
 ]
 
 
+# Every address this script owns. Used both to seed and to purge.
+E2E_EMAIL_PREFIX = "e2e."
+
+
+def _guard_environment() -> None:
+    """Refuse to run anywhere that is not explicitly development or testing.
+
+    This file contains plaintext passwords for ADMIN and SUPER_ADMIN accounts,
+    in source control. Seeding a production database would create
+    known-credential administrator logins — so the environment check is the
+    security control, not a convenience.
+    """
+
+    env = get_settings().ENV
+    if env not in ("development", "testing"):
+        raise SystemExit(
+            f"refusing to run: ENV={env!r}. This script creates accounts with "
+            "publicly known passwords and is for development/testing only."
+        )
+
+
+async def purge() -> int:
+    """Remove every account this script created.
+
+    Test runs accumulate accounts (each registration and invitation makes a new
+    one), and they are all active logins. Left behind they are dead weight at
+    best and unattended credentials at worst.
+    """
+
+    _guard_environment()
+
+    async with AsyncSessionLocal() as db:
+        users = (
+            await db.scalars(
+                select(User).where(User.email.like(f"{E2E_EMAIL_PREFIX}%"))
+            )
+        ).all()
+
+        removed = 0
+        for user in users:
+            # Medical/financial FKs are RESTRICT, so a hard delete can fail by
+            # design. Soft-delete instead — the account can no longer be used.
+            user.is_active = False
+            if user.deleted_at is None:
+                user.deleted_at = datetime.now(UTC)
+                removed += 1
+
+        await db.commit()
+        return removed
+
+
 async def seed() -> dict:
+    _guard_environment()
+
     async with AsyncSessionLocal() as db:
         clinic = await db.scalar(select(Clinic).order_by(Clinic.id))
         if clinic is None:
@@ -173,6 +227,11 @@ async def seed() -> dict:
 
 
 async def main() -> None:
+    if "--purge" in sys.argv:
+        count = await purge()
+        print(f"purged {count} e2e account(s)")
+        return
+
     target = Path(sys.argv[1] if len(sys.argv) > 1 else "e2e-accounts.json")
     data = await seed()
     target.parent.mkdir(parents=True, exist_ok=True)
