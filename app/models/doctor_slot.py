@@ -20,8 +20,20 @@ class DoctorSlot(Base):
         nullable=False,
     )
 
-    start_time: Mapped[datetime] = mapped_column(DateTime, nullable=False)
-    end_time: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    # timezone=True is load-bearing. slot_generation writes UTC-aware values
+    # (.astimezone(UTC)) and get_doctor_slots filters with UTC-aware bounds, but
+    # a naive column silently dropped the offset on write and then asyncpg
+    # refused the aware query argument outright:
+    #   DataError: can't subtract offset-naive and offset-aware datetimes
+    # which surfaced as a 500 on the patient booking screen — and, because a 500
+    # carries no CORS headers, as an opaque "blocked by CORS" error in the
+    # browser rather than anything pointing at the real cause.
+    start_time: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    end_time: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
 
     is_booked: Mapped[bool] = mapped_column(Boolean, default=False)
 
