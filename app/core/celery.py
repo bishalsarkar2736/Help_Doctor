@@ -14,6 +14,7 @@ celery_app = Celery(
         "app.task.slot_generation",
         "app.task.payment_reconciliation",
         "app.task.notification_tasks",
+        "app.task.phi_access_retention",
     ],
 )
 
@@ -65,6 +66,15 @@ celery_app.conf.beat_schedule = {
     "payment-reconciliation-job": {
         "task": "app.tasks.payment_reconciliation.payment_reconciliation_task",
         "schedule": 300.0,
+    },
+
+    # Nightly at 03:20 UTC — off the hour, so it does not start in the same
+    # second as the hourly slot generation and contend for the DB pool.
+    # Deliberately not more frequent: nothing here is time-critical, and each
+    # run rewrites index pages on the busiest-write table in the system.
+    "phi-access-log-retention": {
+        "task": "app.tasks.phi_access_retention.phi_access_log_purge_task",
+        "schedule": crontab(hour=3, minute=20),
     },
 
 }

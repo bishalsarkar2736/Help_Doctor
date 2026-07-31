@@ -42,6 +42,29 @@ class Settings(BaseSettings):
     # together, never one alone.
     CELERY_WORKER_CONCURRENCY: int = Field(default=4, ge=1, le=64)
 
+    # --- PHI access log retention ---
+    #
+    # How long a record of "who read which patient's data" is kept before it is
+    # purged. Six years is the common healthcare audit-trail baseline (HIPAA
+    # §164.316(b)(2) requires six years for security documentation); it is the
+    # safe default if this system ever serves patients outside Bangladesh or is
+    # put forward for certification.
+    #
+    # This is a COMPLIANCE control, not a housekeeping knob. Shortening it
+    # destroys evidence that a regulator or a patient exercising their right of
+    # access may be entitled to, so it has a floor of one year: a typo of `30`
+    # would otherwise silently delete almost the entire trail on the next
+    # nightly run.
+    PHI_ACCESS_LOG_RETENTION_DAYS: int = Field(default=2190, ge=365, le=36500)
+
+    # Rows deleted per statement. Small enough that the table is never locked
+    # for long, since clinical reads are writing to it continuously.
+    PHI_ACCESS_LOG_PURGE_BATCH_SIZE: int = Field(default=10_000, ge=100, le=100_000)
+
+    # Ceiling on batches per run, so one invocation cannot run unbounded. A
+    # backlog is worked off across successive nightly runs instead.
+    PHI_ACCESS_LOG_PURGE_MAX_BATCHES: int = Field(default=50, ge=1, le=1000)
+
     REDIS_URL: str = "redis://localhost:6379/0"
 
     # Redis
