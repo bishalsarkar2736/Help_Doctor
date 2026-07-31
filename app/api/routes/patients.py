@@ -14,7 +14,11 @@ from app.services.patient_service import (
     update_my_patient,
 )
 from app.services.patient_search_service import search_patients
-from app.services.phi_access_service import log_phi_access
+from app.models.phi_access_log import PHIAction, PHIResourceType
+from app.services.phi_access_log_service import (
+    log_phi_access,
+    log_phi_access_many,
+)
 from app.schemas.patient_search import PatientSearchOut
 from app.try_except.exceptions import NotFoundError, ForbiddenError
 
@@ -94,12 +98,25 @@ async def search_patient_endpoint(
         )
     ),
 ):
-    return await search_patients(
+    results = await search_patients(
         db=db,
         q=q,
         limit=limit,
         offset=offset,
     )
+
+    # Search surfaces identifying details (name, email, phone) for people the
+    # searcher may have no relationship with, so each surfaced patient is
+    # recorded. This is the query that reveals someone trawling the roster.
+    await log_phi_access_many(
+        db=db,
+        actor=current_user,
+        patient_ids=[r.user_id for r in results],
+        resource_type=PHIResourceType.PATIENT_SEARCH,
+        action=PHIAction.SEARCH,
+    )
+
+    return results
 
 # Staff-facing patient record read — access-logged (PHI). Declared last so it
 # never shadows the static /me, /records, /search routes above.
@@ -140,11 +157,15 @@ async def get_patient_record(
             raise ForbiddenError("No treatment relationship with this patient")
         clinic_id = doctor.clinic_id
 
+    # PatientRead exposes allergies, current medications, chronic conditions and
+    # blood type — this read is a PHI disclosure and must leave a trace.
     await log_phi_access(
-        db,
+        db=db,
+        actor=current_user,
+        patient_id=patient_user_id,
+        resource_type=PHIResourceType.PATIENT_PROFILE,
+        resource_id=patient.id,
+        action=PHIAction.VIEW,
         clinic_id=clinic_id,
-        actor_id=current_user.id,
-        patient_user_id=patient_user_id,
-        resource="patient_record",
     )
     return patient

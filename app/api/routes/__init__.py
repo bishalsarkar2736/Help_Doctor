@@ -36,6 +36,7 @@ from .invitations import router as invitations_router
 from .clinics import router as public_clinics_router
 from .doctor_ratings import router as doctor_ratings_router
 from .admin_doctor_ratings import router as admin_doctor_ratings_router
+from .admin_phi_access import router as admin_phi_access_router
 
 ALL_ROUTERS = [
     admin_router,
@@ -47,6 +48,7 @@ ALL_ROUTERS = [
     appointments_router,
     admin_doctors_router,
     admin_doctor_ratings_router,
+    admin_phi_access_router,
     doctor_ratings_router,
     notification_router,
     patients_router,

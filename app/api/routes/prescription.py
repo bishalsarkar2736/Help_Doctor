@@ -7,6 +7,8 @@ from app.schemas.prescription import (
     PrescriptionResponse,
 )
 from app.security.rbac import require_roles
+from app.models.phi_access_log import PHIAction, PHIResourceType
+from app.services.phi_access_log_service import log_phi_access
 from app.models.user import User, UserRole
 from app.try_except.exceptions import NotFoundError, ForbiddenError,BadRequestError
 from app.models.prescription import Prescription,PrescriptionStatus
@@ -491,6 +493,17 @@ async def get_prescription_endpoint(
         )
     )
 
+    # A prescription names the patient and every medicine they were given.
+    await log_phi_access(
+        db=db,
+        actor=user,
+        patient_id=prescription.patient_id,
+        resource_type=PHIResourceType.PRESCRIPTION,
+        resource_id=prescription.id,
+        action=PHIAction.VIEW,
+        clinic_id=prescription.clinic_id,
+    )
+
     return to_prescription_response(
         prescription,
         existing_medicines,
@@ -672,6 +685,20 @@ async def download_prescription_pdf(
         details={
             "prescription_id": prescription.id,
         },
+    )
+
+    # Also recorded as a PHI access. The audit entry above tracks the action
+    # for the prescription; this one answers "who obtained this patient's
+    # data", which is the question asked of an access log — and a downloaded
+    # PDF leaves the system entirely, so it is the disclosure that matters most.
+    await log_phi_access(
+        db=db,
+        actor=user,
+        patient_id=prescription.patient_id,
+        resource_type=PHIResourceType.PRESCRIPTION_PDF,
+        resource_id=prescription.id,
+        action=PHIAction.DOWNLOAD,
+        clinic_id=prescription.clinic_id,
     )
 
     return StreamingResponse(

@@ -25,6 +25,8 @@ from app.services.patient_history_service import (
 )
 from app.schemas.patient_history_schema import PatientHistoryResponse
 from app.services.tenant_resolver import resolve_clinic_id
+from app.models.phi_access_log import PHIAction, PHIResourceType
+from app.services.phi_access_log_service import log_phi_access
 
 
 router = APIRouter(
@@ -38,7 +40,12 @@ router = APIRouter(
     response_model=PatientHistoryResponse,
 )
 async def patient_history(
-    patient_user_id: int,
+    # MUST match the {patient_id} placeholder in the route path. It was named
+    # patient_user_id, so FastAPI never bound the path segment and instead
+    # demanded a query parameter of that name — the endpoint returned 422 for
+    # every well-formed call and was effectively unreachable. No frontend code
+    # and no test exercised it, which is why it went unnoticed.
+    patient_id: int,
     clinic_id: int | None = None,
     limit: int = 50,
     offset: int = 0,
@@ -57,10 +64,23 @@ async def patient_history(
         clinic_id=clinic_id,
     )
     
-    return await get_patient_history(
+    history = await get_patient_history(
         db=db,
         clinic_id=clinic_id,
-        patient_id=patient_user_id,
+        patient_id=patient_id,
         limit=limit,
         offset=offset,
     )
+
+    # The clinical record: past visits, diagnoses and prescriptions. The single
+    # most sensitive read in the system.
+    await log_phi_access(
+        db=db,
+        actor=user,
+        patient_id=patient_id,
+        resource_type=PHIResourceType.MEDICAL_HISTORY,
+        action=PHIAction.VIEW,
+        clinic_id=clinic_id,
+    )
+
+    return history
