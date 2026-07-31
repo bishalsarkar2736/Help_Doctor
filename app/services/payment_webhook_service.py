@@ -42,6 +42,42 @@ async def process_bkash_webhook(
 ) -> dict:
     gateway_payment_id = payload.paymentID
 
+    # Reject unknown payment ids BEFORE doing any work.
+    #
+    # This endpoint is necessarily unauthenticated — bKash returns the user's
+    # browser to it, so there is no server-to-server request to sign. The
+    # outcome is still safe against forgery, because nothing in the payload is
+    # trusted: the amount and status come from execute_payment() below, called
+    # server-to-server against bKash.
+    #
+    # What was NOT safe was the work done before that point. Every POST, with
+    # any invented paymentID, used to (a) write an IdempotencyKey row and
+    # (b) make an outbound call to bKash with our credentials. That is an
+    # unauthenticated write amplifier against our own database, and a way to
+    # make us hammer the gateway until it rate-limits or flags the account.
+    #
+    # A legitimate callback always corresponds to a Payment row, because
+    # gateway_payment_id is recorded when the payment is initiated. Anything
+    # else is noise and is dropped here for the cost of one indexed lookup.
+    #
+    # Deliberately NOT the FOR UPDATE fetch used later: this must not hold a
+    # row lock across the outbound HTTP call.
+    known_payment = await db.scalar(
+        select(Payment.id).where(
+            Payment.gateway_payment_id == gateway_payment_id
+        )
+    )
+
+    if known_payment is None:
+        logger.warning(
+            "bkash_webhook_unknown_payment_id",
+            extra={"gateway_payment_id": gateway_payment_id},
+        )
+        # Same message the later lookup raised, so the response a caller sees
+        # is unchanged — this moves WHERE the check happens, not what the API
+        # returns.
+        raise NotFoundError("Payment not found")
+
     idempotency_record, stored_response = (
         await _get_or_create_webhook_idempotency(
             db=db,
