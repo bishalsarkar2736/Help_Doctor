@@ -34,6 +34,24 @@ outfile="${BACKUP_DIR}/${POSTGRES_DB}_${timestamp}.sql.gz"
 
 echo "[$(date -u)] Starting backup of ${POSTGRES_DB} -> ${outfile}"
 
+# Remove a partial file if anything below fails.
+#
+# The size guard further down is unreachable when pg_dump itself fails: with
+# `set -euo pipefail` the failing pipeline exits the script immediately, so the
+# check never runs and a 0-byte gzip is left behind looking like a backup. That
+# is exactly what happened when postgres was briefly down during a restart —
+# the log correctly said "backup failed" while a plausible-looking file sat in
+# the directory for anyone grabbing "the latest" during an incident.
+cleanup_partial() {
+    status=$?
+    if [ "$status" -ne 0 ] && [ -f "$outfile" ]; then
+        echo "[$(date -u)] Removing partial backup ${outfile}" >&2
+        rm -f "$outfile"
+    fi
+    exit "$status"
+}
+trap cleanup_partial EXIT
+
 # pg_dump reads the password from PGPASSWORD; never put it on the command line.
 PGPASSWORD="$POSTGRES_PASSWORD" pg_dump \
     --host="$POSTGRES_HOST" \

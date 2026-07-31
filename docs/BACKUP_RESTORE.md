@@ -13,11 +13,36 @@ against real data; the results are recorded at the bottom.
 That covers everything in Postgres — medical records, prescriptions, payments,
 `audit_logs`, `phi_access_logs`, users and invitations.
 
-**It does NOT cover uploaded files.** Doctor credential documents, clinic logos
-and signatures live in the `uploads_data` and `media_data` volumes, and nothing
-backs those up yet. A database restore brings back the row in
-`doctor_documents` and the storage key it points at, but not the file itself.
-Back those volumes up separately before relying on this in production.
+`files_backup` (compose service) covers the **object storage bucket** — doctor
+credential documents, clinic logos and signatures — every 6 hours, mirroring
+into a dated snapshot under `/backups/objects/` in the same `db_backups`
+volume, keeping the newest `RETENTION_SNAPSHOTS` (28 ≈ 7 days).
+
+Both are needed. A database restore alone brings back the `doctor_documents`
+row and the storage key it points at, but not the file: without the object
+backup, every BMDC certificate and medical licence is unrecoverable, and
+re-collecting legal documents from practitioners is not a recovery plan.
+
+### Restoring a single file
+
+Snapshots are plain directories, so a single document can be pulled back
+without unpacking anything:
+
+```bash
+SNAP=$(docker exec helpdoctor_files_backup sh -c 'ls -1 /backups/objects | tail -1')
+KEY=uploads/doctor_documents/doctor1_LICENSE_7c13fc.pdf
+
+# inspect
+docker exec helpdoctor_files_backup sh -c "cat /backups/objects/$SNAP/$KEY" > recovered.pdf
+
+# put it back
+docker run --rm --network help_doctor_default \
+  -e MC_HOST_hd="http://$S3_ACCESS_KEY:$S3_SECRET_KEY@minio:9000" \
+  -v "$PWD:/local" minio/mc:latest cp "/local/recovered.pdf" "hd/$S3_BUCKET/$KEY"
+```
+
+Verified on 2026-08-01: a credential document restored from a snapshot is
+byte-identical (sha256) to the live object.
 
 ## Restore drill (safe — never touches live data)
 
