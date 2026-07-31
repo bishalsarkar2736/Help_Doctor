@@ -42,6 +42,39 @@ class Settings(BaseSettings):
     # together, never one alone.
     CELERY_WORKER_CONCURRENCY: int = Field(default=4, ge=1, le=64)
 
+    # --- File storage ---
+    #
+    # "local" writes to the uploads/ and media/ directories, which is correct
+    # for a single API replica: compose shares those volumes between the api
+    # and celery_worker containers, so both see the same files.
+    #
+    # "s3" is required before running more than one replica. With local
+    # storage an upload lands on one replica's disk, the database row points at
+    # a path that exists only there, and a download served by another replica
+    # is a 404.
+    #
+    # Defaults to local so nothing changes until the switch is deliberate.
+    STORAGE_BACKEND: str = "local"
+
+    # S3-compatible endpoint. MinIO in compose by default; leave empty for real
+    # AWS S3, where boto3 resolves the endpoint from the region.
+    S3_ENDPOINT_URL: str = "http://minio:9000"
+    S3_BUCKET: str = "helpdoctor"
+    S3_ACCESS_KEY: str = ""
+    S3_SECRET_KEY: str = ""
+    S3_REGION: str = "us-east-1"
+
+    @field_validator("STORAGE_BACKEND")
+    @classmethod
+    def validate_storage_backend(cls, v: str) -> str:
+        allowed = {"local", "s3"}
+        value = v.strip().lower()
+        if value not in allowed:
+            raise ValueError(
+                f"STORAGE_BACKEND must be one of {sorted(allowed)}, got {v!r}"
+            )
+        return value
+
     # --- Multi-factor authentication ---
     #
     # Roles for which TOTP is mandatory, as a comma-separated list. Rolled out

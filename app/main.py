@@ -10,7 +10,6 @@ from app.config import get_settings
 from app.db.postgres import engine
 from app.core.limiter import limiter
 
-from fastapi.staticfiles import StaticFiles
 
 from app.websocket.routes import router as ws_router
 
@@ -104,11 +103,11 @@ def create_app() -> FastAPI:
         version="1.0.0"
     )
 
-    app.mount(
-        "/media",
-        StaticFiles(directory="media"),
-        name="media",
-    )
+    # /media and /uploads are served by app/api/routes/files.py, through the
+    # storage seam, so the same URLs work whether files live on disk or in
+    # object storage. A StaticFiles mount reads the local directory directly
+    # and would silently serve nothing under STORAGE_BACKEND=s3 — every doctor
+    # signature in the UI would become a broken image.
 
     setup_tracing(app)
 

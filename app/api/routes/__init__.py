@@ -37,6 +37,7 @@ from .clinics import router as public_clinics_router
 from .doctor_ratings import router as doctor_ratings_router
 from .admin_doctor_ratings import router as admin_doctor_ratings_router
 from .admin_phi_access import router as admin_phi_access_router
+from .files import router as files_router
 
 ALL_ROUTERS = [
     admin_router,
@@ -78,6 +79,7 @@ ALL_ROUTERS = [
     admin_dashboard_router,
     admin_clinic_logo_router,
     admin_activity_log_router,
+    files_router,
 
 ]
 

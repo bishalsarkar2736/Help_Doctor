@@ -130,3 +130,4 @@ sentry-sdk[fastapi]==2.66.1
 
 # MFA (TOTP)
 pyotp==2.9.0
+boto3==1.40.47

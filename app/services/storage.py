@@ -110,7 +110,109 @@ class LocalFilesystemStorage:
         return self._resolve(key)
 
 
+class S3Storage:
+    """S3-compatible object storage (MinIO in compose, S3/R2 in production).
+
+    Keys are unchanged from the filesystem backend — "uploads/doctor_documents/
+    doctorN_x.pdf" is used verbatim as the object key — so switching backends
+    needs no database migration and rows written under either one resolve.
+
+    Note on blocking: boto3 is synchronous, and so is the Storage protocol,
+    matching the filesystem backend it replaces. Calls therefore block the
+    event loop for the duration of a request to the object store. That is
+    acceptable at current sizes (documents are capped at 5 MB and the store is
+    on the same network) but is the first thing to revisit if uploads grow —
+    the fix is to make the protocol async, which the seam now makes tractable.
+    """
+
+    def __init__(
+        self,
+        *,
+        bucket: str,
+        endpoint_url: str | None,
+        access_key: str,
+        secret_key: str,
+        region: str,
+    ) -> None:
+        # Imported here, not at module scope: the filesystem backend must keep
+        # working in environments that never install boto3 (and in tests).
+        import boto3
+        from botocore.config import Config as BotoConfig
+
+        self._bucket = bucket
+        self._client = boto3.client(
+            "s3",
+            endpoint_url=endpoint_url or None,
+            aws_access_key_id=access_key,
+            aws_secret_access_key=secret_key,
+            region_name=region,
+            # path-style addressing: MinIO does not serve virtual-host style
+            # buckets (bucket.host) without extra DNS setup.
+            config=BotoConfig(s3={"addressing_style": "path"}),
+        )
+
+    def _is_missing(self, error: Exception) -> bool:
+        code = getattr(error, "response", {}).get("Error", {}).get("Code", "")
+        return str(code) in {"404", "NoSuchKey", "NotFound"}
+
+    def write(self, key: str, data: bytes) -> str:
+        self._client.put_object(Bucket=self._bucket, Key=key, Body=data)
+        return key
+
+    def read(self, key: str) -> bytes:
+        from botocore.exceptions import ClientError
+
+        try:
+            obj = self._client.get_object(Bucket=self._bucket, Key=key)
+        except ClientError as exc:
+            # Callers catch FileNotFoundError — notably the PDF renderer, which
+            # must degrade to an unsigned prescription rather than 500.
+            if self._is_missing(exc):
+                raise FileNotFoundError(key) from exc
+            raise
+
+        return obj["Body"].read()
+
+    def delete(self, key: str) -> None:
+        # S3 delete_object is already idempotent: removing a missing key is a
+        # success, which is the contract the protocol requires.
+        self._client.delete_object(Bucket=self._bucket, Key=key)
+
+    def exists(self, key: str) -> bool:
+        from botocore.exceptions import ClientError
+
+        try:
+            self._client.head_object(Bucket=self._bucket, Key=key)
+        except ClientError as exc:
+            if self._is_missing(exc):
+                return False
+            raise
+
+        return True
+
+    def local_path(self, key: str) -> Path | None:
+        # No filesystem path exists. Callers fall back to read().
+        return None
+
+
 _storage: Storage | None = None
+
+
+def _build_storage() -> Storage:
+    from app.config import get_settings
+
+    settings = get_settings()
+
+    if settings.STORAGE_BACKEND == "s3":
+        return S3Storage(
+            bucket=settings.S3_BUCKET,
+            endpoint_url=settings.S3_ENDPOINT_URL,
+            access_key=settings.S3_ACCESS_KEY,
+            secret_key=settings.S3_SECRET_KEY,
+            region=settings.S3_REGION,
+        )
+
+    return LocalFilesystemStorage()
 
 
 def get_storage() -> Storage:
@@ -122,7 +224,7 @@ def get_storage() -> Storage:
     global _storage
 
     if _storage is None:
-        _storage = LocalFilesystemStorage()
+        _storage = _build_storage()
 
     return _storage
 
