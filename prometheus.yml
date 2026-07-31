@@ -1,13 +1,50 @@
 global:
-  scrape_interval: 5s
+  # 5s was fine for a demo but writes a lot of samples for no benefit — every
+  # alert here needs `for: 1m` or longer. 15s is the usual default.
+  scrape_interval: 15s
+  evaluation_interval: 15s
 
+# Path is relative to Prometheus's working directory (/etc/prometheus) and must
+# match where compose mounts the file. This previously said
+# "monitoring/alerts.yml" while compose mounted /etc/prometheus/alerts.yml, so
+# no rules were ever loaded and Prometheus reported zero rule groups.
 rule_files:
-  - "monitoring/alerts.yml"
+  - "alerts.yml"
+
+# Without this, rules evaluate and fire into the void: Prometheus shows them as
+# firing on its own dashboard and nobody is ever told.
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
 
 scrape_configs:
   - job_name: "fastapi"
-    # In production, METRICS_TOKEN must be set on the API and this
-    # scrape config must supply it, e.g.:
-    # bearer_token: "<same value as METRICS_TOKEN>"
+    # `api:8000`, NOT `localhost:8000`. Inside the Prometheus container,
+    # localhost is Prometheus itself — the old target sat permanently DOWN
+    # with "connection refused" while Grafana looked fine, because it had no
+    # data to contradict.
     static_configs:
-      - targets: ["localhost:8000"]
+      - targets: ["api:8000"]
+    metrics_path: /metrics
+
+    # PRODUCTION: /metrics is protected. app/main.py requires
+    # `Authorization: Bearer $METRICS_TOKEN` when METRICS_TOKEN is set, and
+    # returns 404 when ENV=production and it is NOT set. So in production you
+    # must set METRICS_TOKEN and uncomment the line below, or scraping stops
+    # dead the moment you switch ENV.
+    #
+    # bearer_token_file, never a literal bearer_token: this file is committed,
+    # and a token written here is a published secret.
+    #
+    #   mkdir -p secrets && printf '%s' "$METRICS_TOKEN" > secrets/metrics_token
+    #   # then mount it on the prometheus service in docker-compose.yml:
+    #   #   - ./secrets/metrics_token:/etc/prometheus/metrics_token:ro
+    #
+    # bearer_token_file: /etc/prometheus/metrics_token
+
+  # Prometheus scrapes itself so that `up` and process_* exist for rules that
+  # check Prometheus's own liveness.
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]

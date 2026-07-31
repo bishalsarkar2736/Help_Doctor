@@ -1,0 +1,143 @@
+# Prometheus alerting rules.
+#
+# This file previously did not exist. Compose mounted ./alerts.yml, so Docker
+# created a DIRECTORY of that name, and Prometheus loaded zero rules while
+# looking perfectly healthy.
+#
+# Deliberately few rules. Every alert here should be something a human would
+# get out of bed for; a page that fires on noise trains people to ignore the
+# ones that matter, which is worse than having no alerting at all.
+#
+# Metrics are PER PROCESS. Only the api container is scraped, so alerting on
+# celery-owned counters (outbox_*, notification workers) would fire forever —
+# the api process never increments them. Those need their own exporter before
+# they can be alerted on; see docs/MONITORING.md.
+
+groups:
+  - name: availability
+    rules:
+      - alert: APIDown
+        # The single most important alert in the system. `up` is synthesised
+        # by Prometheus itself, so it fires even when the app is too broken to
+        # report anything.
+        expr: up{job="fastapi"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "API is not responding to scrapes"
+          description: >-
+            Prometheus cannot reach the API's /metrics endpoint. Patients
+            cannot book, doctors cannot prescribe. Check
+            `docker compose ps api` and its logs.
+
+      - alert: APIMetricsUnscrapeable
+        # Distinct from APIDown: the target resolves but returns non-200,
+        # which in production usually means METRICS_TOKEN is set on the API
+        # while Prometheus is not sending it (the endpoint then 401s, or 404s
+        # when the token is unset entirely).
+        expr: up{job="fastapi"} == 0 and on() (time() - process_start_time_seconds{job="prometheus"}) > 300
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "API metrics have been unreachable for 10 minutes"
+          description: >-
+            If the API itself is healthy, check METRICS_TOKEN and the
+            bearer_token_file setting in prometheus.yml.
+
+  - name: latency
+    rules:
+      - alert: HighAPILatency
+        # p95 across all endpoints. The histogram carries no route label, so
+        # this cannot be broken down further without adding one — noted in
+        # docs/MONITORING.md as an instrumentation gap.
+        expr: histogram_quantile(0.95, sum(rate(api_request_latency_seconds_bucket[5m])) by (le)) > 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "95th percentile API latency above 1s"
+          description: >-
+            Sustained slow responses. Check database connection pool
+            saturation and slow queries before assuming load.
+
+  - name: security
+    rules:
+      - alert: LoginFailureSpike
+        # Brute force / credential stuffing. The login endpoint is rate
+        # limited at 5/min per client, so a sustained high rate means many
+        # sources, not one retrying user.
+        expr: sum(rate(login_attempts_total{result="failure"}[5m])) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Elevated login failure rate"
+          description: >-
+            More than 1 failed login per second sustained for 5 minutes.
+            Check audit_logs for event_type='security', action='login_failure'
+            and consider whether a source needs blocking.
+
+      - alert: LoginFailureMajority
+        # Different signal from the rate: when MOST attempts fail, something
+        # is broken (an outage in the identity path) or under attack. Guarded
+        # against divide-by-zero on an idle system.
+        expr: >-
+          sum(rate(login_attempts_total{result="failure"}[15m]))
+          /
+          clamp_min(sum(rate(login_attempts_total[15m])), 0.001)
+          > 0.8
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Over 80% of login attempts are failing"
+          description: >-
+            Either an attack, or authentication is broken for legitimate
+            users. Check recent deploys before assuming the former.
+
+  - name: money
+    rules:
+      - alert: PaymentFailures
+        # Payments are the one place a silent failure costs the clinic money
+        # directly and the patient loses their booking.
+        expr: increase(payments_failed_total[15m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Payment failures recorded"
+          description: >-
+            {{ $value }} payment(s) failed in the last 15 minutes. Check the
+            gateway status and app.services.payment logs.
+
+  - name: data
+    rules:
+      - alert: DatabaseRetries
+        # db_retry_total incrementing means the app is retrying transactions —
+        # deadlocks, serialisation failures or a flapping connection. It
+        # usually precedes a visible outage.
+        expr: increase(db_retry_total[10m]) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Database transactions are being retried"
+          description: >-
+            More than 5 retries in 10 minutes. Check Postgres logs for
+            deadlocks and connection saturation (DB_POOL_SIZE budget is
+            documented in app/config.py).
+
+      - alert: DoubleBookingContention
+        # The guard working is good; the guard working OFTEN means slot
+        # allocation is racing more than it should.
+        expr: increase(doctor_double_booking_prevented_total[15m]) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Frequent double-booking attempts blocked"
+          description: >-
+            The integrity constraint is doing its job, but this rate suggests
+            the booking UI is offering slots it should already know are taken.

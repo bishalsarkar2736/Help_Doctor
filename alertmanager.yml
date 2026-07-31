@@ -1,0 +1,75 @@
+# Alertmanager routing.
+#
+# Prometheus decides WHEN something is wrong; this decides WHO hears about it.
+# Without this service the rules in alerts.yml evaluate and fire into nothing.
+#
+# Ships with a webhook receiver pointed at MailHog's HTTP API in development,
+# so the whole path is exercised end to end locally. Replace the receiver with
+# a real one before production — see docs/MONITORING.md.
+
+global:
+  resolve_timeout: 5m
+
+route:
+  # Group by alertname so a flapping condition sends one notification thread
+  # rather than one per evaluation.
+  group_by: ["alertname", "severity"]
+
+  # Wait briefly before the first notification so related alerts from the same
+  # incident batch together (an API outage fires APIDown and HighAPILatency).
+  group_wait: 30s
+  group_interval: 5m
+
+  # Do not re-send the same firing alert more often than this. Too short and
+  # people mute the channel; too long and a real incident goes quiet.
+  repeat_interval: 4h
+
+  receiver: default
+
+  routes:
+    # Critical alerts repeat more often and are not batched as long — these
+    # are the "get out of bed" ones: the API is down, or money is being lost.
+    - matchers:
+        - severity = "critical"
+      receiver: critical
+      group_wait: 10s
+      repeat_interval: 1h
+
+inhibit_rules:
+  # When the API is down it will also be slow and failing. Suppress the
+  # downstream noise so the page says one useful thing instead of five.
+  - source_matchers:
+      - alertname = "APIDown"
+    target_matchers:
+      - severity = "warning"
+    equal: ["job"]
+
+receivers:
+  - name: default
+    webhook_configs:
+      # Dev placeholder: Alertmanager posts alert JSON here. Points at the
+      # local MailHog container purely so the delivery path is real and
+      # testable without external services.
+      - url: "http://mailhog:8025/api/v2/messages"
+        send_resolved: true
+
+  - name: critical
+    webhook_configs:
+      - url: "http://mailhog:8025/api/v2/messages"
+        send_resolved: true
+
+# PRODUCTION — replace the receivers above with something that reaches a human.
+# Credentials must come from a mounted secret, never inline in this committed
+# file. Examples:
+#
+#   receivers:
+#     - name: critical
+#       email_configs:
+#         - to: oncall@yourclinic.example
+#           from: alerts@yourclinic.example
+#           smarthost: smtp.example.com:587
+#           auth_username: alerts@yourclinic.example
+#           auth_password_file: /etc/alertmanager/smtp_password
+#       slack_configs:
+#         - api_url_file: /etc/alertmanager/slack_webhook
+#           channel: "#oncall"

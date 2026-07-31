@@ -263,6 +263,20 @@ services:
     restart: unless-stopped
     logging: *default-logging
 
+  # Routes firing alerts to a human. Without it the rules in alerts.yml
+  # evaluate and fire into the void — visible only on Prometheus's own page,
+  # which nobody is watching at 3am.
+  alertmanager:
+    image: prom/alertmanager
+    container_name: helpdoctor_alertmanager
+    ports:
+      - "127.0.0.1:9093:9093"
+    volumes:
+      - ./alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager_data:/alertmanager
+    restart: unless-stopped
+    logging: *default-logging
+
   prometheus:
     image: prom/prometheus
     container_name: helpdoctor_prometheus
@@ -272,10 +286,16 @@ services:
       # `docker compose up` for the WHOLE stack — api included. Only the host
       # port moves; scrape targets and Grafana reach this container over the
       # compose network on 9090, so nothing internal changes.
-      - "9091:9090"
+      # Loopback: metrics describe internals (queue depths, failure counts) and
+      # /metrics itself is unauthenticated when METRICS_TOKEN is unset.
+      - "127.0.0.1:9091:9090"
     volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml
-      - ./alerts.yml:/etc/prometheus/alerts.yml
+      # :ro so a stray container write cannot mangle them. Both MUST exist as
+      # files on the host — docker silently creates a DIRECTORY for a missing
+      # bind-mount source, which is how alerts.yml became an empty directory
+      # and Prometheus loaded zero rules while appearing healthy.
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./alerts.yml:/etc/prometheus/alerts.yml:ro
     restart: unless-stopped
     logging: *default-logging
 
@@ -290,6 +310,7 @@ services:
 
 volumes:
   postgres_data:
+  alertmanager_data:
   minio_data:
   uploads_data:
   media_data:
