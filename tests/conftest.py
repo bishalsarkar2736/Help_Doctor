@@ -1,6 +1,9 @@
 from datetime import date
 import os
 import uuid
+from urllib.parse import quote_plus
+
+from app.config import get_settings
 
 os.environ["TESTING"] = "1"
 os.environ["OTEL_SDK_DISABLED"] = "true"
@@ -50,17 +53,48 @@ import app
 
 # -----------------------------
 # DATABASE
-# Port 5433 is the compose postgres published to the host, so tests run against
-# the same server as the app and there is no second postgres install to keep in
-# sync. Overridable for CI, which may expose postgres somewhere else.
-#
-# Still its OWN database (helpdoctor_user_test): reset_database() drops and
-# recreates the public schema on every run, so it must never be able to point at
-# a database holding real data.
-TEST_DATABASE_URL = os.getenv(
-    "TEST_DATABASE_URL",
-    "postgresql+asyncpg://helpdoctor:helpdoctor$@localhost:5433/helpdoctor_user_test",
-)
+
+
+def _test_database_url() -> str:
+    """Where the suite runs. Never a hardcoded credential.
+
+    This file is committed, so a literal password in it is a published
+    password — which is exactly how the previous one ended up in the
+    repository history and had to be rotated.
+
+    Instead the connection is derived from the application's OWN POSTGRES_*
+    settings (pydantic reads them from the environment, or from .env locally),
+    changing only the database name. That means one credential to manage rather
+    than two, and it is the same server the app uses, so there is no second
+    postgres install drifting out of sync. CI already exports POSTGRES_* for
+    its ephemeral service container, so it works there unchanged.
+    """
+    explicit = os.getenv("TEST_DATABASE_URL")
+    if explicit:
+        return explicit
+
+    settings = get_settings()
+    name = os.getenv("TEST_POSTGRES_DB", "helpdoctor_user_test")
+
+    # reset_database() runs DROP SCHEMA public CASCADE on this database at the
+    # start of the run. If it ever resolved to the application's database, a
+    # test run would destroy live patient records. Refuse rather than trust the
+    # environment to be right.
+    if name == settings.POSTGRES_DB:
+        raise RuntimeError(
+            "Refusing to run: the test database name matches the application "
+            f"database ({name!r}). reset_database() would drop the live schema. "
+            "Set TEST_POSTGRES_DB to a separate database."
+        )
+
+    return (
+        f"postgresql+asyncpg://{settings.POSTGRES_USER}:"
+        f"{quote_plus(settings.POSTGRES_PASSWORD)}@"
+        f"{settings.POSTGRES_HOST}:{settings.POSTGRES_PORT}/{name}"
+    )
+
+
+TEST_DATABASE_URL = _test_database_url()
 
 
 
@@ -90,9 +124,14 @@ async def reset_database():
 
     alembic_cfg = Config("alembic.ini")
 
+    # Escape % for configparser, which reads it as interpolation syntax. The
+    # URL is percent-encoded (a password containing @ or / would otherwise
+    # break parsing), so a password like "pw$" arrives here as "pw%24" and
+    # alembic raises "invalid interpolation syntax" without this. env.py does
+    # the same thing for the same reason.
     alembic_cfg.set_main_option(
         "sqlalchemy.url",
-        TEST_DATABASE_URL.replace("+asyncpg", "")
+        TEST_DATABASE_URL.replace("+asyncpg", "").replace("%", "%%"),
     )
 
     command.upgrade(

@@ -59,7 +59,10 @@ jobs:
           --health-retries 5
 
     env:
-      # Test DB creds must match tests/conftest.py TEST_DATABASE_URL
+      # tests/conftest.py derives its connection from these POSTGRES_* values
+      # (changing only the database name), so there is no separate credential
+      # to keep in sync. These are throwaway values for an ephemeral service
+      # container that exists only for the length of this job.
       POSTGRES_HOST: localhost
       POSTGRES_PORT: "5432"
       POSTGRES_DB: helpdoctor_user_test

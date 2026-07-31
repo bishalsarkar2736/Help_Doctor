@@ -136,7 +136,12 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
     ports:
-      - "5433:5432"
+      # Bound to loopback, NOT 0.0.0.0. This database holds patient records;
+      # publishing it on every interface exposed it to the whole network, and
+      # docker's port publishing bypasses a host firewall's INPUT chain, so a
+      # ufw/iptables rule does not cover it. Host tooling (alembic, the e2e
+      # seeder, psql) reaches it on localhost:5433 exactly as before.
+      - "127.0.0.1:5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
