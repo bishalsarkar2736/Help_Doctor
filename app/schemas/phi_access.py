@@ -27,3 +27,23 @@ class PHIAccessLogItem(BaseModel):
     request_id: str | None
 
     created_at: datetime
+
+
+class PHIAccessLogListResponse(BaseModel):
+    """Paginated access log.
+
+    Mirrors ActivityLogListResponse so the admin surfaces paginate identically.
+    total_count matters more here than elsewhere: a reviewer needs to know
+    whether they are looking at all of a patient's access history or the first
+    page of it, and a silently truncated list is worse than no list.
+    """
+
+    items: list[PHIAccessLogItem]
+
+    total_count: int
+
+    limit: int
+
+    offset: int
+
+    has_next: bool

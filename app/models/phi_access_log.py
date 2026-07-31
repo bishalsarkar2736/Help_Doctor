@@ -49,6 +49,10 @@ class PHIAccessLog(Base):
 
     __tablename__ = "phi_access_logs"
 
+    # Index layout follows the measured query plans (see migration
+    # b7c4a91e5d38). Every read goes through GET /admin/phi-access, which is
+    # clinic-scoped and always filters clinic_id, so the composites lead with
+    # clinic_id and end with created_at to match the ORDER BY.
     __table_args__ = (
         # "Everything that touched this patient, most recent first" — the
         # question a compliance officer or a patient exercising their right of
@@ -57,6 +61,12 @@ class PHIAccessLog(Base):
         # "Everything this clinician looked at" — the insider-threat query.
         Index("ix_phi_access_actor_time", "actor_user_id", "created_at"),
         Index("ix_phi_access_clinic_time", "clinic_id", "created_at"),
+        # The three filtered shapes the admin endpoint actually serves. Without
+        # these the planner falls back to scanning the clinic's whole range and
+        # discarding non-matching rows.
+        Index("ix_phi_access_clinic_patient_time", "clinic_id", "patient_id", "created_at"),
+        Index("ix_phi_access_clinic_actor_time", "clinic_id", "actor_user_id", "created_at"),
+        Index("ix_phi_access_clinic_resource_time", "clinic_id", "resource_type", "created_at"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -64,10 +74,11 @@ class PHIAccessLog(Base):
     # --- who ---
     # No ON DELETE CASCADE: an access record must outlive the account that made
     # it, otherwise deleting a user erases the evidence of what they read.
+    # No standalone index: (actor_user_id) is an exact prefix of
+    # ix_phi_access_actor_time, so a second one only costs writes.
     actor_user_id: Mapped[int] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT"),
         nullable=False,
-        index=True,
     )
 
     # Denormalised on purpose. Roles change; the log must say what the actor
@@ -97,7 +108,12 @@ class PHIAccessLog(Base):
 
     # --- when / correlation ---
     # Ties an access back to the HTTP request in the structured logs.
-    request_id: Mapped[str | None] = mapped_column(String(100), index=True)
+    #
+    # Not indexed. Correlation runs the other way — you have a row here and go
+    # look the id up in the logs — so nothing ever filters on this column. An
+    # index on random UUIDs was the largest on the table and the most expensive
+    # to maintain, on the hottest-write path in the system.
+    request_id: Mapped[str | None] = mapped_column(String(100))
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

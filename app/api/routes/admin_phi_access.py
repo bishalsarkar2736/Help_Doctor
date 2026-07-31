@@ -12,20 +12,24 @@ supplies.
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.postgres import get_db
 from app.models.phi_access_log import PHIAccessLog
 from app.models.user import User, UserRole
-from app.schemas.phi_access import PHIAccessLogItem
+from app.schemas.phi_access import (
+    PHIAccessLogItem,
+    PHIAccessLogListResponse,
+)
 from app.security.rbac import require_roles
 from app.services.tenant_resolver import resolve_clinic_id
+from app.try_except.audit import log_audit_event
 
 router = APIRouter(prefix="/admin/phi-access", tags=["Admin: PHI access log"])
 
 
-@router.get("", response_model=list[PHIAccessLogItem])
+@router.get("", response_model=PHIAccessLogListResponse)
 async def list_phi_access(
     clinic_id: int,
     patient_id: int | None = Query(
@@ -43,8 +47,13 @@ async def list_phi_access(
 ):
     """Query the access log for one clinic.
 
-    Note this endpoint is deliberately NOT itself PHI-logged: it returns
-    identifiers and access metadata, not clinical content.
+    This endpoint is ITSELF audited. Reading who-saw-whom is a privileged act:
+    it reveals which patients were treated, by whom and when, and an audit
+    trail an administrator can read without leaving a trace is one they can
+    quietly mine. The meta-record goes to audit_logs rather than
+    phi_access_logs — it is an action on the log, not a clinical read, and
+    writing it into the same table would let a reviewer's own queries bury the
+    accesses they are reviewing.
     """
 
     resolved_clinic_id = await resolve_clinic_id(
@@ -84,20 +93,52 @@ async def list_phi_access(
     if since is not None:
         query = query.where(PHIAccessLog.created_at >= since)
 
+    # Count over the SAME filters, before pagination. A reviewer needs to know
+    # whether this is a patient's whole access history or just the first page —
+    # a silently truncated audit list is worse than no list.
+    total = await db.scalar(
+        select(func.count()).select_from(query.order_by(None).subquery())
+    )
+
     rows = (await db.execute(query.limit(limit).offset(offset))).all()
 
-    return [
-        PHIAccessLogItem(
-            id=row.id,
-            actor_user_id=row.actor_user_id,
-            actor_role=row.actor_role,
-            clinic_id=row.clinic_id,
-            patient_id=row.patient_id,
-            resource_type=row.resource_type,
-            resource_id=row.resource_id,
-            action=row.action,
-            request_id=row.request_id,
-            created_at=row.created_at,
-        )
-        for row in rows
-    ]
+    await log_audit_event(
+        db=db,
+        event_type="phi_access_log",
+        action="query",
+        user_id=admin.id,
+        resource="phi_access_logs",
+        details={
+            "clinic_id": resolved_clinic_id,
+            # Which slice was examined, so a later review can reconstruct
+            # exactly what this administrator was looking for.
+            "patient_id": patient_id,
+            "actor_user_id": actor_user_id,
+            "resource_type": resource_type,
+            "since": since.isoformat() if since else None,
+            "returned": len(rows),
+            "total_count": total or 0,
+        },
+    )
+
+    return PHIAccessLogListResponse(
+        items=[
+            PHIAccessLogItem(
+                id=row.id,
+                actor_user_id=row.actor_user_id,
+                actor_role=row.actor_role,
+                clinic_id=row.clinic_id,
+                patient_id=row.patient_id,
+                resource_type=row.resource_type,
+                resource_id=row.resource_id,
+                action=row.action,
+                request_id=row.request_id,
+                created_at=row.created_at,
+            )
+            for row in rows
+        ],
+        total_count=total or 0,
+        limit=limit,
+        offset=offset,
+        has_next=(offset + len(rows)) < (total or 0),
+    )

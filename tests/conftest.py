@@ -1006,8 +1006,13 @@ async def prescription_updated_event(
 @pytest_asyncio.fixture
 async def default_clinic(db):
 
+    # Look up BY NAME, not "any clinic". `select(Clinic)` with no filter
+    # returns an arbitrary row, so as soon as a test also builds a second
+    # clinic this fixture could hand back that one — putting the "two" tenants
+    # in the same clinic and making cross-tenant isolation tests silently
+    # assert nothing.
     clinic = await db.scalar(
-        select(Clinic)
+        select(Clinic).where(Clinic.name == "Test Clinic")
     )
 
     if clinic is None:
@@ -1044,4 +1049,129 @@ async def google_user(db):
     await db.flush()
     await db.refresh(user)
 
+    return user
+
+# ---------------------------------------------------------------------------
+# Second clinic — the fixtures cross-tenant isolation tests need.
+#
+# Every existing fixture hangs off `default_clinic`, so nothing in the suite
+# could previously express "clinic A must not see clinic B". These build a
+# genuinely separate tenant: its own clinic row, its own admin and doctor, and
+# its own patient with a real treatment relationship inside that clinic.
+# ---------------------------------------------------------------------------
+
+
+@pytest_asyncio.fixture
+async def second_clinic(db):
+    clinic = Clinic(
+        name="Second Clinic",
+        address="Chattogram",
+        phone="01800000000",
+        email=f"second-{uuid.uuid4()}@test.com",
+        website="https://second.test",
+        primary_color="#0F766E",
+    )
+    db.add(clinic)
+    await db.flush()
+    await db.refresh(clinic)
+    return clinic
+
+
+@pytest_asyncio.fixture
+async def other_clinic_admin(db, second_clinic):
+    user = User(
+        email=f"admin-b-{uuid.uuid4()}@test.com",
+        hashed_password="hash",
+        role=UserRole.ADMIN,
+        is_active=True,
+        clinic_id=second_clinic.id,
+    )
+    db.add(user)
+    await db.flush()
+
+    token = create_access_token(
+        data={"sub": str(user.id), "role": UserRole.ADMIN.value}
+    )
+    return {
+        "user": user,
+        "clinic": second_clinic,
+        "headers": {"Authorization": f"Bearer {token}"},
+    }
+
+
+@pytest_asyncio.fixture
+async def other_clinic_doctor(db, second_clinic):
+    user = User(
+        email=f"doctor-b-{uuid.uuid4()}@test.com",
+        hashed_password="hash",
+        role=UserRole.DOCTOR,
+        is_active=True,
+        clinic_id=second_clinic.id,
+    )
+    db.add(user)
+    await db.flush()
+
+    doctor = Doctor(
+        user_id=user.id,
+        clinic_id=second_clinic.id,
+        specialization="Dermatology",
+        experience_years=4,
+        bio="Doctor at the second clinic",
+        status=DoctorStatus.APPROVED,
+    )
+    db.add(doctor)
+    await db.flush()
+
+    token = create_access_token(
+        data={"sub": str(user.id), "role": UserRole.DOCTOR.value}
+    )
+    return {
+        "user": user,
+        "doctor": doctor,
+        "clinic": second_clinic,
+        "headers": {"Authorization": f"Bearer {token}"},
+    }
+
+
+@pytest_asyncio.fixture
+async def other_clinic_patient(db, second_clinic, other_clinic_doctor):
+    """A patient of clinic B, with an appointment there.
+
+    The appointment matters: it gives clinic B's doctor a legitimate treatment
+    relationship, so a cross-tenant test is comparing "allowed in my clinic"
+    against "denied in yours" rather than two flavours of denial.
+    """
+
+    user = User(
+        email=f"patient-b-{uuid.uuid4()}@test.com",
+        hashed_password="hash",
+        role=UserRole.PATIENT,
+        is_active=True,
+    )
+    db.add(user)
+    await db.flush()
+
+    db.add(
+        Patient(
+            user_id=user.id,
+            phone="01900000000",
+            address="Chattogram",
+            date_of_birth=date(1992, 3, 4),
+            gender="FEMALE",
+            allergies="Penicillin",
+        )
+    )
+
+    db.add(
+        Appointment(
+            patient_id=user.id,
+            doctor_id=other_clinic_doctor["doctor"].id,
+            clinic_id=second_clinic.id,
+            consultation_fee=400,
+            scheduled_at=utc_now(),
+            status=AppointmentStatus.COMPLETED,
+            completed_at=utc_now(),
+        )
+    )
+    await db.flush()
     return user
