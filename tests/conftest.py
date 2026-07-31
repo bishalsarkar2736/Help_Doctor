@@ -80,11 +80,20 @@ def _test_database_url() -> str:
     # start of the run. If it ever resolved to the application's database, a
     # test run would destroy live patient records. Refuse rather than trust the
     # environment to be right.
-    if name == settings.POSTGRES_DB:
+    #
+    # CI is the one legitimate exception: its postgres is a service container
+    # created for the job and thrown away with it, so the application database
+    # and the test database are deliberately the same throwaway. That has to be
+    # stated explicitly — never inferred — so this can't quietly pass on a
+    # workstation where the same name means live data.
+    same_name_allowed = os.getenv("TEST_DB_IS_DISPOSABLE") == "1"
+
+    if name == settings.POSTGRES_DB and not same_name_allowed:
         raise RuntimeError(
             "Refusing to run: the test database name matches the application "
-            f"database ({name!r}). reset_database() would drop the live schema. "
-            "Set TEST_POSTGRES_DB to a separate database."
+            f"database ({name!r}). reset_database() would drop its schema. "
+            "Point TEST_POSTGRES_DB at a separate database, or — only if this "
+            "postgres is disposable, as in CI — set TEST_DB_IS_DISPOSABLE=1."
         )
 
     return (

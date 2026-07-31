@@ -38,7 +38,7 @@ jobs:
         image: postgres:16
         env:
           POSTGRES_USER: helpdoctor
-          POSTGRES_PASSWORD: helpdoctor$
+          POSTGRES_PASSWORD: ci_ephemeral_not_a_secret
           POSTGRES_DB: helpdoctor_user_test
         ports:
           - 5432:5432
@@ -63,11 +63,17 @@ jobs:
       # (changing only the database name), so there is no separate credential
       # to keep in sync. These are throwaway values for an ephemeral service
       # container that exists only for the length of this job.
+      #
+      # Here the application database and the test database are deliberately
+      # the same one, which conftest otherwise refuses — it drops the schema,
+      # and on a workstation that would mean live patient data. Safe only
+      # because this postgres is created for the job and destroyed with it.
+      TEST_DB_IS_DISPOSABLE: "1"
       POSTGRES_HOST: localhost
       POSTGRES_PORT: "5432"
       POSTGRES_DB: helpdoctor_user_test
       POSTGRES_USER: helpdoctor
-      POSTGRES_PASSWORD: helpdoctor$
+      POSTGRES_PASSWORD: ci_ephemeral_not_a_secret
       REDIS_URL: redis://localhost:6379/0
       REDIS_HOST: localhost
       REDIS_PORT: "6379"
