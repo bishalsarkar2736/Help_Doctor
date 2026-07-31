@@ -205,7 +205,12 @@ services:
     image: prom/prometheus
     container_name: helpdoctor_prometheus
     ports:
-      - "9090:9090"
+      # Published on 9091, not 9090: a distro-packaged prometheus commonly runs
+      # as a host service on 9090, and the resulting bind failure aborts
+      # `docker compose up` for the WHOLE stack — api included. Only the host
+      # port moves; scrape targets and Grafana reach this container over the
+      # compose network on 9090, so nothing internal changes.
+      - "9091:9090"
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml
       - ./alerts.yml:/etc/prometheus/alerts.yml

@@ -50,7 +50,17 @@ import app
 
 # -----------------------------
 # DATABASE
-TEST_DATABASE_URL = "postgresql+asyncpg://helpdoctor:helpdoctor$@localhost/helpdoctor_user_test"
+# Port 5433 is the compose postgres published to the host, so tests run against
+# the same server as the app and there is no second postgres install to keep in
+# sync. Overridable for CI, which may expose postgres somewhere else.
+#
+# Still its OWN database (helpdoctor_user_test): reset_database() drops and
+# recreates the public schema on every run, so it must never be able to point at
+# a database holding real data.
+TEST_DATABASE_URL = os.getenv(
+    "TEST_DATABASE_URL",
+    "postgresql+asyncpg://helpdoctor:helpdoctor$@localhost:5433/helpdoctor_user_test",
+)
 
 
 
