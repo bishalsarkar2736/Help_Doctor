@@ -1,6 +1,7 @@
 from sqlalchemy import String, Boolean,DateTime,Enum as SQLEnum, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base
+from app.security.field_encryption import EncryptedSecret
 from datetime import datetime
 from app.core.time import UTC
 from enum import Enum
@@ -94,15 +95,23 @@ class User(Base):
     )
 
     # --- MFA (TOTP) ---
-    # NOTE: the secret is stored as-is; encrypting it at rest is a P1 follow-up.
     mfa_enabled: Mapped[bool] = mapped_column(
         Boolean,
         default=False,
         server_default="false",
         nullable=False,
     )
+    # ENCRYPTED AT REST. A TOTP secret is a symmetric seed, not a password —
+    # whoever holds it can mint valid codes forever, so a leaked dump or a
+    # stolen backup would silently defeat every second factor in the system
+    # with nothing in the audit trail to show for it.
+    #
+    # EncryptedSecret handles this in the mapper, so this attribute still reads
+    # and writes as a plain string everywhere else. 255 rather than 64 because
+    # a Fernet token of a 32-character seed is ~140 characters; the old width
+    # would have truncated the ciphertext and destroyed the secret.
     mfa_secret: Mapped[str | None] = mapped_column(
-        String(64),
+        EncryptedSecret(255),
         nullable=True,
     )
 

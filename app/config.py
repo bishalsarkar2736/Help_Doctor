@@ -94,6 +94,18 @@ class Settings(BaseSettings):
     # require_mfa_enrolled refuse until enrolment is finished.
     MFA_REQUIRED_ROLES: str = "super_admin"
 
+    # Comma-separated urlsafe-base64 Fernet keys used to encrypt
+    # users.mfa_secret at rest. The FIRST encrypts; ALL are tried when
+    # decrypting, which is what allows rotation without downtime.
+    #
+    # Unset falls back to a key derived from JWT_SECRET_KEY (HKDF, domain
+    # separated). That keeps a default deployment working, but couples them:
+    # rotating JWT_SECRET_KEY then makes every stored MFA secret
+    # undecryptable. Set a dedicated key before you ever rotate it.
+    #
+    #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    MFA_SECRET_ENCRYPTION_KEYS: str = ""
+
     # --- PHI access log retention ---
     #
     # How long a record of "who read which patient's data" is kept before it is
