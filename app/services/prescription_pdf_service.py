@@ -4,6 +4,7 @@ from io import BytesIO
 from xml.sax.saxutils import escape
 
 from app.security.file_validation import ensure_decodable_image
+from app.services.storage import get_storage
 from reportlab.lib.colors import Color
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
@@ -619,11 +620,10 @@ def generate_prescription_pdf(
         prescription.doctor
         and prescription.doctor.signature_file_path
     ):
-        signature_path = Path(
-            prescription.doctor.signature_file_path
-        )
+        storage = get_storage()
+        signature_key = prescription.doctor.signature_file_path
 
-        if signature_path.exists():
+        if storage.exists(signature_key):
 
             # Uploads are decode-checked now, but files predating that check
             # (or corrupted on disk) must not take the whole prescription down
@@ -633,18 +633,21 @@ def generate_prescription_pdf(
             # reportlab's Image is lazy: it only reads the file during
             # doc.build(), so wrapping the constructor catches nothing. The
             # bytes have to be checked here instead.
-            signature_ok = True
+            signature_bytes: bytes | None = None
             try:
-                ensure_decodable_image(signature_path.read_bytes())
+                signature_bytes = storage.read(signature_key)
+                ensure_decodable_image(signature_bytes)
             except (ValueError, OSError):
-                signature_ok = False
+                signature_bytes = None
                 logger.warning(
                     "prescription_pdf_signature_unreadable",
                     extra={
                         "prescription_id": prescription.id,
-                        "signature_path": str(signature_path),
+                        "signature_key": signature_key,
                     },
                 )
+
+            signature_ok = signature_bytes is not None
 
             if signature_ok:
                 elements.append(
@@ -658,9 +661,13 @@ def generate_prescription_pdf(
                     Spacer(1, 10)
                 )
 
+                # Fed from bytes rather than a path so this works unchanged
+                # once storage is remote. reportlab's Image is lazy and keeps
+                # a reference to the buffer until doc.build() runs, so the
+                # BytesIO must not be closed here.
                 elements.append(
                     Image(
-                        str(signature_path),
+                        BytesIO(signature_bytes),
                         width=160,
                         height=60,
                     )

@@ -9,7 +9,10 @@ from app.models.doctor import Doctor
 
 from pathlib import Path
 
+from fastapi import Response
 from fastapi.responses import FileResponse
+
+from app.services.storage import get_storage
 
 from app.schemas.admin_doctor import AdminDoctorListItem, DoctorRejectRequest
 from app.schemas.doctor_document import DoctorDocumentResponse
@@ -179,12 +182,26 @@ async def download_doctor_document(
     if document is None:
         raise NotFoundError("Document not found")
 
-    path = Path(document.file_path)
-    if not path.is_file():
+    storage = get_storage()
+    if not storage.exists(document.file_path):
         raise NotFoundError("Stored file is missing")
 
-    return FileResponse(
-        path,
-        media_type=document.content_type or "application/octet-stream",
-        filename=document.original_filename or path.name,
+    filename = (
+        document.original_filename or Path(document.file_path).name
+    )
+    media_type = document.content_type or "application/octet-stream"
+
+    # FileResponse streams from disk without buffering the whole file, so it
+    # stays the better option while storage is local. A backend with no local
+    # path (S3/MinIO) returns None and we fall back to streaming the bytes.
+    path = storage.local_path(document.file_path)
+    if path is not None:
+        return FileResponse(path, media_type=media_type, filename=filename)
+
+    return Response(
+        content=storage.read(document.file_path),
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"'
+        },
     )

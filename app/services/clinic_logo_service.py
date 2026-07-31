@@ -1,4 +1,3 @@
-from pathlib import Path
 from uuid import uuid4
 from sqlalchemy import select
 from fastapi import UploadFile
@@ -10,14 +9,13 @@ from app.try_except.exceptions import (
     NotFoundError,
 )
 from app.security.file_validation import ensure_image
+from app.services.storage import get_storage
 
 
-UPLOAD_DIR = Path("uploads/clinic_logos")
-
-UPLOAD_DIR.mkdir(
-    parents=True,
-    exist_ok=True,
-)
+# Key prefix, not a directory. Storage.write creates whatever the backend
+# needs; the import-time mkdir that used to live here ran on every process
+# start, including ones that never upload a logo.
+UPLOAD_PREFIX = "uploads/clinic_logos"
 
 MAX_LOGO_SIZE_BYTES = 2 * 1024 * 1024
 
@@ -65,15 +63,11 @@ async def upload_clinic_logo(
         raise BadRequestError("File content is not a valid image")
 
     extension = ALLOWED_LOGO_CONTENT_TYPES[detected]
-    file_path = UPLOAD_DIR / f"{uuid4()}{extension}"
+    key = f"{UPLOAD_PREFIX}/{uuid4()}{extension}"
 
-    file_path.write_bytes(
-        content
-    )
+    get_storage().write(key, content)
 
-    clinic.logo_url = str(
-        file_path
-    )
+    clinic.logo_url = key
 
     await db.flush()
 

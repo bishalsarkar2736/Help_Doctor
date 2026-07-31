@@ -6,7 +6,6 @@ header.
 """
 
 import logging
-from pathlib import Path
 from uuid import uuid4
 
 from fastapi import UploadFile
@@ -16,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.doctor import Doctor, DoctorStatus
 from app.models.doctor_document import DoctorDocument, DoctorDocumentType
 from app.models.user import User, UserRole
+from app.services.storage import get_storage
 from app.security.file_validation import ensure_document
 from app.try_except.exceptions import (
     BadRequestError,
@@ -25,7 +25,8 @@ from app.try_except.exceptions import (
 
 logger = logging.getLogger(__name__)
 
-UPLOAD_DIR = Path("uploads/doctor_documents")
+# Key prefix, not a directory — see app/services/storage.py.
+UPLOAD_PREFIX = "uploads/doctor_documents"
 MAX_DOCUMENT_BYTES = 5 * 1024 * 1024  # 5 MB
 
 ALLOWED_DOCUMENT_TYPES = {
@@ -73,11 +74,14 @@ async def upload_doctor_document(
             "Only PDF, PNG, JPEG or WEBP files are allowed"
         )
 
-    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    storage = get_storage()
 
     extension = ALLOWED_DOCUMENT_TYPES[detected]
-    path = UPLOAD_DIR / f"doctor{doctor.id}_{doc_type.value}_{uuid4().hex}{extension}"
-    path.write_bytes(content)
+    key = (
+        f"{UPLOAD_PREFIX}/"
+        f"doctor{doctor.id}_{doc_type.value}_{uuid4().hex}{extension}"
+    )
+    storage.write(key, content)
 
     # One document per type: replace the previous one so review stays simple.
     existing = await db.scalars(
@@ -87,13 +91,13 @@ async def upload_doctor_document(
         )
     )
     for old in existing:
-        Path(old.file_path).unlink(missing_ok=True)
+        storage.delete(old.file_path)
         await db.delete(old)
 
     document = DoctorDocument(
         doctor_id=doctor.id,
         doc_type=doc_type,
-        file_path=str(path),
+        file_path=key,
         original_filename=file.filename,
         content_type=detected,
         size_bytes=len(content),

@@ -2,7 +2,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.domain.policies.doctor_policy import DoctorPolicy
 
-from pathlib import Path
 from datetime import datetime
 
 from fastapi import UploadFile
@@ -14,6 +13,7 @@ from app.models.doctor import Doctor, DoctorStatus
 from app.models.user import User
 from app.try_except.exceptions import BadRequestError,NotFoundError
 from app.security.file_validation import ensure_image
+from app.services.storage import get_storage
 
 from app.schemas.doctor import (
     DoctorProfileUpdate,
@@ -184,22 +184,13 @@ async def upload_doctor_signature(
 
     extension = ".jpg" if detected == "image/jpeg" else ".png"
 
-    signature_dir = Path(
-        "media/signatures"
-    )
+    # Key, not a path — see app/services/storage.py. Same string the old code
+    # stored, so existing rows stay valid.
+    key = f"media/signatures/doctor_{doctor.id}{extension}"
 
-    signature_dir.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
+    get_storage().write(key, content)
 
-    filepath = signature_dir / f"doctor_{doctor.id}{extension}"
-
-    filepath.write_bytes(content)
-
-    doctor.signature_file_path = (
-        str(filepath)
-    )
+    doctor.signature_file_path = key
 
     doctor.signature_uploaded_at = (
         datetime.now(UTC)

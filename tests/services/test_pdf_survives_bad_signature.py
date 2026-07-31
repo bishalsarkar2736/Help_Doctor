@@ -12,11 +12,29 @@ from PIL import Image
 
 from app.models.prescription import PrescriptionStatus
 from app.services.prescription_pdf_service import generate_prescription_pdf
+from app.services.storage import LocalFilesystemStorage, set_storage
 
 HEADER_ONLY_PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 400
 
 
-def _prescription(signature_path):
+@pytest.fixture
+def storage(tmp_path):
+    """Point the storage seam at a temp root for the duration of one test.
+
+    signature_file_path holds a storage KEY relative to that root — the shape
+    real rows use ("media/signatures/doctor_1.png"). An absolute path is
+    rejected by design, so a test writing one would be exercising something
+    production never does.
+    """
+    backend = LocalFilesystemStorage(root=tmp_path)
+    set_storage(backend)
+    try:
+        yield backend
+    finally:
+        set_storage(None)
+
+
+def _prescription(signature_key):
     """Minimal duck-typed stand-in; the PDF builder only reads attributes."""
 
     return SimpleNamespace(
@@ -34,31 +52,31 @@ def _prescription(signature_path):
         patient=SimpleNamespace(full_name="Test Patient"),
         doctor_id=2,
         doctor=SimpleNamespace(
-            signature_file_path=str(signature_path) if signature_path else None,
+            signature_file_path=signature_key,
             user=SimpleNamespace(full_name="Dr Test"),
         ),
         items=[],
     )
 
 
-def test_pdf_renders_despite_corrupt_signature(tmp_path):
-    bad = tmp_path / "doctor_9.png"
-    bad.write_bytes(HEADER_ONLY_PNG)
+def test_pdf_renders_despite_corrupt_signature(storage):
+    key = "media/signatures/doctor_9.png"
+    storage.write(key, HEADER_ONLY_PNG)
 
-    pdf = generate_prescription_pdf(_prescription(bad))
+    pdf = generate_prescription_pdf(_prescription(key))
 
     assert pdf[:5] == b"%PDF-"
     # The doctor's printed name still identifies the prescriber.
     assert b"Dr Test" in pdf or len(pdf) > 500
 
 
-def test_pdf_includes_a_valid_signature(tmp_path):
-    good = tmp_path / "doctor_8.png"
+def test_pdf_includes_a_valid_signature(storage):
+    key = "media/signatures/doctor_8.png"
     buf = io.BytesIO()
     Image.new("RGB", (200, 60), (0, 0, 120)).save(buf, format="PNG")
-    good.write_bytes(buf.getvalue())
+    storage.write(key, buf.getvalue())
 
-    pdf = generate_prescription_pdf(_prescription(good))
+    pdf = generate_prescription_pdf(_prescription(key))
 
     assert pdf[:5] == b"%PDF-"
 
