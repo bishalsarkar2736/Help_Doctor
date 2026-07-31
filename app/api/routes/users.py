@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends
 
 from app.models.user import UserRole,User
 from app.security.rbac import require_roles
+from app.security.mfa_policy import mfa_enrollment_pending, mfa_required_for
 from app.services.presence_service import (
     is_user_online,
 )
@@ -25,6 +26,12 @@ async def get_me(
         "role": user.role,
         "clinic_id": user.clinic_id,
         "mfa_enabled": user.mfa_enabled,
+        # Whether this user's ROLE mandates a second factor, and whether they
+        # still owe enrolment. The client uses these to route to the enrolment
+        # screen rather than letting the user discover the requirement as a
+        # 403 partway through a privileged action.
+        "mfa_required": mfa_required_for(user.role),
+        "mfa_enrollment_required": mfa_enrollment_pending(user),
     }
 
 

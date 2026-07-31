@@ -42,6 +42,25 @@ class Settings(BaseSettings):
     # together, never one alone.
     CELERY_WORKER_CONCURRENCY: int = Field(default=4, ge=1, le=64)
 
+    # --- Multi-factor authentication ---
+    #
+    # Roles for which TOTP is mandatory, as a comma-separated list. Rolled out
+    # in descending order of blast radius — widen this as each group enrols:
+    #
+    #   super_admin  -> admin  -> doctor  -> receptionist
+    #
+    # super_admin first because it is the platform plane: a handful of accounts
+    # that can reach every clinic. receptionist last because it is the largest
+    # group and the least privileged, so it costs the most enrolment effort for
+    # the least risk reduction.
+    #
+    # A role listed here does NOT lose the ability to log in without MFA —
+    # enrolling requires an authenticated session, so blocking login would lock
+    # the account out permanently with no way back. Instead the login response
+    # carries mfa_enrollment_required, and privileged endpoints guarded by
+    # require_mfa_enrolled refuse until enrolment is finished.
+    MFA_REQUIRED_ROLES: str = "super_admin"
+
     # --- PHI access log retention ---
     #
     # How long a record of "who read which patient's data" is kept before it is
@@ -188,6 +207,20 @@ class Settings(BaseSettings):
             for origin in self.ALLOWED_ORIGINS.split(",")
             if origin.strip()
         ]
+
+    @property
+    def mfa_required_roles(self) -> set[str]:
+        """Roles that must enrol in TOTP, lowercased.
+
+        Lowercased because UserRole values are lowercase in this codebase, and
+        a config of "SUPER_ADMIN" silently matching nothing would disable the
+        requirement without any error.
+        """
+        return {
+            role.strip().lower()
+            for role in self.MFA_REQUIRED_ROLES.split(",")
+            if role.strip()
+        }
 
     @field_validator("DEBUG")
     @classmethod

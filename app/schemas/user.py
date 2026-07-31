@@ -83,6 +83,13 @@ class Token(BaseModel):
     refresh_token: str
     token_type : str = 'bearer'
 
+    # This account's role mandates a second factor and it has not been set up
+    # yet. The token is still issued — enrolling requires an authenticated
+    # session, so refusing would lock the account out permanently — and the
+    # client uses this to route straight to enrolment. Defaults to False so
+    # every other issuance path (refresh, google) is unaffected.
+    mfa_enrollment_required: bool = False
+
 class TokenPayload(BaseModel):
     sub:int
     role:UserRole

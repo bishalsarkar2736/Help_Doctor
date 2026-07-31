@@ -7,6 +7,7 @@ from app.models.clinic import Clinic, ClinicStatus
 from app.schemas.user import UserCreate, SELF_REGISTERABLE_ROLES
 from app.security.jwt import hash_password,verify_password
 from app.security.mfa import verify_code
+from app.security.mfa_policy import mfa_enrollment_pending
 from app.security.google_oauth import verify_google_token
 from app.config import get_settings
 
@@ -106,6 +107,12 @@ async def _issue_tokens(
         "access_token": access_token,
         "refresh_token": refresh_token,
         "token_type": "bearer",
+        # This user's role mandates a second factor and they have not set one
+        # up. Login still succeeds on purpose — enrolling needs an
+        # authenticated session, so refusing here would lock the account out
+        # with no route back (see app/security/mfa_policy.py). The client sends
+        # them to enrolment; privileged endpoints refuse until it is done.
+        "mfa_enrollment_required": mfa_enrollment_pending(user),
     }
 
 

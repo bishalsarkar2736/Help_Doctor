@@ -22,6 +22,7 @@ from app.schemas.phi_access import (
     PHIAccessLogItem,
     PHIAccessLogListResponse,
 )
+from app.security.mfa_policy import require_mfa_enrolled
 from app.security.rbac import require_roles
 from app.services.tenant_resolver import resolve_clinic_id
 from app.try_except.audit import log_audit_event
@@ -44,6 +45,11 @@ async def list_phi_access(
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_roles(UserRole.ADMIN)),
+    # Reading who-saw-whom is the most privileged read in the system: it
+    # reveals which patients were treated, by whom and when, across a whole
+    # clinic. Once the admin role is included in MFA_REQUIRED_ROLES, a session
+    # without a second factor cannot reach it.
+    _mfa: User = Depends(require_mfa_enrolled),
 ):
     """Query the access log for one clinic.
 
