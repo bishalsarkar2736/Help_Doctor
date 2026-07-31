@@ -37,8 +37,22 @@ async def admin_list_doctors(
     limit: int = Query(20, le=100),
     offset: int = Query(0),
 ):
+    # Columns, not entities — Doctor and User both declare lazy="selectin"
+    # relationships that cascade across the clinic on every row fetched.
     result = await db.execute(
-        select(Doctor, User)
+        select(
+            Doctor.id.label("doctor_id"),
+            Doctor.specialization,
+            Doctor.experience_years,
+            Doctor.bio,
+            Doctor.status,
+            Doctor.approved_at,
+            Doctor.rejected_at,
+            Doctor.rejection_reason,
+            User.full_name,
+            User.email,
+            User.is_active,
+        )
         .join(User, Doctor.user_id == User.id)
         .limit(limit)
         .offset(offset)
@@ -48,19 +62,19 @@ async def admin_list_doctors(
 
     return [
         AdminDoctorListItem(
-            id=doctor.id,
-            name=user.full_name,
-            email=user.email,
-            specialization=doctor.specialization,
-            experience_years=doctor.experience_years,
-            bio=doctor.bio,
-            status=doctor.status,
-            is_active=user.is_active,
-            approved_at=doctor.approved_at,
-            rejected_at=doctor.rejected_at,
-            rejection_reason=doctor.rejection_reason,
+            id=row.doctor_id,
+            name=row.full_name,
+            email=row.email,
+            specialization=row.specialization,
+            experience_years=row.experience_years,
+            bio=row.bio,
+            status=row.status,
+            is_active=row.is_active,
+            approved_at=row.approved_at,
+            rejected_at=row.rejected_at,
+            rejection_reason=row.rejection_reason,
         )
-        for doctor, user in rows
+        for row in rows
     ]
 
 

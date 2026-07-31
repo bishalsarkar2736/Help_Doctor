@@ -55,8 +55,19 @@ async def list_users(
     if not admin.clinic_id:
         return []
 
+    # Columns, not entities: AdminUserItem exposes six scalars, but selecting
+    # User as a mapped object pulled in its lazy="selectin" clinic relationship,
+    # which cascades into every doctor, appointment, prescription, payment and
+    # admin of that clinic — once per row returned.
     query = (
-        select(User)
+        select(
+            User.id,
+            User.email,
+            User.full_name,
+            User.role,
+            User.is_active,
+            User.clinic_id,
+        )
         # Deleted accounts are retained for their medical/financial history,
         # but they are not staff any more — keep them out of the roster.
         .where(User.clinic_id == admin.clinic_id, User.deleted_at.is_(None))
@@ -86,10 +97,19 @@ async def list_users(
     # 📄 PAGINATION
     query = query.limit(limit).offset(offset)
 
-    result = await db.execute(query)
-    users = result.scalars().all()
+    rows = (await db.execute(query)).all()
 
-    return users
+    return [
+        AdminUserItem(
+            id=row.id,
+            email=row.email,
+            full_name=row.full_name,
+            role=row.role,
+            is_active=row.is_active,
+            clinic_id=row.clinic_id,
+        )
+        for row in rows
+    ]
 
 
 # 🔹 Change role

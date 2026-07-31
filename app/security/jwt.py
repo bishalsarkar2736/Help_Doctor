@@ -90,55 +90,6 @@ def decode_access_token(token: str) -> Optional[dict]:
 # =========================
 # FASTAPI DEPENDENCY
 # =========================
-# def get_current_user(token: str = Depends(oauth2_schema)):
-#     payload = decode_access_token(token)
-
-#     if payload is None:
-#         raise HTTPException(
-#             status_code=status.HTTP_401_UNAUTHORIZED,
-#             detail="Invalid or expired token",
-#         )
-
-#     return payload
-
-# async def get_current_user(
-#     token: str = Depends(oauth2_schema),
-# ) -> User:
-#     payload = decode_access_token(token)
-
-#     if payload is None:
-#         raise HTTPException(
-#             status_code=status.HTTP_401_UNAUTHORIZED,
-#             detail="Invalid or expired token",
-#         )
-
-#     user_id = payload.get("sub")
-#     if not user_id:
-#         raise HTTPException(
-#             status_code=status.HTTP_401_UNAUTHORIZED,
-#             detail="Invalid token payload",
-#         )
-
-#     async with AsyncSessionLocal() as db:
-#         user = await db.get(User, int(user_id))
-
-#         if not user:
-#             raise HTTPException(
-#                 status_code=status.HTTP_401_UNAUTHORIZED,
-#                 detail="User not found",
-#             )
-
-#         if not user.is_active:
-#             raise HTTPException(
-#                 status_code=status.HTTP_403_FORBIDDEN,
-#                 detail="Inactive user",
-#             )
-        
-#         print("JWT PAYLOAD:", payload)
-#         print("USER FROM DB:", user.id, user.role)
-
-#         return user
-
 
 async def get_current_user(
     token: str = Depends(oauth2_schema),

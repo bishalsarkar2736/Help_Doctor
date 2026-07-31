@@ -1,5 +1,6 @@
 from datetime import datetime
 from sqlalchemy import select, func
+from sqlalchemy.orm import lazyload
 from sqlalchemy.ext.asyncio import AsyncSession
 import re
 from app.core.time import UTC
@@ -21,8 +22,18 @@ async def get_clinic_by_id(
     clinic_id: int,
 ) -> Clinic | None:
 
+    # lazyload("*") scopes off Clinic's five lazy="selectin" relationships —
+    # doctors, appointments, prescriptions, payments and admins — which loaded
+    # the clinic's ENTIRE dataset on every call to this helper. It has 10+ call
+    # sites, including the invitation and prescription paths.
+    #
+    # Still returns a real, mutable Clinic entity, which callers rely on
+    # (clinic_service updates fields and soft-delete sets status/deleted_at).
+    # Audited first: no code anywhere reads clinic.doctors / .appointments /
+    # .prescriptions / .payments / .admins — only column attributes.
     result = await db.execute(
         select(Clinic)
+        .options(lazyload("*"))
         .where(
             Clinic.id == clinic_id
         )

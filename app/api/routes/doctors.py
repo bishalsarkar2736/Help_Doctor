@@ -232,8 +232,27 @@ async def get_my_doctor_profile(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_roles(UserRole.DOCTOR)),
 ):
+    # Columns, not entities — this runs on every doctor screen load and cost
+    # ~90-125ms because selecting Doctor and Clinic dragged in their
+    # lazy="selectin" relationships and cascaded across the clinic.
     result = await db.execute(
-        select(Doctor, Clinic)
+        select(
+            Doctor.id.label("doctor_id"),
+            Doctor.user_id,
+            Doctor.specialization,
+            Doctor.experience_years,
+            Doctor.bio,
+            Doctor.qualification,
+            Doctor.medical_registration_number,
+            Doctor.consultation_fee,
+            Doctor.status,
+            Doctor.rejection_reason,
+            Doctor.clinic_id,
+            Doctor.signature_file_path,
+            Doctor.signature_uploaded_at,
+            Doctor.created_at,
+            Clinic.name.label("clinic_name"),
+        )
         .outerjoin(Clinic, Doctor.clinic_id == Clinic.id)
         .where(Doctor.user_id == current_user.id)
     )
@@ -242,24 +261,23 @@ async def get_my_doctor_profile(
     if row is None:
         raise NotFoundError("Doctor profile not found")
 
-    doctor, clinic = row
-
     return DoctorMe(
-        id=doctor.id,
-        user_id=doctor.user_id,
-        specialization=doctor.specialization,
-        experience_years=doctor.experience_years,
-        bio=doctor.bio,
-        qualification=doctor.qualification,
-        medical_registration_number=doctor.medical_registration_number,
-        consultation_fee=doctor.consultation_fee,
-        status=doctor.status,
-        rejection_reason=doctor.rejection_reason,
-        clinic_id=doctor.clinic_id,
-        clinic_name=clinic.name if clinic else None,
-        signature_file_path=doctor.signature_file_path,
-        signature_uploaded_at=doctor.signature_uploaded_at,
-        created_at=doctor.created_at,
+        id=row.doctor_id,
+        user_id=row.user_id,
+        specialization=row.specialization,
+        experience_years=row.experience_years,
+        bio=row.bio,
+        qualification=row.qualification,
+        medical_registration_number=row.medical_registration_number,
+        consultation_fee=row.consultation_fee,
+        status=row.status,
+        rejection_reason=row.rejection_reason,
+        clinic_id=row.clinic_id,
+        # outerjoin: NULL when the doctor is not attached to a clinic.
+        clinic_name=row.clinic_name,
+        signature_file_path=row.signature_file_path,
+        signature_uploaded_at=row.signature_uploaded_at,
+        created_at=row.created_at,
     )
 
 
