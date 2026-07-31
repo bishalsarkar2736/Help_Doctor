@@ -62,7 +62,12 @@ services:
         # environment by exporting them before `docker compose build`.
         # NOTE: deliberately NOT sourced from .env — that file is the backend's
         # own config and its Settings model rejects unknown keys.
-        VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
+        # Relative on purpose: nginx proxies /api/ to the api service on the
+        # same origin, so the browser makes no cross-origin request and the CSP
+        # can name connect-src 'self'. Override with an absolute origin only if
+        # the API really is on another host — and then widen connect-src in
+        # nginx.conf to match, or every request is blocked.
+        VITE_API_URL: ${VITE_API_URL:-/api}
         VITE_GOOGLE_CLIENT_ID: ${VITE_GOOGLE_CLIENT_ID:-339449117887-g6n4qn68ofspacja5bvl7l86u4elmhbc.apps.googleusercontent.com}
         VITE_VAPID_PUBLIC_KEY: ${VITE_VAPID_PUBLIC_KEY:-BKbGoq0W2_ReS1ep6dFOOGikg1Y-wfpXIqUJ0CktdD6zifotRnR5tKny5Nyb8UU8gGS-2NTySVCR8rPHTClZE08}
     container_name: helpdoctor_web
