@@ -59,6 +59,12 @@ from app.services.prescription_template_apply_service import (
     get_template_items,
 )
 
+# Shortest acceptable justification for prescribing through an allergy warning.
+# Long enough to exclude "ok" / "x" / "n/a" — a trail full of those is no better
+# than no reason at all — while staying short enough not to obstruct a
+# prescriber acting in an emergency.
+MIN_ALLERGY_OVERRIDE_REASON = 10
+
 
 async def create_prescription(
     db: AsyncSession,
@@ -125,6 +131,19 @@ async def create_prescription(
             "Patient has a recorded allergy to: "
             + ", ".join(allergy_conflicts)
             + ". Review, then resubmit with override to proceed."
+        )
+
+    # Overriding requires a stated clinical justification. Checked here rather
+    # than on the schema because only this point knows whether a real conflict
+    # exists — a prescriber who sets the flag with no allergy present should
+    # not be forced to explain an override that never happened.
+    override_reason = (data.allergy_override_reason or "").strip()
+
+    if allergy_conflicts and len(override_reason) < MIN_ALLERGY_OVERRIDE_REASON:
+        raise BadRequestError(
+            "Overriding an allergy warning requires a clinical reason of at "
+            f"least {MIN_ALLERGY_OVERRIDE_REASON} characters, recorded in the "
+            "audit trail."
         )
 
     prescription = Prescription(
@@ -194,7 +213,10 @@ async def create_prescription(
     )
 
     if allergy_conflicts:
-        # An explicit, audited override of the allergy block.
+        # An explicit, audited override of the allergy block. The reason is the
+        # point of this record: without it the trail shows that a prescriber
+        # went through an allergy warning but not what clinical judgement they
+        # applied, which is the first thing a safety review needs.
         await log_audit_event(
             db=db,
             event_type="prescription",
@@ -205,6 +227,12 @@ async def create_prescription(
                 "prescription_id": prescription.id,
                 "patient_id": appointment.patient_id,
                 "conflicts": allergy_conflicts,
+                "reason": override_reason,
+                # The allergens as recorded at the time. The patient's allergy
+                # list can be edited later; the trail must show what the
+                # prescriber was actually warned about.
+                "patient_allergies_at_time": patient.allergies if patient else None,
+                "medicines": [item.medicine_name for item in data.items],
             },
         )
 

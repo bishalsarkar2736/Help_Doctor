@@ -57,6 +57,10 @@ async def test_prescription_allowed_with_override(db, doctor, patient_user, appo
     )
     data = PrescriptionCreate(
         allergy_override=True,
+        # An override now requires a stated clinical justification, which is
+        # what gets written to the audit trail. See
+        # tests/api/test_allergy_override_audit.py.
+        allergy_override_reason="Documented prior tolerance; monitored dose.",
         items=[PrescriptionItemCreate(medicine_name="Aspirin 75mg")],
     )
     rx = await create_prescription(db=db, doctor=doctor, appointment_id=appt.id, data=data)

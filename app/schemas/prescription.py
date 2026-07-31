@@ -25,6 +25,16 @@ class PrescriptionCreate(BaseModel):
     # explicit override).
     allergy_override: bool = False
 
+    # WHY the allergy warning was overridden.
+    #
+    # Overriding an allergy block is among the highest-risk actions a
+    # prescriber can take, and "it happened" is not an auditable record of it —
+    # a safety review, an incident investigation or a regulator all ask why.
+    # Required whenever the override is actually used against a real conflict
+    # (enforced in the service, which is the only place that knows whether a
+    # conflict exists); the minimum length keeps "x" or "ok" out of the trail.
+    allergy_override_reason: Optional[str] = Field(default=None, max_length=500)
+
     items: list[PrescriptionItemCreate] = Field(
         default_factory=list
     )
