@@ -46,6 +46,70 @@ groups:
             If the API itself is healthy, check METRICS_TOKEN and the
             bearer_token_file setting in prometheus.yml.
 
+  - name: errors
+    rules:
+      - alert: HighServerErrorRate
+        # The alert that was impossible before http_requests_total existed:
+        # the latency histogram said how long requests took but not whether any
+        # of them failed, so a deploy that 500s every write looked healthy.
+        #
+        # clamp_min guards the divide-by-zero on an idle system, which would
+        # otherwise evaluate to NaN and never fire.
+        expr: >-
+          sum(rate(http_requests_total{status=~"5.."}[5m]))
+          /
+          clamp_min(sum(rate(http_requests_total[5m])), 0.001)
+          > 0.01
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Over 1% of requests are returning 5xx"
+          description: >-
+            {{ $value | humanizePercentage }} of requests are failing. Check
+            the most recent deploy first — this is usually a release, not load.
+
+      - alert: EndpointServerErrors
+        # Per-route, so a single broken endpoint is visible even when it is too
+        # small a share of total traffic to move the global rate above 1%.
+        expr: sum by (path) (rate(http_requests_total{status=~"5.."}[5m])) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Endpoint {{ $labels.path }} is returning 5xx"
+          description: >-
+            Sustained server errors on a single route. The global error rate
+            may still look fine.
+
+      - alert: PaymentEndpointErrors
+        # Money path: a failure here costs the clinic a booking AND the patient
+        # their slot, so it is escalated regardless of volume.
+        expr: >-
+          sum(rate(http_requests_total{path=~"/payments.*", status=~"5.."}[5m])) > 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Payment endpoints are returning 5xx"
+          description: >-
+            Patients cannot pay. Check the gateway and app.services.payment
+            logs before assuming an application bug.
+
+      - alert: NoTrafficReceived
+        # A silent API is indistinguishable from a healthy one on a rate graph.
+        # `up` stays 1 while nginx cannot reach the backend, which is exactly
+        # how a stale upstream IP hid a total outage once already.
+        expr: sum(rate(http_requests_total[10m])) == 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "API has served no requests for 15 minutes"
+          description: >-
+            Either genuinely idle, or nothing can reach it. Check the web tier
+            and the proxy upstream before assuming it is quiet.
+
   - name: latency
     rules:
       - alert: HighAPILatency

@@ -8,6 +8,24 @@ api_request_latency = Histogram(
     "Time spent processing API requests",
 )
 
+# Request counts by outcome. Without this there is no error rate at all — the
+# latency histogram above says how long requests took but not whether any of
+# them failed, so a deploy that 500s every write would look perfectly healthy
+# on the dashboard.
+#
+# LABEL CARDINALITY IS THE WHOLE DESIGN CONSTRAINT HERE.
+#
+# `path` is the ROUTE TEMPLATE ("/patients/{patient_id}"), never the requested
+# URL. Using the raw path would mint a new time series per patient id, per
+# prescription id, per scanner probe — unbounded growth that eventually takes
+# Prometheus down with the very system it is meant to watch. Unmatched requests
+# collapse to a single "<unmatched>" bucket for the same reason.
+http_requests_total = Counter(
+    "http_requests_total",
+    "HTTP requests by method, route template and status code",
+    ["method", "path", "status"],
+)
+
 
 appointment_created_total = Counter(
     "appointment_created_total",
