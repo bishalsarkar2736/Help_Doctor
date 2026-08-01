@@ -101,8 +101,14 @@ def _guard_environment() -> None:
     security control, not a convenience.
     """
 
+    # "staging" is included deliberately, and only because staging here is a
+    # disposable, loopback-only stack whose whole purpose is validating a
+    # deployment — it is torn down with `staging.sh down -v` and never holds
+    # real patients. The control that matters is unchanged: production is still
+    # refused, and this list is the one place to check when that assumption
+    # stops being true.
     env = get_settings().ENV
-    if env not in ("development", "testing"):
+    if env not in ("development", "testing", "staging"):
         raise SystemExit(
             f"refusing to run: ENV={env!r}. This script creates accounts with "
             "publicly known passwords and is for development/testing only."

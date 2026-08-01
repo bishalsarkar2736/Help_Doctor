@@ -44,3 +44,7 @@ media/signatures/*
 # Runtime user uploads — real doctor credentials and signatures.
 # These are PHI-adjacent and git history is permanent. Never commit them.
 uploads/
+
+# Staging secrets are generated per-host, never committed.
+.env.staging
+.staging-accounts.json

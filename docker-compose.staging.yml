@@ -1,0 +1,106 @@
+# Staging: a second, fully isolated instance of the stack on this host.
+#
+# Purpose is validating DEPLOYMENT AND OPERATIONS, not feature work — does this
+# commit migrate cleanly from the current schema, do the services come up in
+# the right order, does the seam between nginx and the api hold, does a real
+# login work. Run it before promoting anything to production.
+#
+# Used with a distinct compose project, which gives it its own network and its
+# own volumes:
+#
+#   docker compose -p helpdoctor_staging \
+#       -f docker-compose.yml -f docker-compose.staging.yml ...
+#
+# scripts/staging.sh wraps that; use it rather than typing this out.
+#
+# TWO THINGS MUST BE OVERRIDDEN OR A SECOND INSTANCE CANNOT RUN AT ALL.
+# Both were found the hard way during the first deployment rehearsal:
+#
+#   container_name — the base file pins a fixed name per service, and that name
+#     is GLOBAL, not scoped by compose project. Without these overrides the
+#     stack fails on a name collision before it ever reaches a port.
+#
+#   ports — compose MERGES list fields across files rather than replacing them,
+#     so a plain `ports:` here APPENDS and the original host port is still
+#     published. The first attempt collided on 3000 for exactly this reason.
+#     `!override` is what makes the replacement actually replace.
+#
+#   env_file — the same merge rule, with a nastier failure. Appending
+#     .env.staging to .env.docker means every key present in production's file
+#     but ABSENT from staging's silently keeps its production value. That is how
+#     the first staging run connected to the staging database with the
+#     PRODUCTION password: .env.docker defines DATABASE_URL, .env.example does
+#     not, so the generated staging file never overrode it and alembic — which
+#     prefers DATABASE_URL over the app settings — used production's.
+#     `!override` gives staging a clean, complete environment of its own.
+#
+# Ports use a 1xxxx block chosen against what was free on this host. Nothing
+# internal changes: services still reach each other on their normal ports over
+# the staging network.
+
+services:
+  migrate:
+    container_name: staging_migrate
+    env_file: !override [.env.staging]
+
+  api:
+    container_name: staging_api
+    env_file: !override [.env.staging]
+    ports: !override ["127.0.0.1:18000:8000"]
+
+  web:
+    container_name: staging_web
+    ports: !override ["127.0.0.1:15173:80"]
+
+  celery_worker:
+    container_name: staging_celery_worker
+    env_file: !override [.env.staging]
+
+  celery_beat:
+    container_name: staging_celery_beat
+    env_file: !override [.env.staging]
+
+  postgres:
+    container_name: staging_postgres
+    ports: !override ["127.0.0.1:15433:5432"]
+
+  redis:
+    container_name: staging_redis
+    ports: !override ["127.0.0.1:16379:6379"]
+
+  minio:
+    container_name: staging_minio
+    ports: !override ["127.0.0.1:19101:9000", "127.0.0.1:19102:9001"]
+
+  minio_init:
+    container_name: staging_minio_init
+
+  mailhog:
+    container_name: staging_mailhog
+    ports: !override ["127.0.0.1:11025:1025", "127.0.0.1:18025:8025"]
+
+  # Deliberately NOT started by scripts/staging.sh: the observability stack and
+  # the backup loops double the container count on a single-machine setup for
+  # little validation value. Names and ports are still overridden so that
+  # `--profile full` remains possible without colliding.
+  db_backup:
+    container_name: staging_db_backup
+
+  files_backup:
+    container_name: staging_files_backup
+
+  prometheus:
+    container_name: staging_prometheus
+    ports: !override ["127.0.0.1:19091:9090"]
+
+  alertmanager:
+    container_name: staging_alertmanager
+    ports: !override ["127.0.0.1:19093:9093"]
+
+  grafana:
+    container_name: staging_grafana
+    ports: !override ["127.0.0.1:13000:3000"]
+
+  jaeger:
+    container_name: staging_jaeger
+    ports: !override ["127.0.0.1:16687:16686", "127.0.0.1:14318:4318"]
