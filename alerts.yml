@@ -110,6 +110,62 @@ groups:
             Either genuinely idle, or nothing can reach it. Check the web tier
             and the proxy upstream before assuming it is quiet.
 
+  - name: background_jobs
+    rules:
+      - alert: CeleryWorkerDown
+        # Background jobs used to fail completely silently: nothing scraped the
+        # worker, so appointment reminders, slot generation, payment
+        # reconciliation and the PHI retention purge could all stop and the
+        # only trace would be a log line nobody reads.
+        expr: up{job="celery"} == 0 or celery_worker_up < 1
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "No Celery worker is running"
+          description: >-
+            Appointment reminders, slot generation, payment reconciliation and
+            PHI log retention have all stopped. Patients still book; nothing
+            scheduled happens.
+
+      - alert: CeleryTaskFailures
+        expr: sum by (task) (rate(celery_tasks_total{state="failed"}[10m])) > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Celery task {{ $labels.task }} is failing"
+          description: >-
+            Sustained failures. Check the worker logs for the traceback — the
+            task may be retrying and eventually dead-lettering.
+
+      - alert: CeleryQueueBacklog
+        # Read live from the broker on scrape, so this still reports correctly
+        # when the workers are wedged and consuming nothing.
+        expr: celery_queue_length > 100
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Celery queue has {{ $value }} messages waiting"
+          description: >-
+            Work is arriving faster than it is being consumed, or the workers
+            are stuck. Check CeleryWorkerDown first.
+
+      - alert: CeleryTasksSlow
+        expr: >-
+          histogram_quantile(0.95,
+            sum by (le, task) (rate(celery_task_duration_seconds_bucket[15m]))
+          ) > 300
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Celery task {{ $labels.task }} p95 above 5 minutes"
+          description: >-
+            Long-running tasks hold a prefork child each, so a few slow ones
+            starve everything else queued behind them.
+
   - name: latency
     rules:
       - alert: HighAPILatency

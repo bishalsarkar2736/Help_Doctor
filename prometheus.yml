@@ -43,6 +43,13 @@ scrape_configs:
     #
     # bearer_token_file: /etc/prometheus/metrics_token
 
+  # The celery worker exports on its own port from the prefork parent. Without
+  # this job, background jobs fail silently — nothing scraped them at all.
+  - job_name: "celery"
+    static_configs:
+      - targets: ["celery_worker:9100"]
+    metrics_path: /metrics
+
   # Prometheus scrapes itself so that `up` and process_* exist for rules that
   # check Prometheus's own liveness.
   - job_name: "prometheus"

@@ -85,9 +85,28 @@ services:
     # CELERY_WORKER_CONCURRENCY, so the limit holds no matter how the worker is
     # started. A --concurrency flag would override that config and give two
     # places to keep in sync.
-    command: celery -A app.core.celery worker --loglevel=info
+    # The multiprocess directory is cleared BEFORE python starts. Doing it
+    # later — from a Celery signal, say — unlinks mmap files whose handles are
+    # already open, and every metric silently reads 0 from then on.
+    command: >-
+      sh -c 'rm -f "$${PROMETHEUS_MULTIPROC_DIR}"/*.db 2>/dev/null;
+      exec celery -A app.core.celery worker --loglevel=info'
     env_file:
       - .env.docker
+    environment:
+      # Multiprocess mode, set ONLY here. Task signals fire in the prefork
+      # CHILDREN while the metrics HTTP server runs in the parent, so without
+      # this every counter would export zero and a dead worker would look
+      # identical to an idle one. The api is a single process and must NOT have
+      # this set — it would change how its own /metrics endpoint collects.
+      PROMETHEUS_MULTIPROC_DIR: /tmp/prometheus_multiproc
+      CELERY_METRICS_PORT: "9100"
+    tmpfs:
+      # tmpfs, not a volume: these are mmap'd scratch files that must not
+      # survive a restart. Stale files from dead workers get aggregated into
+      # the next run's totals, so counters jump and worker_up counts processes
+      # that no longer exist. The startup cleanup is a second line of defence.
+      - /tmp/prometheus_multiproc
     # Override the image's HTTP healthcheck — this service runs no web server.
     healthcheck:
       test: ["CMD-SHELL", "celery -A app.core.celery inspect ping -d celery@$$HOSTNAME || exit 1"]

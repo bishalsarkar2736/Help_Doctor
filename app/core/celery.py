@@ -49,6 +49,11 @@ celery_app.conf.update(
     worker_concurrency=settings.CELERY_WORKER_CONCURRENCY,
 )
 
+# Importing for the side effect of connecting Celery's signals — without this
+# the worker exports nothing and background jobs fail silently.
+from app.core import celery_metrics  # noqa: E402,F401
+
+
 # periodic scheduler
 celery_app.conf.beat_schedule = {
     "appointment-reminder-job": {
