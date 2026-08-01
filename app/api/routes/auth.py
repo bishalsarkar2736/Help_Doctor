@@ -1,4 +1,10 @@
-from fastapi import APIRouter, Depends, status, HTTPException, Request, Form
+from fastapi import APIRouter, Depends, status, HTTPException, Request, Response, Form
+
+from app.security.auth_cookies import (
+    clear_refresh_cookie,
+    read_refresh_token,
+    set_refresh_cookie,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi.security import OAuth2PasswordRequestForm
 from app.security.jwt import get_current_user
@@ -32,7 +38,7 @@ from app.schemas.auth import (
     MfaCodeRequest,
     VerifyEmailOtpRequest,
 )
-from app.try_except.exceptions import BadRequestError
+from app.try_except.exceptions import BadRequestError, UnauthorizedError
 from app.security.mfa import (
     generate_secret,
     provisioning_uri,
@@ -63,12 +69,28 @@ async def register(
     return await register_user(db, user_in)
 
 
+def _issue_session(response: Response, token: dict) -> dict:
+    """Put the refresh token in an httpOnly cookie instead of the response body.
+
+    Returning it in the body would hand it straight to JavaScript, which is
+    exactly what this change exists to prevent — a stolen refresh token is an
+    account indefinitely, while a stolen access token expires in minutes.
+    """
+    refresh = token.get("refresh_token")
+
+    if refresh:
+        set_refresh_cookie(response, refresh)
+
+    return {**token, "refresh_token": None}
+
+
 # ---------------- LOGIN (FORM) ----------------
 
 @router.post("/login", response_model=Token)
 @limiter.limit("5/minute")
 async def login(
     request: Request,
+    response: Response,
     form_data: OAuth2PasswordRequestForm = Depends(),
     mfa_code: str | None = Form(default=None),
     db: AsyncSession = Depends(get_db),
@@ -86,7 +108,7 @@ async def login(
             detail="Invalid credentials",
         )
 
-    return token
+    return _issue_session(response, token)
 
 
 # ---------------- LOGIN (JSON) ----------------
@@ -95,6 +117,7 @@ async def login(
 @limiter.limit("5/minute")
 async def login_json(
     request: Request,
+    response: Response,
     body: LoginJSONRequest,
     db: AsyncSession = Depends(get_db),
 ):
@@ -111,20 +134,23 @@ async def login_json(
             detail="Invalid credentials",
         )
 
-    return token
+    return _issue_session(response, token)
 
 
 @router.post("/google", response_model=Token)
 @limiter.limit("10/minute")
 async def google_login(
     request: Request,
+    response: Response,
     body: GoogleLoginRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    return await authenticate_google_user(
+    token = await authenticate_google_user(
         db=db,
         token=body.token,
     )
+
+    return _issue_session(response, token)
 
 
 @router.post("/change-password")
@@ -228,20 +254,46 @@ async def resend_verification_endpoint(
 @limiter.limit("10/minute")
 async def refresh_token_endpoint(
     request: Request,
-    body: RefreshTokenRequest,
+    response: Response,
     db: AsyncSession = Depends(get_db),
+    body: RefreshTokenRequest | None = None,
 ):
-    return await refresh_tokens(db, body.refresh_token)
+    # Cookie first, body as a fallback for sessions issued before the cookie
+    # migration. Body is optional so a browser can call this with no payload
+    # at all — the credential rides on the cookie.
+    supplied = read_refresh_token(request, body.refresh_token if body else None)
+
+    if not supplied:
+        raise UnauthorizedError("No refresh token provided")
+
+    token = await refresh_tokens(db, supplied)
+
+    # Rotation: refresh_tokens() revokes the old token and mints a new one, so
+    # the cookie MUST be replaced. Leaving the old value would send an
+    # already-revoked token on the next call and log the user out.
+    return _issue_session(response, token)
 
 
 # ---------------- LOGOUT ----------------
 
 @router.post("/logout")
 async def logout(
-    body: LogoutRequest,
+    request: Request,
+    response: Response,
     db: AsyncSession = Depends(get_db),
+    body: LogoutRequest | None = None,
 ):
-    return await logout_user(db, body.refresh_token)
+    supplied = read_refresh_token(request, body.refresh_token if body else None)
+
+    # Clear the cookie even when no token was supplied: a browser with a stale
+    # or already-revoked cookie must still end up logged out rather than
+    # carrying a dead credential around.
+    clear_refresh_cookie(response)
+
+    if not supplied:
+        return {"message": "Logged out"}
+
+    return await logout_user(db, supplied)
 
 
 # ---------------- MFA (TOTP) ----------------

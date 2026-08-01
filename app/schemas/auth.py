@@ -20,7 +20,10 @@ class VerifyEmailOtpRequest(BaseModel):
 
 
 class LogoutRequest(BaseModel):
-    refresh_token: str
+    # Optional: the refresh token normally arrives in an httpOnly cookie. Kept
+    # so a session issued before the cookie migration can still be logged out,
+    # and so non-browser clients keep working.
+    refresh_token: str | None = None
 
 
 class GoogleLoginRequest(BaseModel):
@@ -29,7 +32,8 @@ class GoogleLoginRequest(BaseModel):
 
 
 class RefreshTokenRequest(BaseModel):
-    refresh_token: str
+    # Optional for the same reason as LogoutRequest — see app/security/auth_cookies.py.
+    refresh_token: str | None = None
 
 
 

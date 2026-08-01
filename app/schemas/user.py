@@ -80,7 +80,12 @@ class UserRead(UserBase):
 
 class Token(BaseModel):
     access_token:str
-    refresh_token: str
+
+    # No longer returned to browsers: the refresh token is delivered as an
+    # httpOnly cookie so JavaScript cannot read it. Left on the model (as None)
+    # rather than removed, because the service layer still builds it and
+    # non-browser callers may still be issued one.
+    refresh_token: str | None = None
     token_type : str = 'bearer'
 
     # This account's role mandates a second factor and it has not been set up
