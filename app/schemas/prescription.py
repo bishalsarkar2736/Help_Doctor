@@ -122,6 +122,14 @@ class PrescriptionUpdate(BaseModel):
 
     items: list[PrescriptionItemUpdate]
 
+    # Editing a draft can introduce an allergen that was not there when it was
+    # created, or the patient's allergy list can change under an unchanged
+    # draft. Either way the edit needs the same override path as creation —
+    # without these fields a draft that conflicts would be uneditable.
+    allergy_override: bool = False
+
+    allergy_override_reason: str | None = Field(default=None, max_length=500)
+
 
 
 class PrescriptionRevisionCreate(BaseModel):
@@ -133,6 +141,12 @@ class PrescriptionRevisionCreate(BaseModel):
     items: list[PrescriptionItemUpdate] = Field(
         default_factory=list
     )
+
+    # A revision is a new prescription document, so it is checked and, where
+    # needed, justified in its own right. See PrescriptionUpdate.
+    allergy_override: bool = False
+
+    allergy_override_reason: str | None = Field(default=None, max_length=500)
 
 
 class PrescriptionRevisionResponse(

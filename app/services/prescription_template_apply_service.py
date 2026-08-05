@@ -1,5 +1,6 @@
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.models.prescription_template import (
     PrescriptionTemplate,
@@ -24,6 +25,10 @@ async def apply_prescription_template(
 
     result = await db.execute(
         select(PrescriptionTemplate)
+        # selectinload, not lazy: `.items` is a relationship, and touching it
+        # outside a greenlet raises MissingGreenlet under async SQLAlchemy — a
+        # 500 on every request that applies a template.
+        .options(selectinload(PrescriptionTemplate.items))
         .where(
             PrescriptionTemplate.id== template_id,
             PrescriptionTemplate.doctor_id == doctor_id,
@@ -67,6 +72,10 @@ async def get_template_items(
 
     result = await db.execute(
         select(PrescriptionTemplate)
+        # selectinload, not lazy: `.items` is a relationship, and touching it
+        # outside a greenlet raises MissingGreenlet under async SQLAlchemy — a
+        # 500 on every prescription that applies a template.
+        .options(selectinload(PrescriptionTemplate.items))
         .where(
             PrescriptionTemplate.id == template_id,
             PrescriptionTemplate.doctor_id == doctor_id,

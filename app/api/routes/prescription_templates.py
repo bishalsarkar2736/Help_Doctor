@@ -73,6 +73,9 @@ async def get_templates(
     return await list_prescription_templates(
         db=db,
         doctor_id=doctor.doctor.id,
+        # Required by the service, and required for tenancy: without it the
+        # call raised TypeError before it could reach the database.
+        clinic_id=doctor.doctor.clinic_id,
     )
 
 
@@ -91,6 +94,7 @@ async def get_template(
         db=db,
         template_id=template_id,
         doctor_id=doctor.doctor.id,
+        clinic_id=doctor.doctor.clinic_id,
     )
 
 

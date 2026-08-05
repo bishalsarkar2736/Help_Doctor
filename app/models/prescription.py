@@ -1,7 +1,7 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
 from datetime import datetime
-from sqlalchemy import ForeignKey, String, Text, Integer, DateTime,Enum,Boolean
+from sqlalchemy import ForeignKey, String, Text, Integer, DateTime,Enum,Boolean, JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base
 from app.core.time import utc_now
@@ -92,6 +92,31 @@ class Prescription(Base):
 
     issued_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
+        nullable=True,
+    )
+
+    # Why an allergy warning was prescribed through, kept on the record it
+    # justifies. The audit log also holds it, but that trail is append-only and
+    # subject to retention purging — a safety rule must not depend on log
+    # retention, and a clinician reading the prescription should be able to see
+    # the justification without a database administrator.
+    #
+    # NOT exposed on PrescriptionResponse: that schema is what GET
+    # /prescriptions/me returns to patients, and this is a clinical note
+    # between prescriber and record.
+    allergy_override_reason: Mapped[str | None] = mapped_column(
+        String(500),
+        nullable=True,
+    )
+
+    # The active substances the reason above covers.
+    #
+    # Substances, not typed medicine names: relabelling "Cefim" to
+    # "Cefim 400mg", or switching to another brand of the same generic, is not
+    # a new clinical decision, and comparing typed strings would demand a fresh
+    # justification for a judgement that has not changed.
+    allergy_override_substances: Mapped[list[str] | None] = mapped_column(
+        JSON,
         nullable=True,
     )
 

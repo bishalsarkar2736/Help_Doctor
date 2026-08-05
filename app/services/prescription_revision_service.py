@@ -17,8 +17,9 @@ from app.services.prescription_template_apply_service import (
     get_template_items,
 )
 
-from app.services.medicine_lookup_service import (
-    verify_medicine_ids,
+from app.services.prescription_allergy_service import (
+    apply_override_state,
+    validate_prescription_allergies,
 )
 
 from app.schemas.prescription import (
@@ -143,6 +144,43 @@ async def create_prescription_revision(
         )
 
     # ====================================================
+    # ALLERGY SAFETY NET
+    # ====================================================
+
+    # Before the current revision is superseded, so a revision that cannot be
+    # justified leaves the existing prescription untouched.
+    #
+    # Template rows are loaded here rather than after the revision is built:
+    # they land on it exactly like typed items, so they belong in the checked
+    # set. Previously they were added afterwards and never examined.
+    template_items = []
+
+    if data.template_id:
+        template = await get_template_items(
+            db=db,
+            template_id=data.template_id,
+            doctor_id=doctor.id,
+            clinic_id=clinic_id,
+        )
+        template_items = list(template.items)
+
+    allergy_conflicts, generic_names, override_reason = (
+        await validate_prescription_allergies(
+            db=db,
+            patient_user_id=prescription.patient_id,
+            items=data.items,
+            template_items=template_items,
+            override=data.allergy_override,
+            override_reason=data.allergy_override_reason,
+            # A revision inherits what the superseded prescription justified,
+            # so re-issuing an unchanged medicine list does not re-prompt.
+            previously_justified=prescription.allergy_override_substances,
+            actor_user_id=doctor.user_id,
+            prescription=prescription,
+        )
+    )
+
+    # ====================================================
     # SUPERSEDE CURRENT REVISION
     # ====================================================
 
@@ -203,6 +241,10 @@ async def create_prescription_revision(
         is_latest_revision=True,
     )
 
+    apply_override_state(
+        new_revision, allergy_conflicts, generic_names, override_reason
+    )
+
     db.add(new_revision)
 
     await db.flush()
@@ -211,33 +253,21 @@ async def create_prescription_revision(
     # TEMPLATE ITEMS
     # ====================================
 
-    if data.template_id:
-
-        template = await get_template_items(
-            db=db,
-            template_id=data.template_id,
-            doctor_id=doctor.id,
-            clinic_id=clinic_id,
-        )
-
-        for item in template.items:
-
-            db.add(
-                PrescriptionItem(
-                    prescription_id=new_revision.id,
-                    medicine_name=item.medicine_name,
-                    dosage=item.dosage,
-                    frequency=item.frequency,
-                    duration_days=item.duration_days,
-                    instructions=item.instructions,
-                )
+    for item in template_items:
+        db.add(
+            PrescriptionItem(
+                prescription_id=new_revision.id,
+                medicine_name=item.medicine_name,
+                dosage=item.dosage,
+                frequency=item.frequency,
+                duration_days=item.duration_days,
+                instructions=item.instructions,
             )
+        )
 
     # ====================================================
     # CREATE ITEMS
     # ====================================================
-
-    await verify_medicine_ids(db, data.items)
 
     items = [
         PrescriptionItem(

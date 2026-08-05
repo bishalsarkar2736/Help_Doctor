@@ -5,11 +5,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from app.core.time import UTC
 from app.core.metrics import prescriptions_issued_total
-from app.models.patient import Patient
-from app.domain.prescribing.allergy import find_allergy_conflicts
-from app.services.medicine_lookup_service import (
-    resolve_generics_for_items,
-    verify_medicine_ids,
+from app.services.prescription_allergy_service import (
+    MIN_ALLERGY_OVERRIDE_REASON,
+    apply_override_state,
+    validate_prescription_allergies,
 )
 from app.models.appointment import (
     Appointment,
@@ -67,23 +66,54 @@ from app.services.prescription_template_apply_service import (
 # Long enough to exclude "ok" / "x" / "n/a" — a trail full of those is no better
 # than no reason at all — while staying short enough not to obstruct a
 # prescriber acting in an emergency.
-MIN_ALLERGY_OVERRIDE_REASON = 10
+# Re-exported: tests and other services import it from here, and the constant
+# belongs with the validation rule that enforces it.
+__all__ = ["MIN_ALLERGY_OVERRIDE_REASON"]
 
 
-def describe_conflict(name: str, generic_names: dict[str, str]) -> str:
-    """Name a flagged medicine, and the substance it was flagged for.
+async def _ensure_issuable_against_allergies(
+    *,
+    db: AsyncSession,
+    prescription: Prescription,
+    actor_user_id: int,
+) -> None:
+    """Re-check the allergy position at the moment the prescription becomes real.
 
-    "Cefim" tells a prescriber which line to look at but not why it fired —
-    the patient is not allergic to Cefim, they are allergic to the Cefixime in
-    it. Naming both is the difference between a warning that can be judged and
-    one that gets overridden to make it go away.
+    A draft can be written when the patient has no recorded allergy and issued
+    after one is added. Issuing is when the document starts governing what
+    somebody takes, so it is checked again here.
+
+    Issuing carries no override fields, deliberately. A prescriber who needs to
+    proceed anyway goes back to the draft and records the reason there, which
+    keeps every justification on the prescription instead of creating a second
+    place overrides can come from. The message says so, because a block with no
+    stated way forward is a dead end.
     """
-    generic = generic_names.get(name)
+    items = (
+        await db.scalars(
+            select(PrescriptionItem).where(
+                PrescriptionItem.prescription_id == prescription.id
+            )
+        )
+    ).all()
 
-    if generic and generic.lower() != name.lower():
-        return f"{name} ({generic})"
-
-    return name
+    try:
+        await validate_prescription_allergies(
+            db=db,
+            patient_user_id=prescription.patient_id,
+            items=items,
+            previously_justified=prescription.allergy_override_substances,
+            actor_user_id=actor_user_id,
+            prescription=prescription,
+            # Nothing is being overridden here — this path only blocks or
+            # passes, so there is no override to record.
+            audit=False,
+        )
+    except BadRequestError as exc:
+        raise BadRequestError(
+            f"{exc.message} Edit the draft to record a clinical reason, then "
+            "issue it."
+        ) from exc
 
 
 async def create_prescription(
@@ -138,48 +168,33 @@ async def create_prescription(
             "Prescription already exists"
         )
 
+    # Template rows are loaded BEFORE the allergy check, not after it. They end
+    # up on the prescription exactly like typed items, so they have to be part
+    # of what is checked — previously they were added afterwards and a template
+    # containing an allergen was never examined at all.
+    template_items = []
+
+    if data.template_id:
+        template = await get_template_items(
+            db=db,
+            template_id=data.template_id,
+            doctor_id=doctor_id,
+            clinic_id=appointment.clinic_id,
+        )
+        template_items = list(template.items)
+
     # --- Allergy safety net: block prescribing a recorded allergen ---
-    patient = await db.scalar(
-        select(Patient).where(Patient.user_id == appointment.patient_id)
-    )
-    prescribed_names = [item.medicine_name for item in data.items]
-
-    # A selected catalogue id must actually exist. Silently dropping an unknown
-    # one would store a prescription whose allergy check ran on the typed name
-    # while the request claimed a catalogue link.
-    await verify_medicine_ids(db, data.items)
-
-    # Resolve each item to its active substance so the check sees what a
-    # patient actually reacts to. Without this a patient allergic to "Cefixime"
-    # gets no warning when prescribed "Cefim" — one of its eleven brands.
-    generic_names = await resolve_generics_for_items(db, data.items)
-
-    allergy_conflicts = find_allergy_conflicts(
-        patient.allergies if patient else None,
-        prescribed_names,
-        generic_names,
-    )
-    if allergy_conflicts and not data.allergy_override:
-        raise BadRequestError(
-            "Patient has a recorded allergy to: "
-            + ", ".join(
-                describe_conflict(name, generic_names) for name in allergy_conflicts
-            )
-            + ". Review, then resubmit with override to proceed."
+    allergy_conflicts, generic_names, override_reason = (
+        await validate_prescription_allergies(
+            db=db,
+            patient_user_id=appointment.patient_id,
+            items=data.items,
+            template_items=template_items,
+            override=data.allergy_override,
+            override_reason=data.allergy_override_reason,
+            actor_user_id=doctor_user_id,
         )
-
-    # Overriding requires a stated clinical justification. Checked here rather
-    # than on the schema because only this point knows whether a real conflict
-    # exists — a prescriber who sets the flag with no allergy present should
-    # not be forced to explain an override that never happened.
-    override_reason = (data.allergy_override_reason or "").strip()
-
-    if allergy_conflicts and len(override_reason) < MIN_ALLERGY_OVERRIDE_REASON:
-        raise BadRequestError(
-            "Overriding an allergy warning requires a clinical reason of at "
-            f"least {MIN_ALLERGY_OVERRIDE_REASON} characters, recorded in the "
-            "audit trail."
-        )
+    )
 
     prescription = Prescription(
         appointment_id=appointment_id,
@@ -190,35 +205,25 @@ async def create_prescription(
         status=PrescriptionStatus.DRAFT,
     )
 
+    apply_override_state(
+        prescription, allergy_conflicts, generic_names, override_reason
+    )
+
     db.add(prescription)
 
     await db.flush()
 
-    # ====================================
-    # TEMPLATE ITEMS
-    # ====================================
-
-    if data.template_id:
-
-        template = await get_template_items(
-            db=db,
-            template_id=data.template_id,
-            doctor_id=doctor_id,
-            clinic_id=appointment.clinic_id,
-        )
-
-        for item in template.items:
-
-            db.add(
-                PrescriptionItem(
-                    prescription_id=prescription.id,
-                    medicine_name=item.medicine_name,
-                    dosage=item.dosage,
-                    frequency=item.frequency,
-                    duration_days=item.duration_days,
-                    instructions=item.instructions,
-                )
+    for item in template_items:
+        db.add(
+            PrescriptionItem(
+                prescription_id=prescription.id,
+                medicine_name=item.medicine_name,
+                dosage=item.dosage,
+                frequency=item.frequency,
+                duration_days=item.duration_days,
+                instructions=item.instructions,
             )
+        )
 
     items = [
         PrescriptionItem(
@@ -248,29 +253,8 @@ async def create_prescription(
         },
     )
 
-    if allergy_conflicts:
-        # An explicit, audited override of the allergy block. The reason is the
-        # point of this record: without it the trail shows that a prescriber
-        # went through an allergy warning but not what clinical judgement they
-        # applied, which is the first thing a safety review needs.
-        await log_audit_event(
-            db=db,
-            event_type="prescription",
-            action="allergy_override",
-            user_id=doctor_user_id,
-            resource="prescription",
-            details={
-                "prescription_id": prescription.id,
-                "patient_id": appointment.patient_id,
-                "conflicts": allergy_conflicts,
-                "reason": override_reason,
-                # The allergens as recorded at the time. The patient's allergy
-                # list can be edited later; the trail must show what the
-                # prescriber was actually warned about.
-                "patient_allergies_at_time": patient.allergies if patient else None,
-                "medicines": [item.medicine_name for item in data.items],
-            },
-        )
+    # The override audit record is written by validate_prescription_allergies,
+    # so create, edit, revision and issue all produce the same trail.
 
     event = PrescriptionCreatedEvent(
         event_type="PRESCRIPTION_CREATED",
@@ -379,6 +363,12 @@ async def issue_prescription(
         raise BadRequestError(
             "Cannot issue empty prescription"
         )
+
+    await _ensure_issuable_against_allergies(
+        db=db,
+        prescription=prescription,
+        actor_user_id=doctor_user_id,
+    )
 
     appointment_result = await db.execute(
         select(Appointment).where(
@@ -731,6 +721,29 @@ async def update_prescription(
             "Prescription must contain at least one medicine"
         )
 
+    # Checked BEFORE anything is written. An edit can introduce an allergen the
+    # draft did not contain, and the patient's allergy list can change while a
+    # draft sits unedited — either way this is the same decision as prescribing
+    # it in the first place, and it went entirely unchecked before.
+    allergy_conflicts, generic_names, override_reason = (
+        await validate_prescription_allergies(
+            db=db,
+            patient_user_id=prescription.patient_id,
+            items=data.items,
+            override=data.allergy_override,
+            override_reason=data.allergy_override_reason,
+            # Conflicts already justified on this prescription do not need a
+            # fresh reason, so adjusting a dosage does not re-prompt.
+            previously_justified=prescription.allergy_override_substances,
+            actor_user_id=doctor_user_id,
+            prescription=prescription,
+        )
+    )
+
+    apply_override_state(
+        prescription, allergy_conflicts, generic_names, override_reason
+    )
+
     prescription.notes = data.notes
 
     existing_items = await db.execute(
@@ -742,8 +755,6 @@ async def update_prescription(
 
     for item in existing_items.scalars():
         await db.delete(item)
-
-    await verify_medicine_ids(db, data.items)
 
     new_items = [
         PrescriptionItem(
