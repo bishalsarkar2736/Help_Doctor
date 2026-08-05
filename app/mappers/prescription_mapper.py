@@ -23,6 +23,7 @@ def build_prescription_items(
         PrescriptionItemResponse(
             id=item.id,
             medicine_name=item.medicine_name,
+            medicine_id=item.medicine_id,
             dosage=item.dosage,
             frequency=item.frequency,
             duration_days=item.duration_days,

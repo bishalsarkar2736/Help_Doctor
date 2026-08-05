@@ -22,6 +22,7 @@ from app.models.generic import Generic
 from app.models.medicine import Medicine
 from app.models.medicine_alias import MedicineAlias
 from app.services.medicine_matcher_service import normalize
+from app.try_except.exceptions import BadRequestError
 
 
 def _key(text: str | None) -> str:
@@ -81,3 +82,93 @@ async def resolve_generic_names(
         for original, key in wanted.items()
         if key in by_key
     }
+
+
+async def verify_medicine_ids(db: AsyncSession, items) -> None:
+    """Reject an item naming a catalogue entry that does not exist.
+
+    Rejecting rather than quietly nulling the link: an id that resolves to
+    nothing means the client and the catalogue disagree, and the allergy check
+    would then silently fall back to string matching on a request that asked
+    for something stronger. Fail where a prescriber can see it.
+    """
+    ids = {
+        item.medicine_id for item in items if getattr(item, "medicine_id", None)
+    }
+
+    if not ids:
+        return
+
+    found = set(
+        (await db.scalars(select(Medicine.id).where(Medicine.id.in_(ids)))).all()
+    )
+
+    missing = sorted(ids - found)
+
+    if missing:
+        raise BadRequestError(
+            "Unknown medicine selected: "
+            + ", ".join(str(mid) for mid in missing)
+            + ". Pick it again from the list."
+        )
+
+
+async def resolve_medicine_ids(
+    db: AsyncSession,
+    medicine_ids: list[int],
+) -> dict[int, str]:
+    """Map catalogue ids to their active substance.
+
+    An id the prescriber selected is authoritative — no normalising, no
+    guessing. Ids with no generic linked are absent from the result.
+    """
+    ids = {mid for mid in medicine_ids if mid}
+
+    if not ids:
+        return {}
+
+    rows = (
+        await db.execute(
+            select(Medicine.id, Generic.name)
+            .join(Generic, Medicine.generic_id == Generic.id)
+            .where(Medicine.id.in_(ids))
+        )
+    ).all()
+
+    return {medicine_id: generic_name for medicine_id, generic_name in rows}
+
+
+async def resolve_generics_for_items(db: AsyncSession, items) -> dict[str, str]:
+    """Map each item's typed name to its active substance.
+
+    `items` is anything with `.medicine_name` and an optional `.medicine_id`.
+
+    A selected id wins over matching the typed string: the prescriber told us
+    which catalogue row they meant, so there is nothing to infer. Items without
+    an id fall back to name matching, which is how every row written before
+    autocomplete existed still gets checked.
+
+    Keyed by typed name because that is what the allergy check iterates over.
+    Two items sharing a name but pointing at different catalogue rows would
+    collapse to one entry — pathological, and both would resolve to the same
+    substance in any real catalogue.
+    """
+    by_id = await resolve_medicine_ids(
+        db, [getattr(item, "medicine_id", None) for item in items]
+    )
+
+    unresolved = [
+        item.medicine_name
+        for item in items
+        if getattr(item, "medicine_id", None) not in by_id
+    ]
+
+    resolved = await resolve_generic_names(db, unresolved)
+
+    # Id matches applied last so they override anything the name lookup guessed.
+    for item in items:
+        generic = by_id.get(getattr(item, "medicine_id", None))
+        if generic:
+            resolved[item.medicine_name] = generic
+
+    return resolved

@@ -18,6 +18,10 @@ from app.core.metrics import (
     medicine_assistant_queries_total,
 )
 
+from app.schemas.medicine_schema import (
+    MedicineAutocompleteItem,
+)
+
 from app.schemas.medicine_assistant_schema import (
     MedicineAssistantRequest,
     MedicineAssistantResponse,
@@ -49,10 +53,15 @@ async def search_medicine(
     )
 
 
-@router.get("/autocomplete")
+@router.get(
+    "/autocomplete",
+    response_model=list[MedicineAutocompleteItem],
+)
 async def autocomplete_medicine(
     q: str = Query(..., min_length=2),
-    limit: int = 20,
+    # Capped: this fires on every keystroke while a prescriber types, and an
+    # uncapped limit would let a client pull the whole catalogue per request.
+    limit: int = Query(default=20, ge=1, le=50),
     db: AsyncSession = Depends(get_db),
 ):
     return await search_medicines(

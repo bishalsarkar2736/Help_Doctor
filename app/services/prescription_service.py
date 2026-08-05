@@ -7,7 +7,10 @@ from app.core.time import UTC
 from app.core.metrics import prescriptions_issued_total
 from app.models.patient import Patient
 from app.domain.prescribing.allergy import find_allergy_conflicts
-from app.services.medicine_lookup_service import resolve_generic_names
+from app.services.medicine_lookup_service import (
+    resolve_generics_for_items,
+    verify_medicine_ids,
+)
 from app.models.appointment import (
     Appointment,
     AppointmentStatus,
@@ -65,6 +68,22 @@ from app.services.prescription_template_apply_service import (
 # than no reason at all — while staying short enough not to obstruct a
 # prescriber acting in an emergency.
 MIN_ALLERGY_OVERRIDE_REASON = 10
+
+
+def describe_conflict(name: str, generic_names: dict[str, str]) -> str:
+    """Name a flagged medicine, and the substance it was flagged for.
+
+    "Cefim" tells a prescriber which line to look at but not why it fired —
+    the patient is not allergic to Cefim, they are allergic to the Cefixime in
+    it. Naming both is the difference between a warning that can be judged and
+    one that gets overridden to make it go away.
+    """
+    generic = generic_names.get(name)
+
+    if generic and generic.lower() != name.lower():
+        return f"{name} ({generic})"
+
+    return name
 
 
 async def create_prescription(
@@ -125,10 +144,15 @@ async def create_prescription(
     )
     prescribed_names = [item.medicine_name for item in data.items]
 
-    # Resolve each typed name to its active substance so the check sees what a
+    # A selected catalogue id must actually exist. Silently dropping an unknown
+    # one would store a prescription whose allergy check ran on the typed name
+    # while the request claimed a catalogue link.
+    await verify_medicine_ids(db, data.items)
+
+    # Resolve each item to its active substance so the check sees what a
     # patient actually reacts to. Without this a patient allergic to "Cefixime"
     # gets no warning when prescribed "Cefim" — one of its eleven brands.
-    generic_names = await resolve_generic_names(db, prescribed_names)
+    generic_names = await resolve_generics_for_items(db, data.items)
 
     allergy_conflicts = find_allergy_conflicts(
         patient.allergies if patient else None,
@@ -138,7 +162,9 @@ async def create_prescription(
     if allergy_conflicts and not data.allergy_override:
         raise BadRequestError(
             "Patient has a recorded allergy to: "
-            + ", ".join(allergy_conflicts)
+            + ", ".join(
+                describe_conflict(name, generic_names) for name in allergy_conflicts
+            )
             + ". Review, then resubmit with override to proceed."
         )
 
@@ -198,6 +224,7 @@ async def create_prescription(
         PrescriptionItem(
             prescription_id=prescription.id,
             medicine_name=item.medicine_name,
+            medicine_id=item.medicine_id,
             dosage=item.dosage,
             frequency=item.frequency,
             duration_days=item.duration_days,
@@ -716,10 +743,13 @@ async def update_prescription(
     for item in existing_items.scalars():
         await db.delete(item)
 
+    await verify_medicine_ids(db, data.items)
+
     new_items = [
         PrescriptionItem(
             prescription_id=prescription.id,
             medicine_name=item.medicine_name,
+            medicine_id=item.medicine_id,
             dosage=item.dosage,
             frequency=item.frequency,
             duration_days=item.duration_days,

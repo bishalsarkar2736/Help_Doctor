@@ -17,6 +17,10 @@ from app.services.prescription_template_apply_service import (
     get_template_items,
 )
 
+from app.services.medicine_lookup_service import (
+    verify_medicine_ids,
+)
+
 from app.schemas.prescription import (
     PrescriptionRevisionCreate,
 )
@@ -233,10 +237,13 @@ async def create_prescription_revision(
     # CREATE ITEMS
     # ====================================================
 
+    await verify_medicine_ids(db, data.items)
+
     items = [
         PrescriptionItem(
             prescription_id=new_revision.id,
             medicine_name=item.medicine_name,
+            medicine_id=item.medicine_id,
             dosage=item.dosage,
             frequency=item.frequency,
             duration_days=item.duration_days,

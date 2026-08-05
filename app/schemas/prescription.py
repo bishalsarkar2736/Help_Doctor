@@ -9,6 +9,15 @@ from app.models.prescription import PrescriptionStatus
 class PrescriptionItemCreate(BaseModel):
 
     medicine_name: str
+
+    # The catalogue entry the prescriber picked from autocomplete.
+    #
+    # Optional because free text stays valid — a medicine the catalogue does
+    # not carry must still be prescribable. When present it is verified against
+    # the catalogue and used for allergy checking instead of matching the typed
+    # string, so the check no longer depends on how the name was spelled.
+    medicine_id: Optional[int] = None
+
     dosage: Optional[str] = None
     frequency: Optional[str] = None
     duration_days: Optional[int] = None
@@ -54,6 +63,7 @@ class PrescriptionItemResponse(BaseModel):
 
     id: int
     medicine_name: str
+    medicine_id: Optional[int] = None
     dosage: Optional[str]
     frequency: Optional[str]
     duration_days: Optional[int]
@@ -96,6 +106,10 @@ class PrescriptionResponse(BaseModel):
 class PrescriptionItemUpdate(BaseModel):
 
     medicine_name: str
+
+    # See PrescriptionItemCreate.medicine_id.
+    medicine_id: int | None = None
+
     dosage: str | None = None
     frequency: str | None = None
     duration_days: int | None = None

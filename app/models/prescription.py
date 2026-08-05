@@ -167,7 +167,28 @@ class PrescriptionItem(Base):
         ForeignKey("prescriptions.id", ondelete="CASCADE"),
         nullable=False, index=True)
 
+    # What the prescriber actually wrote. Stays the record of the prescription
+    # even if the catalogue entry is later renamed or removed, so it is never
+    # derived from medicine_id.
     medicine_name: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    # The catalogue entry the prescriber picked, when they picked one.
+    #
+    # Nullable on purpose: prescribing accepts free text (a medicine the
+    # catalogue does not carry must still be prescribable), and every row
+    # written before autocomplete existed has no link. Where it IS set, allergy
+    # checking uses it instead of matching the typed string, which removes the
+    # guesswork entirely.
+    #
+    # SET NULL rather than RESTRICT: a prescription is a clinical record and
+    # must survive catalogue cleanup. Losing the link degrades allergy checking
+    # back to name matching; blocking the delete would make the catalogue
+    # effectively immutable.
+    medicine_id: Mapped[int | None] = mapped_column(
+        ForeignKey("medicines.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
 
     dosage: Mapped[str | None] = mapped_column(String(100))
 
