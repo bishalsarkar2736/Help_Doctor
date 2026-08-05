@@ -41,6 +41,12 @@ class InvitationAccept(BaseModel):
     full_name: str = Field(min_length=1, max_length=255)
     password: StrongPassword
 
+    # Staff accept the same documents as patients. They handle patient records,
+    # so their acknowledgement of the data-handling terms is the one most
+    # likely to be asked about.
+    accepted_terms_version: str
+    accepted_privacy_version: str
+
 
 class InvitationAcceptResponse(BaseModel):
     message: str

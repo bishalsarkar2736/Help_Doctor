@@ -4,6 +4,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.time import UTC
+from app.legal.documents import LegalDocumentType
+from app.services.consent_service import record_consents, validate_versions
 from app.models.user import User, UserRole, AuthProvider
 from app.models.invitation import Invitation, InvitationStatus
 from app.schemas.invitation import (
@@ -169,7 +171,16 @@ async def get_invitation_preview(
 async def accept_invitation(
     db: AsyncSession,
     payload: InvitationAccept,
+    request = None,
 ) -> User:
+    # Validated before the invitation is consumed, so a rejected consent does
+    # not burn a single-use token.
+    accepted = {
+        LegalDocumentType.TERMS: payload.accepted_terms_version,
+        LegalDocumentType.PRIVACY: payload.accepted_privacy_version,
+    }
+    validate_versions(accepted)
+
     invitation = await _load_valid_pending(db, payload.token)
 
     existing_user = await db.scalar(
@@ -199,6 +210,9 @@ async def accept_invitation(
 
     await db.flush()
     await db.refresh(user)
+
+    # Same transaction as the account, for the same reason as registration.
+    await record_consents(db=db, user=user, accepted=accepted, request=request)
 
     return user
 

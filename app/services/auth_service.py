@@ -8,6 +8,8 @@ from app.schemas.user import UserCreate, SELF_REGISTERABLE_ROLES
 from app.security.jwt import hash_password,verify_password
 from app.security.mfa import verify_code
 from app.security.mfa_policy import mfa_enrollment_pending
+from app.legal.documents import LegalDocumentType
+from app.services.consent_service import record_consents, validate_versions
 from app.security.google_oauth import verify_google_token
 from app.config import get_settings
 
@@ -122,7 +124,16 @@ async def _issue_tokens(
 async def register_user(
         db : AsyncSession,
         user_in : UserCreate,
+        request = None,
 ) -> User:
+    # Refuse before creating anything. An account that exists without a valid
+    # consent record is the state this whole feature exists to prevent, and it
+    # is far easier to reject the request than to reconcile it afterwards.
+    accepted = {
+        LegalDocumentType.TERMS: user_in.accepted_terms_version,
+        LegalDocumentType.PRIVACY: user_in.accepted_privacy_version,
+    }
+    validate_versions(accepted)
     result = await db.execute(
         select(User).where(User.email == user_in.email)
     )
@@ -152,6 +163,12 @@ async def register_user(
     await db.flush()
     #await db.commit()
     await db.refresh(user)
+
+    # Same transaction as the account: an account without its consent record,
+    # or a consent record for an account that failed to create, are both worse
+    # than failing the whole request. Deliberately NOT wrapped in try/except —
+    # unlike the email below, this one is evidence and must not be best-effort.
+    await record_consents(db=db, user=user, accepted=accepted, request=request)
 
     # Kick off email verification with a one-time code. Never fail signup if
     # email delivery fails — the user can request a new code from the OTP page.

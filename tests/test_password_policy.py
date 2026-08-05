@@ -6,7 +6,7 @@ from app.security.password_policy import validate_password_strength
 
 
 def _make(pw: str):
-    return UserCreate(email="a@b.com", full_name="Test User", password=pw)
+    return UserCreate(email="a@b.com", full_name="Test User", password=pw, accepted_terms_version="2026-08-01", accepted_privacy_version="2026-08-01")
 
 
 def test_accepts_strong_password():

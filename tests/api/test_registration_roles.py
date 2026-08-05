@@ -25,6 +25,8 @@ def _payload(role: str | None = None) -> dict:
     body = {
         "email": f"reg-{uuid.uuid4().hex[:10]}@test.com",
         "password": "Test12345",
+        "accepted_terms_version": "2026-08-01",
+        "accepted_privacy_version": "2026-08-01",
         "full_name": "Reg Test",
     }
     if role is not None:

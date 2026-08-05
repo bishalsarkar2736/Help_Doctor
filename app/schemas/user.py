@@ -26,6 +26,17 @@ SELF_REGISTERABLE_ROLES = {UserRole.PATIENT}
 
 
 class UserCreate(UserBase):
+    # Which version of each legal document the user was shown and accepted.
+    # Required: an account cannot be created without a consent record, because
+    # the record is the evidence and retrofitting it later is guesswork.
+    # The server rejects anything but the currently published version.
+    accepted_terms_version: str = Field(
+        description="Version of the Terms of Service shown to the user",
+    )
+    accepted_privacy_version: str = Field(
+        description="Version of the Privacy Policy shown to the user",
+    )
+
     # Patient is the safe default; explicitly NOT inherited from UserBase,
     # whose RECEPTIONIST default is wrong for public signup.
     role: UserRole = UserRole.PATIENT

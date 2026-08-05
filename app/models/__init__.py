@@ -5,6 +5,7 @@ from .doctor import Doctor
 from .doctor_availability import DoctorAvailability
 from .doctor_document import DoctorDocument, DoctorDocumentType
 from .doctor_rating import DoctorRating
+from .user_consent import UserConsent
 from .phi_access_log import PHIAccessLog, PHIAction, PHIResourceType
 from .appointment import Appointment
 from .notification import Notification

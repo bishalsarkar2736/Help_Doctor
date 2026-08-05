@@ -152,6 +152,8 @@ async def test_register_trims_and_rejects_blank_name(client):
             "email": f"blank-{uuid.uuid4()}@test.com",
             "full_name": "   ",
             "password": "secret123",
+            "accepted_terms_version": "2026-08-01",
+            "accepted_privacy_version": "2026-08-01",
             "role": "patient",
         },
     )
@@ -164,6 +166,8 @@ async def test_register_trims_and_rejects_blank_name(client):
             "email": f"trim-{uuid.uuid4()}@test.com",
             "full_name": "  Jane Doe  ",
             "password": "secret123",
+            "accepted_terms_version": "2026-08-01",
+            "accepted_privacy_version": "2026-08-01",
             "role": "patient",
         },
     )

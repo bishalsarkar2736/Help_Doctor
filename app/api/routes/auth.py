@@ -66,7 +66,9 @@ async def register(
     user_in: UserCreate,
     db: AsyncSession = Depends(get_db),
 ):
-    return await register_user(db, user_in)
+    # request is passed so the consent record captures the IP and user
+    # agent the acceptance came from.
+    return await register_user(db, user_in, request=request)
 
 
 def _issue_session(response: Response, token: dict) -> dict:

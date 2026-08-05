@@ -153,7 +153,7 @@ async def test_preview_and_accept_invitation(
     # Accept (public) → creates a verified user bound to the clinic
     accept = await client.post(
         "/invitations/accept",
-        json={"token": token, "full_name": "New Staff", "password": "secret123"},
+        json={"token": token, "full_name": "New Staff", "password": "secret123", "accepted_terms_version": "2026-08-01", "accepted_privacy_version": "2026-08-01"},
     )
     assert accept.status_code == 200, accept.text
     user_id = accept.json()["user_id"]
@@ -182,12 +182,12 @@ async def test_accepted_user_can_login(
 
     await client.post(
         "/invitations/accept",
-        json={"token": token, "full_name": "Dr Test", "password": "secret123"},
+        json={"token": token, "full_name": "Dr Test", "password": "secret123", "accepted_terms_version": "2026-08-01", "accepted_privacy_version": "2026-08-01"},
     )
 
     login = await client.post(
         "/auth/login-json",
-        json={"email": email, "password": "secret123"},
+        json={"email": email, "password": "secret123", "accepted_terms_version": "2026-08-01", "accepted_privacy_version": "2026-08-01"},
     )
     assert login.status_code == 200
     assert "access_token" in login.json()
@@ -197,7 +197,7 @@ async def test_accepted_user_can_login(
 async def test_accept_invalid_token(client):
     res = await client.post(
         "/invitations/accept",
-        json={"token": "not-a-real-token", "full_name": "X", "password": "secret123"},
+        json={"token": "not-a-real-token", "full_name": "X", "password": "secret123", "accepted_terms_version": "2026-08-01", "accepted_privacy_version": "2026-08-01"},
     )
     assert res.status_code == 400
 
@@ -223,7 +223,7 @@ async def test_revoked_invitation_cannot_be_accepted(
 
     accept = await client.post(
         "/invitations/accept",
-        json={"token": token, "full_name": "X", "password": "secret123"},
+        json={"token": token, "full_name": "X", "password": "secret123", "accepted_terms_version": "2026-08-01", "accepted_privacy_version": "2026-08-01"},
     )
     assert accept.status_code == 400
 
@@ -240,6 +240,8 @@ async def test_login_requires_verified_email(client):
             "email": email,
             "full_name": "Unverified Patient",
             "password": "secret123",
+            "accepted_terms_version": "2026-08-01",
+            "accepted_privacy_version": "2026-08-01",
             "role": "patient",
         },
     )
@@ -248,6 +250,6 @@ async def test_login_requires_verified_email(client):
     # Unverified → login blocked.
     login = await client.post(
         "/auth/login-json",
-        json={"email": email, "password": "secret123"},
+        json={"email": email, "password": "secret123", "accepted_terms_version": "2026-08-01", "accepted_privacy_version": "2026-08-01"},
     )
     assert login.status_code == 403

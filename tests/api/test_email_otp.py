@@ -51,6 +51,8 @@ async def _register(client, email: str):
             json={
                 "email": email,
                 "password": "Test12345",
+                "accepted_terms_version": "2026-08-01",
+                "accepted_privacy_version": "2026-08-01",
                 "full_name": "OTP User",
                 "role": "patient",
             },

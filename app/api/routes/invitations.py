@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, status, Query
+from fastapi import APIRouter, Depends, status, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.postgres import get_db
@@ -82,10 +82,11 @@ async def preview_invitation_endpoint(
     response_model=InvitationAcceptResponse,
 )
 async def accept_invitation_endpoint(
+    request: Request,
     payload: InvitationAccept,
     db: AsyncSession = Depends(get_db),
 ):
-    user = await accept_invitation(db=db, payload=payload)
+    user = await accept_invitation(db=db, payload=payload, request=request)
 
     return InvitationAcceptResponse(
         message="Invitation accepted. You can now sign in.",
