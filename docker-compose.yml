@@ -320,7 +320,14 @@ services:
     ports:
       - "127.0.0.1:9093:9093"
     volumes:
-      - ./alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      # Defaults to the dev config (MailHog — reaches nobody). Point at the
+      # production one to actually page a human:
+      #   ALERTMANAGER_CONFIG=./alertmanager.production.yml docker compose up -d
+      - ${ALERTMANAGER_CONFIG:-./alertmanager.yml}:/etc/alertmanager/alertmanager.yml:ro
+      # SMTP password and Slack webhook, referenced by the *_file directives in
+      # the production config. Gitignored — a credential in a committed file is
+      # a published credential.
+      - ./secrets:/etc/alertmanager/secrets:ro
       - alertmanager_data:/alertmanager
     restart: unless-stopped
     logging: *default-logging

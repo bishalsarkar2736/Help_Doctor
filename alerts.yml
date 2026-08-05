@@ -117,7 +117,14 @@ groups:
         # worker, so appointment reminders, slot generation, payment
         # reconciliation and the PHI retention purge could all stop and the
         # only trace would be a log line nobody reads.
-        expr: up{job="celery"} == 0 or celery_worker_up < 1
+        # Both selectors are scoped to job="celery" — WITHOUT that scope this
+        # alert fires forever. The api process imports app.core.celery to
+        # enqueue tasks, which defines these gauges at import time, so the api
+        # ALSO exports celery_worker_up. It is never incremented there
+        # (worker_ready only fires in the worker), so it sits at 0 and an
+        # unscoped `celery_worker_up < 1` matches it permanently — paging
+        # someone about a worker that is demonstrably healthy.
+        expr: up{job="celery"} == 0 or celery_worker_up{job="celery"} < 1
         for: 2m
         labels:
           severity: critical
@@ -129,7 +136,9 @@ groups:
             scheduled happens.
 
       - alert: CeleryTaskFailures
-        expr: sum by (task) (rate(celery_tasks_total{state="failed"}[10m])) > 0
+        # Scoped for the same reason as CeleryWorkerDown: the api exports these
+        # names too, at zero.
+        expr: sum by (task) (rate(celery_tasks_total{job="celery", state="failed"}[10m])) > 0
         for: 10m
         labels:
           severity: warning
@@ -142,7 +151,7 @@ groups:
       - alert: CeleryQueueBacklog
         # Read live from the broker on scrape, so this still reports correctly
         # when the workers are wedged and consuming nothing.
-        expr: celery_queue_length > 100
+        expr: celery_queue_length{job="celery"} > 100
         for: 10m
         labels:
           severity: warning
@@ -155,7 +164,7 @@ groups:
       - alert: CeleryTasksSlow
         expr: >-
           histogram_quantile(0.95,
-            sum by (le, task) (rate(celery_task_duration_seconds_bucket[15m]))
+            sum by (le, task) (rate(celery_task_duration_seconds_bucket{job="celery"}[15m]))
           ) > 300
         for: 15m
         labels:

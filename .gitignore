@@ -48,3 +48,6 @@ uploads/
 # Staging secrets are generated per-host, never committed.
 .env.staging
 .staging-accounts.json
+
+# Alertmanager and other mounted secrets — never committed.
+secrets/
