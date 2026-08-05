@@ -51,3 +51,4 @@ uploads/
 
 # Alertmanager and other mounted secrets — never committed.
 secrets/
+.env.production
