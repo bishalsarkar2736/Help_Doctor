@@ -102,7 +102,13 @@ def main() -> int:
                 continue
 
             key = path.as_posix()
-            data = path.read_bytes()
+
+            # Read through the source BACKEND, not path.read_bytes(). Going
+            # around the seam here was dead code that ruff caught (F841: source
+            # assigned but never used) — and it also skipped the storage root
+            # guard, so a symlink pointing outside uploads/ would have been
+            # copied into the bucket without complaint.
+            data = source.read(key)
 
             if not args.force and target.exists(key):
                 skipped += 1
