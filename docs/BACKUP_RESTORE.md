@@ -44,6 +44,38 @@ docker run --rm --network help_doctor_default \
 Verified on 2026-08-01: a credential document restored from a snapshot is
 byte-identical (sha256) to the live object.
 
+## Offsite
+
+Both backup services write into the `db_backups` volume — on the same machine
+as the database. **That is a copy, not a backup.** If the host dies, is stolen,
+or its disk fails, the database and every backup of it are lost together, and
+ransomware encrypts both in one pass.
+
+`offsite_backup` (compose profile `offsite`) mirrors that volume to an
+S3-compatible target every 6 hours:
+
+```bash
+# set OFFSITE_* in .env first
+docker compose --profile offsite up -d offsite_backup
+```
+
+It **mirrors without `--remove`** on purpose: the local side rotates on its own
+schedule, and propagating those deletions would let a local rotation bug — or
+an attacker holding the host — erase the offsite history too. Offsite retention
+belongs to the provider's lifecycle policy, where this machine cannot reach it.
+
+It verifies by listing the destination after syncing rather than trusting the
+exit code. A sync that "succeeded" while writing nothing is the failure that
+hides for months and is discovered on the day it is needed.
+
+**Offsite means a different failure domain.** Pointing this at the MinIO
+container running beside Postgres satisfies the script and none of the point.
+
+Verified 2026-08-05 against a stand-in bucket: 2011 objects transferred, and a
+database dump pulled back from the destination decompressed to a valid
+`pg_dump` containing all 36 `CREATE TABLE` statements. That exercise proves the
+**mechanism**; it does not make a same-host bucket offsite.
+
 ## Restore drill (safe — never touches live data)
 
 Restore into a throwaway database first. Never restore over `helpdoctor_db` to

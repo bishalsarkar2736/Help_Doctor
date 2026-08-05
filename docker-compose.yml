@@ -224,6 +224,38 @@ services:
     restart: unless-stopped
     logging: *default-logging
 
+  # Copies local backups to an OFFSITE target. Disabled by default because it
+  # cannot work without credentials for somewhere that is genuinely elsewhere:
+  #
+  #   docker compose --profile offsite up -d offsite_backup
+  #
+  # Until this runs, the database and every backup of it live on one machine —
+  # a copy, not a backup.
+  offsite_backup:
+    image: minio/mc:latest
+    container_name: helpdoctor_offsite_backup
+    profiles: ["offsite"]
+    environment:
+      OFFSITE_ENDPOINT_URL: ${OFFSITE_ENDPOINT_URL:-}
+      OFFSITE_ACCESS_KEY: ${OFFSITE_ACCESS_KEY:-}
+      OFFSITE_SECRET_KEY: ${OFFSITE_SECRET_KEY:-}
+      OFFSITE_BUCKET: ${OFFSITE_BUCKET:-}
+      OFFSITE_PREFIX: ${OFFSITE_PREFIX:-helpdoctor}
+      BACKUP_DIR: /backups
+      # Every 6 hours. More often buys little: the database dump runs hourly
+      # and the objects change rarely.
+      OFFSITE_INTERVAL_SECONDS: "21600"
+    volumes:
+      - ./scripts/backup_offsite.sh:/backup_offsite.sh:ro
+      # Read-only: this container ships backups out, it has no business
+      # modifying them.
+      - db_backups:/backups:ro
+    entrypoint: >-
+      sh -c 'while true; do /backup_offsite.sh || echo "offsite sync failed";
+      sleep "$${OFFSITE_INTERVAL_SECONDS}"; done'
+    restart: unless-stopped
+    logging: *default-logging
+
   # S3-compatible object storage. Required before running more than one api
   # replica: with STORAGE_BACKEND=local an upload lands on one replica's disk
   # and a download served by another is a 404.
