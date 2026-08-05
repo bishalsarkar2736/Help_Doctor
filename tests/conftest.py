@@ -295,11 +295,28 @@ async def fake_redis(monkeypatch):
     async def _get_redis():
         return fake
 
-    # patch redis dependency
     monkeypatch.setattr(app.db.redis, "get_redis", _get_redis)
 
-    # patch already-created redis client
-    #monkeypatch.setattr(app.db.redis, "redis_client", fake)
+    # Patching app.db.redis alone is NOT enough. Eight modules do
+    # `from app.db.redis import get_redis` at import time, which binds the
+    # ORIGINAL function into their own namespace — app.core.cache,
+    # medicine_service, presence, push, notifications, health and the websocket
+    # modules all kept talking to REAL redis while the fake sat unused.
+    #
+    # That is not merely untidy: cached values then survive between test runs
+    # and between the suite and the developer's machine. The medicine matcher
+    # caches a medicine ID, so a cached ID from an earlier run pointed at a row
+    # that no longer existed after the schema was recreated, and the lookup
+    # silently returned None.
+    #
+    # Rebinding every already-imported module keeps this correct as new callers
+    # appear, instead of relying on someone remembering to add them here.
+    import sys
+
+    for module in list(sys.modules.values()):
+        name = getattr(module, "__name__", "")
+        if name.startswith("app.") and hasattr(module, "get_redis"):
+            monkeypatch.setattr(module, "get_redis", _get_redis, raising=False)
 
     yield fake
 

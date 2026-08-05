@@ -1,5 +1,5 @@
 from sqlalchemy import (
-    Integer, DateTime,Boolean, String, Text
+    Integer, DateTime,Boolean, String, Text, func
 )
 from sqlalchemy.orm import  mapped_column,relationship
 
@@ -67,9 +67,19 @@ class Medicine(Base):
         default=True,
     )
 
+    # server_default is REQUIRED here, not decorative. The column is NOT NULL
+    # and the database already defaults it to CURRENT_TIMESTAMP, but without
+    # this the mapper does not know that: it sends an explicit NULL and every
+    # ORM insert fails. POST /admin/medicines returned 500 for exactly this
+    # reason — an admin could not add a medicine at all.
+    #
+    # The seeder was unaffected because it uses a Core insert() with an
+    # explicit values dict, which omits the column and lets the DB default
+    # apply. That is why the bug survived a successful 320-row seed.
     created_at = mapped_column(
         DateTime(timezone=True),
         nullable=False,
+        server_default=func.now(),
     )
 
     aliases = relationship(
