@@ -10,11 +10,19 @@ x-logging: &default-logging
     max-file: "5"
 
 services:
+  # api, migrate, celery_worker and celery_beat all run the SAME Dockerfile, so
+  # they share one image tag. Without an explicit `image:`, compose derives a
+  # separate tag per service and `docker compose build api` leaves the other
+  # three on older code — including the migration runner, which then applies a
+  # different set of revisions than the app expects. Keep the tag identical on
+  # all four.
+  #
   # One-shot: apply DB migrations, then exit. Everything that touches the DB
   # waits for this to finish, so migrations run exactly once per release and
   # multiple api/worker replicas never race to migrate.
   migrate:
     build: .
+    image: helpdoctor-app:local
     container_name: helpdoctor_migrate
     command: alembic upgrade head
     env_file:
@@ -26,6 +34,7 @@ services:
 
   api:
     build: .
+    image: helpdoctor-app:local
     container_name: helpdoctor_api
     env_file:
       - .env.docker
@@ -80,6 +89,7 @@ services:
 
   celery_worker:
     build: .
+    image: helpdoctor-app:local
     container_name: helpdoctor_celery_worker
     # Concurrency is NOT set here: it lives in app/core/celery.py, driven by
     # CELERY_WORKER_CONCURRENCY, so the limit holds no matter how the worker is
@@ -129,6 +139,7 @@ services:
 
   celery_beat:
     build: .
+    image: helpdoctor-app:local
     container_name: helpdoctor_celery_beat
     command: celery -A app.core.celery beat --loglevel=info
     env_file:

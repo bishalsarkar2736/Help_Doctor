@@ -1,5 +1,5 @@
 from sqlalchemy import (
-    Integer, DateTime,Boolean, String, Text, func
+    Integer, DateTime,Boolean, String, Text, func, ForeignKey
 )
 from sqlalchemy.orm import  mapped_column,relationship
 
@@ -26,6 +26,22 @@ class Medicine(Base):
         String(255),
         nullable=False,
     )
+
+    # The active substance, as a relation. generic_name above is the label a
+    # human typed; THIS is what allergy checking resolves through, so a patient
+    # allergic to "Cefixime" is warned about any of its 11 brands.
+    #
+    # Nullable because a medicine can be added before its generic is known, and
+    # RESTRICT because deleting a generic that brands still point at would
+    # silently break exactly that safety check.
+    generic_id = mapped_column(
+        Integer,
+        ForeignKey("generics.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
+
+    generic = relationship("Generic", back_populates="medicines")
 
     strength = mapped_column(
         String(100),

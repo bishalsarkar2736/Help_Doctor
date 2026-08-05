@@ -7,6 +7,7 @@ from app.core.time import UTC
 from app.core.metrics import prescriptions_issued_total
 from app.models.patient import Patient
 from app.domain.prescribing.allergy import find_allergy_conflicts
+from app.services.medicine_lookup_service import resolve_generic_names
 from app.models.appointment import (
     Appointment,
     AppointmentStatus,
@@ -122,9 +123,17 @@ async def create_prescription(
     patient = await db.scalar(
         select(Patient).where(Patient.user_id == appointment.patient_id)
     )
+    prescribed_names = [item.medicine_name for item in data.items]
+
+    # Resolve each typed name to its active substance so the check sees what a
+    # patient actually reacts to. Without this a patient allergic to "Cefixime"
+    # gets no warning when prescribed "Cefim" — one of its eleven brands.
+    generic_names = await resolve_generic_names(db, prescribed_names)
+
     allergy_conflicts = find_allergy_conflicts(
         patient.allergies if patient else None,
-        [item.medicine_name for item in data.items],
+        prescribed_names,
+        generic_names,
     )
     if allergy_conflicts and not data.allergy_override:
         raise BadRequestError(
