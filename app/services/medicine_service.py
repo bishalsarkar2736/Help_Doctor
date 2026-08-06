@@ -2,6 +2,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.generic import Generic
+from app.models.generic_alias import GenericAlias
 from app.models.medicine import Medicine
 from app.models.medicine_alias import MedicineAlias
 from app.db.redis import get_redis
@@ -101,6 +102,14 @@ async def search_medicines(
                 Medicine.id.in_(
                     select(MedicineAlias.medicine_id).where(
                         MedicineAlias.alias.ilike(pattern)
+                    )
+                ),
+                # Substance aliases: a prescriber who types "Acetaminophen"
+                # means every Paracetamol brand, and the catalogue files none
+                # of them under that name.
+                Medicine.generic_id.in_(
+                    select(GenericAlias.generic_id).where(
+                        GenericAlias.alias.ilike(pattern)
                     )
                 ),
             )

@@ -19,6 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.generic import Generic
+from app.models.generic_alias import GenericAlias
 from app.models.medicine import Medicine
 from app.models.medicine_alias import MedicineAlias
 from app.services.medicine_matcher_service import normalize
@@ -111,6 +112,40 @@ async def verify_medicine_ids(db: AsyncSession, items) -> None:
             + ", ".join(str(mid) for mid in missing)
             + ". Pick it again from the list."
         )
+
+
+async def resolve_substance_aliases(
+    db: AsyncSession,
+    generic_names: list[str],
+) -> dict[str, list[str]]:
+    """Other names for each of these substances.
+
+    Paracetamol is Acetaminophen. A patient whose allergy is recorded under the
+    name the catalogue does not use matches nothing without this, because every
+    brand of it is filed under the other name.
+
+    Keyed by the substance name as the caller knows it, so the result can be
+    merged straight into the candidate list the allergy check compares against.
+    """
+    wanted = {name for name in generic_names if name and name.strip()}
+
+    if not wanted:
+        return {}
+
+    rows = (
+        await db.execute(
+            select(Generic.name, GenericAlias.alias)
+            .join(GenericAlias, GenericAlias.generic_id == Generic.id)
+            .where(Generic.name.in_(wanted))
+        )
+    ).all()
+
+    aliases: dict[str, list[str]] = {}
+
+    for generic_name, alias in rows:
+        aliases.setdefault(generic_name, []).append(alias)
+
+    return aliases
 
 
 async def resolve_medicine_ids(

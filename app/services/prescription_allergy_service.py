@@ -35,6 +35,7 @@ from app.models.patient import Patient
 from app.models.prescription import Prescription
 from app.services.medicine_lookup_service import (
     resolve_generics_for_items,
+    resolve_substance_aliases,
     verify_medicine_ids,
 )
 from app.try_except.audit import log_audit_event
@@ -148,10 +149,17 @@ async def validate_prescription_allergies(
     # gets no warning when prescribed "Cefim" — one of its eleven brands.
     generic_names = await resolve_generics_for_items(db, prescribed)
 
+    # And the other names those substances go by, so an allergy recorded as
+    # "Acetaminophen" is matched against every Paracetamol brand.
+    substance_aliases = await resolve_substance_aliases(
+        db, list(generic_names.values())
+    )
+
     conflicts = find_allergy_conflicts(
         patient.allergies if patient else None,
         [item.medicine_name for item in prescribed],
         generic_names,
+        substance_aliases,
     )
 
     reason = (override_reason or "").strip()

@@ -50,5 +50,15 @@ class Generic(Base):
 
     medicines = relationship("Medicine", back_populates="generic")
 
+    # Other names for the same substance — "Acetaminophen" for Paracetamol.
+    # Held here rather than per-brand because the fact belongs to the substance;
+    # recording it on each product would repeat it across every brand and lose
+    # it on the next one added.
+    aliases = relationship(
+        "GenericAlias",
+        back_populates="generic",
+        cascade="all, delete-orphan",
+    )
+
     def __repr__(self) -> str:
         return f"<Generic {self.name}>"

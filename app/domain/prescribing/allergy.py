@@ -72,6 +72,7 @@ def find_allergy_conflicts(
     allergies: str | None,
     medicine_names: list[str],
     generic_names: dict[str, str] | None = None,
+    substance_aliases: dict[str, list[str]] | None = None,
 ) -> list[str]:
     """Return the prescribed medicines that match a recorded allergen.
 
@@ -80,12 +81,18 @@ def find_allergy_conflicts(
     caller resolves it from the catalogue where it can, and a medicine typed
     free-hand that matches no catalogue row is still checked on its name alone
     rather than skipped.
+
+    `substance_aliases` maps a substance to its other names — Paracetamol is
+    also Acetaminophen. A patient whose allergy is recorded under the name the
+    catalogue does not use would otherwise match nothing at all, because every
+    brand of it is filed under the other name.
     """
     allergens = _allergens(allergies)
     if not allergens:
         return []
 
     generic_names = generic_names or {}
+    substance_aliases = substance_aliases or {}
 
     conflicts = []
 
@@ -93,8 +100,11 @@ def find_allergy_conflicts(
         if not name:
             continue
 
-        # What was typed, plus the substance it contains.
-        candidates = [name, generic_names.get(name)]
+        # What was typed, the substance it contains, and the other names that
+        # substance goes by.
+        generic = generic_names.get(name)
+
+        candidates = [name, generic, *substance_aliases.get(generic or "", [])]
 
         if any(
             _mentions(allergen, candidate)
