@@ -4,6 +4,7 @@ from sqlalchemy import select, or_, func
 from app.db.postgres import get_db
 from app.models.user import User
 from app.models.doctor import Doctor, DoctorStatus
+from app.domain.clinics.visibility import clinic_is_public
 from app.models.clinic import Clinic
 from app.security.rbac import require_roles
 from app.models.user import UserRole
@@ -103,10 +104,14 @@ async def list_doctors(
             Clinic.name.label("clinic_name"),
         )
         .join(User, Doctor.user_id == User.id)
-        .outerjoin(Clinic, Doctor.clinic_id == Clinic.id)
+        # INNER join now, not outer. A doctor with no clinic, or one whose
+        # clinic is suspended or deleted, is not publicly listable — the outer
+        # join kept both in the directory.
+        .join(Clinic, Doctor.clinic_id == Clinic.id)
         .where(
             Doctor.status == DoctorStatus.APPROVED,
             User.is_active.is_(True),
+            *clinic_is_public(),
         )
     )
 
@@ -286,17 +291,39 @@ async def get_my_doctor_profile(
 @router.get("/specializations", response_model=list[str])
 async def list_specializations(
     db: AsyncSession = Depends(get_db),
+    clinic_id: int | None = Query(
+        default=None,
+        description="Restrict to specializations this clinic actually offers",
+    ),
 ):
-    result = await db.execute(
+    """Specializations a patient can actually be seen for.
+
+    clinic_id is optional rather than required because this backs the public
+    Find Doctors page, which deliberately browses every clinic and has an
+    "All clinics" option that the platform-wide list fills.
+
+    When a clinic IS chosen the list narrows with it. Without that the filter
+    offered specializations the selected clinic does not practise, and picking
+    one returned no doctors — the page looked broken while answering honestly.
+    """
+    statement = (
         select(Doctor.specialization)
         .join(User, Doctor.user_id == User.id)
+        .join(Clinic, Doctor.clinic_id == Clinic.id)
         .where(
             Doctor.status == DoctorStatus.APPROVED,
             User.is_active.is_(True),
+            *clinic_is_public(),
         )
         .distinct()
         .order_by(Doctor.specialization)
     )
+
+    if clinic_id is not None:
+        statement = statement.where(Doctor.clinic_id == clinic_id)
+
+    result = await db.execute(statement)
+
     return [row[0] for row in result.all()]
 
 
@@ -360,11 +387,12 @@ async def get_doctor_detail(
             Clinic.name.label("clinic_name"),
         )
         .join(User, Doctor.user_id == User.id)
-        .outerjoin(Clinic, Doctor.clinic_id == Clinic.id)
+        .join(Clinic, Doctor.clinic_id == Clinic.id)
         .where(
             Doctor.id == doctor_id,
             Doctor.status == DoctorStatus.APPROVED,
             User.is_active.is_(True),
+            *clinic_is_public(),
         )
     )
     row = result.first()

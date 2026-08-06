@@ -25,6 +25,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.time import utc_now
+from app.domain.clinics.visibility import clinic_is_public
+from app.models.clinic import Clinic
 from app.models.doctor import Doctor, DoctorStatus
 from app.models.doctor_slot import DoctorSlot
 from app.models.user import User
@@ -66,8 +68,13 @@ async def find_earliest_available_doctor(
         )
         .join(Doctor, DoctorSlot.doctor_id == Doctor.id)
         .join(User, Doctor.user_id == User.id)
+        # Defence in depth: callers resolve the clinic through clinic_context,
+        # which already applies this rule, but a service that can be called
+        # with a bare id should not depend on every caller remembering.
+        .join(Clinic, Doctor.clinic_id == Clinic.id)
         .where(
             Doctor.clinic_id == clinic_id,
+            *clinic_is_public(),
             Doctor.status == DoctorStatus.APPROVED,
             User.is_active.is_(True),
             DoctorSlot.is_booked.is_(False),

@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.db.postgres import get_db
+from app.domain.clinics.visibility import clinic_is_public
 from app.models.clinic import Clinic, ClinicStatus
 from app.schemas.clinic_schema import PublicClinic
 
@@ -21,7 +22,9 @@ async def list_public_clinics(
     # with the whole platform's data.
     result = await db.execute(
         select(Clinic.id, Clinic.name)
-        .where(Clinic.status == ClinicStatus.ACTIVE)
+        # Shared predicate: this endpoint already filtered on status but not on
+        # deleted_at, so a soft-deleted clinic still appeared in the picker.
+        .where(*clinic_is_public())
         .order_by(Clinic.name)
     )
     return [PublicClinic(id=row.id, name=row.name) for row in result]

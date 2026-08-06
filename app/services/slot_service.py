@@ -4,12 +4,28 @@ from datetime import datetime, time, timedelta, date
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.clinics.visibility import clinic_is_public
 from app.models.clinic import Clinic
 from app.models.doctor import Doctor
 from app.models.doctor_slot import DoctorSlot
 from app.core.cache import get_cache, set_cache
 from app.core.time import UTC
 from app.core.tz import to_zoneinfo
+
+
+async def doctor_is_publicly_bookable(db: AsyncSession, doctor_id: int) -> bool:
+    """Whether this doctor's clinic is open to the public.
+
+    Uses the shared predicate, so the slot list, the doctor directory and the
+    assistant cannot disagree about whether a clinic is available.
+    """
+    found = await db.scalar(
+        select(Doctor.id)
+        .join(Clinic, Doctor.clinic_id == Clinic.id)
+        .where(Doctor.id == doctor_id, *clinic_is_public())
+    )
+
+    return found is not None
 
 
 async def doctor_timezone(db: AsyncSession, doctor_id: int):
@@ -60,6 +76,11 @@ async def get_doctor_slots(
     and six hours of the next day were included. The further a clinic is from
     UTC the more of its morning disappeared.
     """
+    # A suspended or deleted clinic is offline: its slots stay in the table so
+    # recovery is instant, but they are not offered publicly.
+    if not await doctor_is_publicly_bookable(db, doctor_id):
+        return []
+
     tz = await doctor_timezone(db, doctor_id)
 
     start_dt, end_dt = local_day_window(start_date, days, tz)

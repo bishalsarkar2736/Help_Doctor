@@ -8,6 +8,8 @@ import logging
 from sqlalchemy.exc import IntegrityError, DBAPIError
 from app.models.patient import Patient
 from app.models.appointment import Appointment, AppointmentStatus
+from app.domain.clinics.visibility import is_public
+from app.models.clinic import Clinic
 from app.models.doctor import Doctor, DoctorStatus
 from app.models.user import User, UserRole
 from app.try_except.exceptions import ForbiddenError,BadRequestError,NotFoundError
@@ -565,6 +567,23 @@ async def _book_appointment_internal(
 
     if doctor.status != DoctorStatus.APPROVED:
         raise ForbiddenError("Doctor not verified")
+
+    # A suspended or deleted clinic is temporarily offline: nothing new may be
+    # booked into it. Checked here rather than only in the listings, because
+    # hiding a doctor from search does not stop a booking against a doctor_id
+    # someone already has — a stale tab, a bookmark, or a link in an email.
+    #
+    # This blocks NEW bookings only. Appointments already made are left alone:
+    # they are not cancelled, hidden or modified, and the patient can still see
+    # them. Suspension is usually a billing matter, and cancelling clinical
+    # appointments over one would be both destructive and hard to undo.
+    clinic = await db.get(Clinic, doctor.clinic_id) if doctor.clinic_id else None
+
+    if not is_public(clinic):
+        raise ForbiddenError(
+            "This clinic is temporarily unavailable and is not accepting "
+            "appointments."
+        )
 
     # 2️⃣ Role check
     if patient.role != UserRole.PATIENT:

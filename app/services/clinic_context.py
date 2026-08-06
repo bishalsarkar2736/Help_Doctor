@@ -34,7 +34,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.db.postgres import get_db
-from app.models.clinic import Clinic, ClinicStatus
+from app.domain.clinics.visibility import clinic_is_public
+from app.models.clinic import Clinic
 from app.models.doctor import Doctor
 from app.models.user import User, UserRole
 from app.try_except.exceptions import NotFoundError
@@ -49,15 +50,10 @@ DEV_CLINIC_ID_HEADER = "X-Clinic-ID"
 
 async def load_active_clinic(db: AsyncSession, clinic_id: int) -> Clinic | None:
     """The clinic, if it exists and is open for business."""
+    # The shared predicate, so the assistant, the directory and booking cannot
+    # disagree about whether a clinic is open.
     return await db.scalar(
-        select(Clinic).where(
-            Clinic.id == clinic_id,
-            Clinic.status == ClinicStatus.ACTIVE,
-            # Checked alongside status rather than trusting it alone: the two
-            # are written by different flows, and a row carrying a deletion
-            # timestamp is deleted whatever its status column says.
-            Clinic.deleted_at.is_(None),
-        )
+        select(Clinic).where(Clinic.id == clinic_id, *clinic_is_public())
     )
 
 
