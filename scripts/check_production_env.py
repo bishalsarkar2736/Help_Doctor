@@ -17,6 +17,7 @@ Exit code is 0 only if nothing is wrong, so it works as a deploy gate.
 import re
 import sys
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
 
 ERRORS: list[str] = []
 WARNINGS: list[str] = []
@@ -57,6 +58,58 @@ EXAMPLE_VALUES = {
 }
 
 
+def check_database_target(env: dict[str, str]) -> None:
+    """DATABASE_URL and the POSTGRES_* parts must describe the same database.
+
+    Alembic prefers DATABASE_URL; the application composes its own from the
+    parts. If the two disagree, the schema is migrated in one database while
+    every query runs against another, and nothing reports it — the app is
+    simply missing tables it believes it created.
+
+    The app refuses to start on this now, but a deploy finds out sooner here.
+    """
+    url = env.get("DATABASE_URL", "").strip()
+
+    if not url:
+        ok("DATABASE_URL unset — the POSTGRES_* parts are the single source")
+        return
+
+    parsed = urlsplit(url)
+
+    mismatches = []
+
+    for label, from_url, key in (
+        ("host", parsed.hostname, "POSTGRES_HOST"),
+        ("database", parsed.path.lstrip("/"), "POSTGRES_DB"),
+        ("user", unquote(parsed.username or ""), "POSTGRES_USER"),
+        ("password", unquote(parsed.password or ""), "POSTGRES_PASSWORD"),
+    ):
+        from_parts = env.get(key, "")
+
+        if from_url and from_parts and from_url != from_parts:
+            # Values omitted for the password: this runs in deploy logs.
+            detail = (
+                f"{label}: DATABASE_URL and {key} differ"
+                if label == "password"
+                else f"{label}: DATABASE_URL has {from_url!r}, {key}={from_parts!r}"
+            )
+            mismatches.append(detail)
+
+    url_port = parsed.port
+    parts_port = env.get("POSTGRES_PORT", "")
+
+    if url_port and parts_port and str(url_port) != parts_port:
+        mismatches.append(
+            f"port: DATABASE_URL has {url_port}, POSTGRES_PORT={parts_port!r}"
+        )
+
+    if mismatches:
+        for detail in mismatches:
+            fail(f"DATABASE_URL contradicts the POSTGRES_* settings — {detail}")
+    else:
+        ok("DATABASE_URL agrees with the POSTGRES_* settings")
+
+
 def check(env: dict[str, str]) -> None:
     # --- the app refuses to start on these, but say so clearly here ---------
     if env.get("ENV") != "production":
@@ -71,6 +124,8 @@ def check(env: dict[str, str]) -> None:
 
     if env.get("PAYMENT_GATEWAY") == "fake":
         fail("PAYMENT_GATEWAY=fake is not allowed in production")
+
+    check_database_target(env)
 
     # --- loads fine, still wrong -------------------------------------------
     for key, example in EXAMPLE_VALUES.items():

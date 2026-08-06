@@ -1,7 +1,14 @@
 from functools import lru_cache
-from pydantic import Field, AnyUrl,field_validator,EmailStr,ValidationInfo
+from pydantic import (
+    Field,
+    AnyUrl,
+    field_validator,
+    model_validator,
+    EmailStr,
+    ValidationInfo,
+)
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, unquote, urlsplit
 from typing import Literal
 
 class Settings(BaseSettings):
@@ -25,6 +32,23 @@ class Settings(BaseSettings):
     POSTGRES_DB: str
     POSTGRES_USER: str
     POSTGRES_PASSWORD: str
+
+    # The whole connection string, when something else supplies it.
+    #
+    # Declared so it is AUTHORITATIVE. Alembic already preferred it (env.py
+    # reads TEST_DATABASE_URL, then DATABASE_URL, before falling back to these
+    # settings), while the app composed its own URL from the POSTGRES_* parts
+    # and never looked at it. Setting it therefore steered migrations and not
+    # the application: the schema would be changed in one database while every
+    # query ran against another.
+    #
+    # Managed platforms inject this variable automatically, so that split was
+    # one deployment away rather than hypothetical.
+    #
+    # The POSTGRES_* parts stay required regardless: the postgres container
+    # itself is configured from them, as are the healthcheck and the backup
+    # scripts. Where both exist they must agree — enforced below.
+    DATABASE_URL: str | None = None
 
     # Connection pool, applied PER PROCESS. The ceiling is
     #   (api procs + celery children + beat) x (POOL_SIZE + MAX_OVERFLOW)
@@ -318,15 +342,79 @@ class Settings(BaseSettings):
         
     
     @property
-    def database_url(self) -> str:
+    def composed_database_url(self) -> str:
+        """The connection string built from the individual POSTGRES_* parts."""
         password = quote_plus(self.POSTGRES_PASSWORD)
 
         return (
             f"postgresql+asyncpg://{self.POSTGRES_USER}:"
-            #f"{self.POSTGRES_PASSWORD}@{self.POSTGRES_HOST}:"
             f"{password}@{self.POSTGRES_HOST}:"
             f"{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
         )
+
+    @property
+    def database_url(self) -> str:
+        """The database everything talks to.
+
+        DATABASE_URL wins when set, because Alembic already prefers it. Having
+        the app disagree is what let migrations and queries reach two different
+        databases. One value now decides for both.
+        """
+        return self.DATABASE_URL or self.composed_database_url
+
+    @model_validator(mode="after")
+    def _database_url_must_agree_with_parts(self) -> "Settings":
+        """Refuse to start on a contradictory database configuration.
+
+        Both forms have to exist — the postgres container is configured from
+        the parts — so the risk is not duplication but disagreement. Changing
+        POSTGRES_DB and forgetting the URL, or rotating the password in one
+        place only, previously produced no error at all: migrations went one
+        way, the application went the other, and nothing said so until the
+        schema and the data were already in two different databases.
+
+        Compared field by field rather than as strings, so an equivalent URL
+        written differently (percent-encoding, an explicit default port) is not
+        reported as a conflict.
+        """
+        if not self.DATABASE_URL:
+            return self
+
+        parsed = urlsplit(self.DATABASE_URL)
+
+        differences = []
+
+        def _compare(label: str, from_url, from_parts) -> None:
+            # A part absent from the URL is not a contradiction — the URL is
+            # authoritative and may legitimately omit an optional component.
+            if from_url in (None, "") or from_url == from_parts:
+                return
+            differences.append(f"{label}: URL has {from_url!r}, parts have {from_parts!r}")
+
+        _compare("host", parsed.hostname, self.POSTGRES_HOST)
+        _compare("port", parsed.port, self.POSTGRES_PORT)
+        _compare("database", parsed.path.lstrip("/"), self.POSTGRES_DB)
+        _compare("user", unquote(parsed.username or ""), self.POSTGRES_USER)
+
+        # Reported without either value: a mismatch here is usually a half-done
+        # credential rotation, and the message goes to logs.
+        url_password = unquote(parsed.password or "")
+
+        if url_password and url_password != self.POSTGRES_PASSWORD:
+            differences.append(
+                "password: the URL and POSTGRES_PASSWORD are different"
+            )
+
+        if differences:
+            raise ValueError(
+                "DATABASE_URL contradicts the POSTGRES_* settings, so "
+                "migrations and the application would use different "
+                "databases:\n  - "
+                + "\n  - ".join(differences)
+                + "\nMake them agree, or unset DATABASE_URL to use the parts."
+            )
+
+        return self
 
 
 @lru_cache

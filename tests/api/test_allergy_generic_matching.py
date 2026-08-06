@@ -192,26 +192,9 @@ async def test_an_alias_makes_a_brand_inherit_the_allergy_warning(db, catalogue)
     assert find_allergy_conflicts("Cefixime", ["Cefim-A"], resolved) == ["Cefim-A"]
 
 
-# ---------------------------------------------------------------------------
-# End to end
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_the_real_backfill_linked_every_brand(db):
-    """Every seeded medicine should have landed on a generic.
-
-    A NULL generic_id means that brand is invisible to substance-level allergy
-    checking, which is exactly the gap this step closes.
-    """
-    from app.models.medicine import Medicine as M
-
-    total = await db.scalar(select(Medicine.id).limit(1))
-    if total is None:
-        pytest.skip("no medicines in this test database")
-
-    unlinked = (
-        await db.scalars(select(M.name).where(M.generic_id.is_(None)).limit(5))
-    ).all()
-
-    assert not unlinked, f"medicines with no generic: {unlinked}"
+# A test asserting that no catalogue medicine is left unlinked used to sit here.
+# The test database is created empty, so it skipped on every run and never once
+# executed — coverage in name only. That invariant is now enforced where it can
+# actually be exercised: the generics migration fails rather than leaving a row
+# unlinked, medicine create/update resolve the substance on write, and the
+# seeder links from generic_id IS NULL. See test_medicine_generic_linking.py.
