@@ -269,7 +269,13 @@ async def test_booking_is_refused(client, db, auth_patient, suspended):
         headers=auth_patient["headers"],
     )
 
-    assert res.status_code in (400, 403), res.text
+    # 409, not 403: nothing about the caller is wrong, and a client that
+    # reacts to 403 by re-authenticating would retry forever. The request
+    # conflicts with the clinic's current state.
+    #
+    # Not 503 either — that reports a whole-service outage for one suspended
+    # tenant, and puts an ordinary business outcome in the error-rate graphs.
+    assert res.status_code == 409, res.text
     assert "unavailable" in res.text.lower()
 
 

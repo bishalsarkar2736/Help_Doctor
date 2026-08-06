@@ -12,7 +12,12 @@ from app.domain.clinics.visibility import is_public
 from app.models.clinic import Clinic
 from app.models.doctor import Doctor, DoctorStatus
 from app.models.user import User, UserRole
-from app.try_except.exceptions import ForbiddenError,BadRequestError,NotFoundError
+from app.try_except.exceptions import (
+    ForbiddenError,
+    BadRequestError,
+    ConflictError,
+    NotFoundError,
+)
 from app.services.appointment_transition_service import transition_appointment_locked
 from app.try_except.audit import log_audit_event
 from app.core.cache import delete_cache
@@ -577,10 +582,19 @@ async def _book_appointment_internal(
     # they are not cancelled, hidden or modified, and the patient can still see
     # them. Suspension is usually a billing matter, and cancelling clinical
     # appointments over one would be both destructive and hard to undo.
+    # 409 rather than 403: nothing about the CALLER is wrong, so a client that
+    # reacts to 403 by re-authenticating would retry forever. The request
+    # conflicts with the clinic's current state, which is what 409 describes,
+    # and it is the code the rest of this codebase already uses for a state
+    # conflict.
+    #
+    # Not 503 either — that would report a whole-service outage for one
+    # suspended tenant, and every attempt would land in the error-rate graphs
+    # as a server fault rather than the ordinary business outcome it is.
     clinic = await db.get(Clinic, doctor.clinic_id) if doctor.clinic_id else None
 
     if not is_public(clinic):
-        raise ForbiddenError(
+        raise ConflictError(
             "This clinic is temporarily unavailable and is not accepting "
             "appointments."
         )
