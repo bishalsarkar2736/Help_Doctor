@@ -1,12 +1,45 @@
 
-from datetime import datetime, timedelta, date
+from datetime import datetime, time, timedelta, date
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.clinic import Clinic
+from app.models.doctor import Doctor
 from app.models.doctor_slot import DoctorSlot
-from app.core.time import UTC
 from app.core.cache import get_cache, set_cache
+from app.core.time import UTC
+from app.core.tz import to_zoneinfo
+
+
+async def doctor_timezone(db: AsyncSession, doctor_id: int):
+    """The IANA timezone of the clinic a doctor practises at.
+
+    Availability is entered in clinic-local wall-clock time and slots are
+    stored in UTC, so every question about a calendar DAY has to be asked in
+    the clinic's zone. Unknown or blank falls back to UTC, matching
+    slot_generation, so a bad value degrades rather than crashing scheduling.
+    """
+    tz_name = await db.scalar(
+        select(Clinic.timezone)
+        .join(Doctor, Doctor.clinic_id == Clinic.id)
+        .where(Doctor.id == doctor_id)
+    )
+
+    return to_zoneinfo(tz_name)
+
+
+def local_day_window(start_date: date, days: int, tz) -> tuple[datetime, datetime]:
+    """The UTC bounds of `days` calendar days beginning on `start_date`, in `tz`.
+
+    Built from local midnight to local midnight rather than by adding 24 hours
+    per day, so a day that is 23 or 25 hours long across a DST transition still
+    covers exactly the days asked for.
+    """
+    start_local = datetime.combine(start_date, time.min, tzinfo=tz)
+    end_local = datetime.combine(start_date + timedelta(days=days), time.min, tzinfo=tz)
+
+    return start_local.astimezone(UTC), end_local.astimezone(UTC)
 
 
 async def get_doctor_slots(
@@ -18,18 +51,31 @@ async def get_doctor_slots(
     limit: int = 100,
     offset: int = 0,
 ):
+    """Slots on the given calendar days, as the CLINIC reckons days.
+
+    `start_date` is a date with no timezone of its own, and it used to be read
+    as a UTC day boundary while the slots it filtered were generated from
+    clinic-local availability. For a clinic at UTC+6 that made "today" run from
+    06:00 to 06:00 local: the first six hours of the requested day were missing
+    and six hours of the next day were included. The further a clinic is from
+    UTC the more of its morning disappeared.
+    """
+    tz = await doctor_timezone(db, doctor_id)
+
+    start_dt, end_dt = local_day_window(start_date, days, tz)
+
+    # The timezone belongs in the cache key. The same doctor_id and date map to
+    # a different UTC window if the clinic's timezone is corrected, and the key
+    # without it would keep serving the window computed under the old one.
     cache_key = (
         f"doctor:{doctor_id}:slots:"
-        f"{start_date.isoformat()}:{days}:{only_available}:{limit}:{offset}"
+        f"{start_date.isoformat()}:{days}:{only_available}:{limit}:{offset}:"
+        f"{start_dt.isoformat()}"
     )
 
-    # 🔹 Cache
     cached = await get_cache(cache_key)
     if cached:
         return cached
-
-    start_dt = datetime.combine(start_date, datetime.min.time(), tzinfo=UTC)
-    end_dt = start_dt + timedelta(days=days)
 
     query = select(DoctorSlot).where(
         DoctorSlot.doctor_id == doctor_id,
@@ -37,11 +83,9 @@ async def get_doctor_slots(
         DoctorSlot.start_time < end_dt,
     )
 
-    # 🔹 Filter
     if only_available:
         query = query.where(DoctorSlot.is_booked.is_(False))
 
-    # 🔹 Order + Pagination
     query = query.order_by(DoctorSlot.start_time).limit(limit).offset(offset)
 
     result = await db.execute(query)
