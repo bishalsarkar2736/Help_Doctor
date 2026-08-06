@@ -18,6 +18,7 @@ from .admin_medicine import router as admin_medicine_router
 from .admin_medicine_analytics import router as admin_medicine_analytics_router
 from .admin_medicine_alias_api import router as admin_medicine_alias_api_router
 from .admin_generic_alias_api import router as admin_generic_alias_api_router
+from .assistant import router as assistant_router
 from .admin_medicine_ai import router as admin_medicine_ai_router
 from .admin_medicine_ai_logs import router as admin_medicine_ai_logs_router
 from .admin_medicine_ai_analytics import router as admin_medicine_ai_analytics_router
@@ -71,6 +72,7 @@ ALL_ROUTERS = [
     admin_medicine_analytics_router,
     admin_medicine_alias_api_router,
     admin_generic_alias_api_router,
+    assistant_router,
     admin_medicine_ai_router,
     admin_medicine_ai_logs_router,
     admin_medicine_ai_analytics_router,

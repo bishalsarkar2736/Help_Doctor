@@ -245,6 +245,31 @@ class Settings(BaseSettings):
     # Payment gateway: "bkash" (live) or "fake" (dev/test simulate flow).
     PAYMENT_GATEWAY: Literal["bkash", "fake"] = "bkash"
 
+    # --- Scheduling assistant ---
+    #
+    # Turns the OpenAI call off without turning the assistant off. Disabled,
+    # every question is still routed, dispatched and answered from the
+    # database — the reply arrives as structured data instead of a sentence.
+    # The assistant has to keep working when OpenAI does not, and this is the
+    # switch that proves it does rather than the hope that it might.
+    ENABLE_AI_FORMATTING: bool = False
+
+    # The model only turns structured JSON into a sentence. The backend has
+    # already decided every fact in it, so there is nothing here for a large
+    # reasoning model to reason about — it would cost more, answer slower, and
+    # be no less bound by the data it was handed.
+    ASSISTANT_LLM_MODEL: str = "gpt-4.1-nano"
+
+    # Hard per-clinic daily ceiling, counted in requests rather than tokens:
+    # simpler to reason about, impossible to drift from, and enough to bound
+    # the bill. This is a PUBLIC endpoint, so without a ceiling it is an open
+    # tap on someone else's budget.
+    MAX_LLM_REQUESTS_PER_CLINIC_PER_DAY: int = Field(default=500, ge=0)
+
+    # Per-IP, per-minute, applied ONLY to requests that reach the model. The
+    # deterministic path costs nothing and is not throttled with it.
+    MAX_LLM_REQUESTS_PER_IP_PER_MINUTE: int = Field(default=20, ge=1)
+
     ALLOWED_ORIGINS: str = "http://localhost:5173"
 
     # Host header allowlist, comma separated, no scheme and no port.

@@ -227,3 +227,45 @@ medicine_ai_tokens_total = Counter(
     "medicine_ai_tokens_total",
     "Total medicine AI tokens consumed",
 )
+
+# --- Scheduling assistant ---------------------------------------------------
+#
+# Counts and timings only. The question a patient typed is never recorded here
+# or anywhere else: a chat box invites people to describe their health, and the
+# surest way to never mishandle that text is to never keep it.
+
+assistant_requests_total = Counter(
+    "assistant_requests_total",
+    "Assistant questions answered, by intent and by how they were answered",
+    ["intent", "path"],
+)
+
+assistant_llm_requests_total = Counter(
+    "assistant_llm_requests_total",
+    "Calls made to the language model, by purpose",
+    ["purpose"],
+)
+
+assistant_llm_failures_total = Counter(
+    "assistant_llm_failures_total",
+    "Model calls that failed and fell back to the deterministic answer",
+    ["purpose", "kind"],
+)
+
+assistant_llm_tokens_total = Counter(
+    "assistant_llm_tokens_total",
+    "Tokens consumed by the assistant, for cost attribution",
+    ["purpose"],
+)
+
+assistant_llm_latency_seconds = Histogram(
+    "assistant_llm_latency_seconds",
+    "Model call latency",
+    ["purpose"],
+)
+
+assistant_llm_refused_total = Counter(
+    "assistant_llm_refused_total",
+    "Model calls refused before being made, by reason",
+    ["reason"],
+)
