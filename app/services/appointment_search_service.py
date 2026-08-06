@@ -1,7 +1,7 @@
 
 from datetime import datetime, time, timedelta,date
 
-from app.core.time import UTC
+from app.utils.clinic_time import clinic_timezone, get_clinic_day_window
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
@@ -100,14 +100,13 @@ async def search_appointments(
     # Exact date
     #
 
-    if date:
-        start = datetime.combine(
-            date,
-            time.min,
-            tzinfo=UTC,
-        )
+    # Resolved once, outside the branches: the timezone cannot change within a
+    # request, and looking it up per filter would query for the same value
+    # twice.
+    tz_name = await clinic_timezone(db, clinic_id)
 
-        end = start + timedelta(days=1)
+    if date:
+        start, end = get_clinic_day_window(tz_name, date)
 
         stmt = stmt.where(
             Appointment.scheduled_at >= start,
@@ -120,22 +119,15 @@ async def search_appointments(
 
     else:
         if start_date:
-            stmt = stmt.where(
-                Appointment.scheduled_at >= datetime.combine(
-                    start_date,
-                    time.min,
-                    tzinfo=UTC,
-                )
-            )
+            start, _ = get_clinic_day_window(tz_name, start_date)
+
+            stmt = stmt.where(Appointment.scheduled_at >= start)
 
         if end_date:
-            stmt = stmt.where(
-                Appointment.scheduled_at < datetime.combine(
-                    end_date + timedelta(days=1),
-                    time.min,
-                    tzinfo=UTC,
-                )
-            )
+            # The END of end_date, so the range includes that whole day.
+            _, end = get_clinic_day_window(tz_name, end_date)
+
+            stmt = stmt.where(Appointment.scheduled_at < end)
 
     stmt = (
         stmt.order_by(

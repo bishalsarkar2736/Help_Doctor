@@ -10,7 +10,7 @@ from app.models.doctor import Doctor
 from app.models.doctor_slot import DoctorSlot
 from app.core.cache import get_cache, set_cache
 from app.core.time import UTC
-from app.core.tz import to_zoneinfo
+from app.utils.clinic_time import doctor_clinic_timezone, get_clinic_day_window
 
 
 async def doctor_is_publicly_bookable(db: AsyncSession, doctor_id: int) -> bool:
@@ -26,36 +26,6 @@ async def doctor_is_publicly_bookable(db: AsyncSession, doctor_id: int) -> bool:
     )
 
     return found is not None
-
-
-async def doctor_timezone(db: AsyncSession, doctor_id: int):
-    """The IANA timezone of the clinic a doctor practises at.
-
-    Availability is entered in clinic-local wall-clock time and slots are
-    stored in UTC, so every question about a calendar DAY has to be asked in
-    the clinic's zone. Unknown or blank falls back to UTC, matching
-    slot_generation, so a bad value degrades rather than crashing scheduling.
-    """
-    tz_name = await db.scalar(
-        select(Clinic.timezone)
-        .join(Doctor, Doctor.clinic_id == Clinic.id)
-        .where(Doctor.id == doctor_id)
-    )
-
-    return to_zoneinfo(tz_name)
-
-
-def local_day_window(start_date: date, days: int, tz) -> tuple[datetime, datetime]:
-    """The UTC bounds of `days` calendar days beginning on `start_date`, in `tz`.
-
-    Built from local midnight to local midnight rather than by adding 24 hours
-    per day, so a day that is 23 or 25 hours long across a DST transition still
-    covers exactly the days asked for.
-    """
-    start_local = datetime.combine(start_date, time.min, tzinfo=tz)
-    end_local = datetime.combine(start_date + timedelta(days=days), time.min, tzinfo=tz)
-
-    return start_local.astimezone(UTC), end_local.astimezone(UTC)
 
 
 async def get_doctor_slots(
@@ -81,9 +51,9 @@ async def get_doctor_slots(
     if not await doctor_is_publicly_bookable(db, doctor_id):
         return []
 
-    tz = await doctor_timezone(db, doctor_id)
+    tz_name = await doctor_clinic_timezone(db, doctor_id)
 
-    start_dt, end_dt = local_day_window(start_date, days, tz)
+    start_dt, end_dt = get_clinic_day_window(tz_name, start_date, days)
 
     # The timezone belongs in the cache key. The same doctor_id and date map to
     # a different UTC window if the clinic's timezone is corrected, and the key

@@ -28,6 +28,11 @@ from app.services.domain_event_service import (
     publish_domain_event,
 )
 from app.services.tenant_resolver import resolve_clinic_id
+from app.utils.clinic_time import (
+    clinic_timezone,
+    clinic_today,
+    get_clinic_day_window,
+)
 
 
 from app.services.activity_log_service import (
@@ -1366,11 +1371,14 @@ async def doctor_today_appointments(db: AsyncSession, user: User):
 
     doctor = await _get_verified_doctor_by_user_id(db, user.id)
 
-    now = datetime.now(UTC)
-    today = now.date()
+    # The doctor's OWN day, in their clinic's timezone. This read the server's
+    # UTC date, so for a clinic at UTC+6 "today" ran 06:00 to 06:00 local: a
+    # doctor opening their list saw tomorrow's early appointments and not their
+    # own morning ones. The date itself was wrong for six hours a day, not just
+    # the window.
+    tz_name = await clinic_timezone(db, doctor.clinic_id)
 
-    start = datetime.combine(today, datetime.min.time(), tzinfo=UTC)
-    end = datetime.combine(today, datetime.max.time(), tzinfo=UTC)
+    start, end = get_clinic_day_window(tz_name, clinic_today(tz_name))
 
 
 
@@ -1391,7 +1399,7 @@ async def doctor_today_appointments(db: AsyncSession, user: User):
             Appointment.doctor_id == doctor.id,
             Appointment.clinic_id == doctor.clinic_id,
             Appointment.scheduled_at >= start,
-            Appointment.scheduled_at <= end,
+            Appointment.scheduled_at < end,
         )
         .order_by(Appointment.scheduled_at.asc(), Appointment.id.asc())
     )

@@ -20,7 +20,8 @@ from app.models.clinic import Clinic, ClinicStatus
 from app.models.doctor import Doctor, DoctorStatus
 from app.models.doctor_slot import DoctorSlot
 from app.models.user import User, UserRole
-from app.services.slot_service import get_doctor_slots, local_day_window
+from app.services.slot_service import get_doctor_slots
+from app.utils.clinic_time import get_clinic_day_window
 
 # UTC+6, no DST — the project's own clinics run here, and it is far enough from
 # UTC that a day-boundary error is unmissable.
@@ -166,7 +167,7 @@ async def test_only_available_still_filters(db, dhaka_doctor):
 
 
 def test_the_window_is_built_from_local_midnight():
-    start, end = local_day_window(TARGET_DAY, 1, DHAKA)
+    start, end = get_clinic_day_window("Asia/Dhaka", TARGET_DAY)
 
     # Dhaka is UTC+6, so local midnight is 18:00 UTC the previous day.
     assert start == datetime(2026, 3, 9, 18, 0, tzinfo=UTC)
@@ -175,7 +176,7 @@ def test_the_window_is_built_from_local_midnight():
 
 def test_a_utc_clinic_is_unaffected():
     """The behaviour that was already correct must not change."""
-    start, end = local_day_window(TARGET_DAY, 1, UTC)
+    start, end = get_clinic_day_window("UTC", TARGET_DAY)
 
     assert start == datetime(2026, 3, 10, 0, 0, tzinfo=UTC)
     assert end == datetime(2026, 3, 11, 0, 0, tzinfo=UTC)
@@ -187,8 +188,6 @@ def test_a_dst_day_is_still_one_calendar_day():
     Adding 24 hours would overshoot into the next local day; going local
     midnight to local midnight covers exactly the day asked for.
     """
-    ny = ZoneInfo("America/New_York")
-
-    start, end = local_day_window(date(2026, 3, 8), 1, ny)
+    start, end = get_clinic_day_window("America/New_York", date(2026, 3, 8))
 
     assert (end - start) == timedelta(hours=23)

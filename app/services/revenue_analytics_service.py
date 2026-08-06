@@ -5,7 +5,12 @@ from datetime import (
     timedelta,
     timezone
 )
-from app.core.time import utc_now
+from app.utils.clinic_time import (
+    clinic_timezone,
+    clinic_today,
+    get_clinic_day_window,
+    get_clinic_month_window,
+)
 from dateutil.relativedelta import relativedelta
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,15 +29,12 @@ async def get_revenue_today(
     clinic_id: int,
 ) -> float:
     
-    today = utc_now().date()
+    # The clinic's day, not the server's. A UTC window reported six hours of
+    # tomorrow's takings as today's for a clinic at UTC+6, and dropped its own
+    # first six hours.
+    tz_name = await clinic_timezone(db, clinic_id)
 
-    start = datetime.combine(
-        today,
-        time.min,
-        tzinfo=timezone.utc,
-    )
-
-    end = start + timedelta(days=1)
+    start, end = get_clinic_day_window(tz_name, clinic_today(tz_name))
 
     result = await db.execute(
         select(
@@ -75,17 +77,10 @@ async def get_revenue_this_month(
 ) -> float:
     
 
-    today = utc_now().date()
+    tz_name = await clinic_timezone(db, clinic_id)
 
-    month_start = datetime.combine(
-        today.replace(day=1),
-        time.min,
-        tzinfo=timezone.utc,
-    )
-
-    next_month = (
-        month_start
-        + relativedelta(months=1)
+    month_start, next_month = get_clinic_month_window(
+        tz_name, clinic_today(tz_name)
     )
 
     result = await db.execute(
