@@ -7,6 +7,7 @@ from app.schemas.medicine_schema import (
     MedicineUpdate,
 )
 from app.core.cache import delete_cache
+from app.services.generic_service import resolve_or_create_generic
 from app.try_except.exceptions import NotFoundError
 
 
@@ -17,6 +18,17 @@ async def create_medicine(
     medicine = Medicine(
         **payload.model_dump()
     )
+
+    # Linked at creation, not left for a migration to catch up on. A medicine
+    # with no generic_id is invisible to substance-level allergy checking — it
+    # would be flagged only when the patient's allergen matches the brand name
+    # they happened to be prescribed.
+    generic = await resolve_or_create_generic(
+        db,
+        payload.generic_name,
+    )
+
+    medicine.generic_id = generic.id if generic else None
 
     db.add(medicine)
 
@@ -81,6 +93,18 @@ async def update_medicine(
             field,
             value,
         )
+
+    # Re-derived whenever the substance is edited. Without this the displayed
+    # generic_name and the generic_id the allergy check reads drift apart, and
+    # the drift is silent: the admin sees the new substance while the check
+    # keeps testing against the old one.
+    if "generic_name" in updates:
+        generic = await resolve_or_create_generic(
+            db,
+            updates["generic_name"],
+        )
+
+        medicine.generic_id = generic.id if generic else None
 
     await db.flush()
     await db.refresh(medicine)
