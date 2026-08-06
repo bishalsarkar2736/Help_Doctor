@@ -19,6 +19,7 @@ from app.assistant.tools import (
     clinic_today,
     doctor_availability,
     earliest_slot,
+    list_specializations,
     search_doctors,
 )
 from app.core.time import UTC, utc_now
@@ -347,6 +348,7 @@ async def test_every_tool_names_itself_and_its_clinic(db, clinics):
     """The caller branches on `status` and can attribute every answer."""
     results = [
         await search_doctors(db, clinics["ours"]),
+        await list_specializations(db, clinics["ours"]),
         await doctor_availability(db, clinics["ours"], doctor_name="Nobody"),
         await earliest_slot(db, clinics["ours"]),
         clinic_information(clinics["ours"]),
@@ -369,3 +371,105 @@ def test_today_is_the_clinics_today():
 
     # UTC+14: it is already tomorrow there for ten hours of every UTC day.
     assert clinic_today(clinic) >= datetime.now(UTC).date()
+
+
+# ---------------------------------------------------------------------------
+# list_specializations
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_specializations_are_listed_with_counts(db, clinics):
+    await _doctor(
+        db, clinics["ours"], email="s1@t.com", name="Dr A",
+        specialization="Cardiology",
+    )
+    await _doctor(
+        db, clinics["ours"], email="s2@t.com", name="Dr B",
+        specialization="Cardiology",
+    )
+    await _doctor(
+        db, clinics["ours"], email="s3@t.com", name="Dr C",
+        specialization="Dermatology",
+    )
+    await db.commit()
+
+    result = await list_specializations(db, clinics["ours"])
+
+    assert result["status"] == "ok"
+    assert result["specializations"] == [
+        {"specialization": "Cardiology", "doctor_count": 2},
+        {"specialization": "Dermatology", "doctor_count": 1},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_specializations_are_clinic_scoped(db, clinics):
+    """Otherwise a clinic would appear to offer a specialty it does not."""
+    await _doctor(
+        db, clinics["theirs"], email="s4@t.com", name="Dr Onc",
+        specialization="Oncology",
+    )
+    await _doctor(
+        db, clinics["ours"], email="s5@t.com", name="Dr Card",
+        specialization="Cardiology",
+    )
+    await db.commit()
+
+    result = await list_specializations(db, clinics["ours"])
+
+    assert [s["specialization"] for s in result["specializations"]] == ["Cardiology"]
+
+
+@pytest.mark.asyncio
+async def test_specializations_exclude_doctors_who_are_not_practising(db, clinics):
+    """A pending oncologist does not make the clinic an oncology provider."""
+    await _doctor(
+        db, clinics["ours"], email="s6@t.com", name="Dr Pending",
+        specialization="Oncology", status=DoctorStatus.PENDING,
+    )
+    await _doctor(
+        db, clinics["ours"], email="s7@t.com", name="Dr Inactive",
+        specialization="Neurology", is_active=False,
+    )
+    await db.commit()
+
+    result = await list_specializations(db, clinics["ours"])
+
+    assert result["status"] == "empty"
+
+
+@pytest.mark.asyncio
+async def test_a_clinic_with_no_doctors_is_empty(db, clinics):
+    result = await list_specializations(db, clinics["ours"])
+
+    assert result["status"] == "empty"
+    assert result["specializations"] == []
+
+
+@pytest.mark.asyncio
+async def test_the_list_is_closed_so_a_missing_specialty_reads_as_absent(
+    db, clinics
+):
+    """The whole reason this tool exists.
+
+    "Do you have a cancer specialist?" is answered by matching the patient's
+    words against what the clinic actually has. A clinic with Cardiology and
+    General Medicine offers no oncology, and the closed list is what makes
+    that a fact rather than a guess.
+    """
+    await _doctor(
+        db, clinics["ours"], email="s8@t.com", name="Dr Card",
+        specialization="Cardiology",
+    )
+    await _doctor(
+        db, clinics["ours"], email="s9@t.com", name="Dr Gen",
+        specialization="General Medicine",
+    )
+    await db.commit()
+
+    result = await list_specializations(db, clinics["ours"])
+
+    offered = {s["specialization"] for s in result["specializations"]}
+    assert offered == {"Cardiology", "General Medicine"}
+    assert "Oncology" not in offered

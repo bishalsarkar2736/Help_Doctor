@@ -165,6 +165,55 @@ async def search_doctors(
 
 
 # ---------------------------------------------------------------------------
+# list_specializations
+# ---------------------------------------------------------------------------
+
+
+async def list_specializations(db: AsyncSession, clinic: Clinic) -> dict:
+    """Every specialization this clinic actually practises, with counts.
+
+    Answers "do you have a cancer specialist?" — but indirectly, and that is
+    the point.
+
+    A patient says "cancer specialist"; the record says "Oncology". The two do
+    not match as strings, so asking search_doctors for "cancer" comes back
+    empty even at a clinic that has one. The gap is vocabulary, not data.
+
+    Bridging it with a hardcoded table of lay terms would mean inventing
+    clinical synonyms and maintaining them forever, and a wrong entry sends a
+    patient to the wrong specialist. Instead this returns the clinic's real,
+    CLOSED list, and the layer above matches the patient's words against it.
+    Constrained to what exists, "cancer specialist" can resolve to Oncology at
+    a clinic that has one and to nothing at a clinic that does not — which is
+    the honest answer here, since this one has Cardiology and General Medicine.
+
+    NOT a triage tool. Matching a patient's word for a SPECIALTY to its formal
+    name is vocabulary. Matching a patient's SYMPTOM to a specialty is triage,
+    and this assistant is explicitly not a diagnostic one — nothing here maps a
+    complaint to a department.
+    """
+    rows = (
+        await db.execute(
+            select(Doctor.specialization, func.count(Doctor.id))
+            .join(User, Doctor.user_id == User.id)
+            .where(Doctor.clinic_id == clinic.id, *_visible_doctor_filters())
+            .group_by(Doctor.specialization)
+            .order_by(Doctor.specialization)
+        )
+    ).all()
+
+    return _envelope(
+        "list_specializations",
+        clinic,
+        "ok" if rows else "empty",
+        found=len(rows),
+        specializations=[
+            {"specialization": name, "doctor_count": count} for name, count in rows
+        ],
+    )
+
+
+# ---------------------------------------------------------------------------
 # doctor_availability
 # ---------------------------------------------------------------------------
 
