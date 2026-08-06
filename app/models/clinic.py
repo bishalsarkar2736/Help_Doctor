@@ -2,10 +2,12 @@ from datetime import datetime
 from enum import Enum
 
 from sqlalchemy import (
+    JSON,
     DateTime,
     Integer,
     String,
     func,
+    text,
     Enum as SQLEnum,
 )
 
@@ -97,6 +99,42 @@ class Clinic(Base):
         nullable=False,
         server_default="UTC",
         default="UTC",
+    )
+
+    # When the clinic is open, keyed by weekday as a string ("0".."6",
+    # Monday=0 — the same convention as DoctorAvailability.day_of_week, so the
+    # two are never read against different calendars).
+    #
+    #   {"0": [{"open": "09:00", "close": "13:00"},
+    #          {"open": "16:00", "close": "21:00"}]}
+    #
+    # A list per day because closing for lunch is the normal pattern here. A
+    # weekday that is absent, or maps to an empty list, means closed.
+    #
+    # This describes the PREMISES, and is separate from whether any doctor is
+    # free: a clinic can be open with a full appointment book, or shut while a
+    # doctor's availability rule still exists. "Are you open?" is answered from
+    # here; "who can see me?" is answered from slots. They are not derived from
+    # one another and may legitimately disagree.
+    opening_hours: Mapped[dict] = mapped_column(
+        JSON,
+        nullable=False,
+        server_default=text("'{}'::json"),
+        default=dict,
+    )
+
+    # Dates the clinic is closed regardless of opening_hours:
+    #
+    #   [{"date": "2026-03-26", "name": "Independence Day"}]
+    #
+    # Closures only. A day with different-but-open hours is a change to
+    # opening_hours, not a holiday, so that "are you open?" never has to
+    # reconcile two sources that both claim to say when the doors are open.
+    holiday_schedule: Mapped[list] = mapped_column(
+        JSON,
+        nullable=False,
+        server_default=text("'[]'::json"),
+        default=list,
     )
 
     created_at: Mapped[datetime] = mapped_column(
