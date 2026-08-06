@@ -7,7 +7,15 @@ from app.config import Settings, get_settings
 def _base() -> dict:
     # Start from the loaded settings so every required field is present, then
     # override only what each case needs.
-    return get_settings().model_dump(mode="python")
+    data = get_settings().model_dump(mode="python")
+
+    # A production Settings now has to name the hostnames it is served on, and
+    # the development default carries the in-process test hostname. Pinned here
+    # so these cases keep testing the payment guard rather than tripping over
+    # an unrelated production rule.
+    data["ALLOWED_HOSTS"] = "clinic.example.com"
+
+    return data
 
 
 def test_fake_gateway_blocked_in_production():

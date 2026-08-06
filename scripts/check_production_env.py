@@ -110,6 +110,40 @@ def check_database_target(env: dict[str, str]) -> None:
         ok("DATABASE_URL agrees with the POSTGRES_* settings")
 
 
+def check_allowed_hosts(env: dict[str, str]) -> None:
+    """The Host allowlist must name real hostnames.
+
+    nginx serves on a catch-all server_name and forwards the client's Host
+    verbatim, so this list is what stands between a forged header and anything
+    downstream that trusts it. The app refuses to start on these, but a deploy
+    should not get that far.
+    """
+    raw = env.get("ALLOWED_HOSTS", "").strip()
+
+    if not raw:
+        fail("ALLOWED_HOSTS is not set — the app will refuse to start")
+        return
+
+    hosts = {host.strip().lower() for host in raw.split(",") if host.strip()}
+
+    # Only ever reachable in-process; its presence means the development
+    # default was shipped rather than edited.
+    if "testserver" in hosts:
+        fail("ALLOWED_HOSTS still contains the test-only hostname 'testserver'")
+        return
+
+    loopback = {"localhost", "127.0.0.1", "[::1]", "::1"}
+
+    if not hosts - loopback:
+        fail(
+            "ALLOWED_HOSTS names only loopback — every request nginx forwards "
+            "would be rejected"
+        )
+        return
+
+    ok(f"ALLOWED_HOSTS names {len(hosts - loopback)} routable hostname(s)")
+
+
 def check(env: dict[str, str]) -> None:
     # --- the app refuses to start on these, but say so clearly here ---------
     if env.get("ENV") != "production":
@@ -126,6 +160,7 @@ def check(env: dict[str, str]) -> None:
         fail("PAYMENT_GATEWAY=fake is not allowed in production")
 
     check_database_target(env)
+    check_allowed_hosts(env)
 
     # --- loads fine, still wrong -------------------------------------------
     for key, example in EXAMPLE_VALUES.items():

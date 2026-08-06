@@ -9,7 +9,7 @@ from pydantic import (
 )
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from urllib.parse import quote_plus, unquote, urlsplit
-from typing import Literal
+from typing import ClassVar, Literal
 
 class Settings(BaseSettings):
     # Application
@@ -247,6 +247,19 @@ class Settings(BaseSettings):
 
     ALLOWED_ORIGINS: str = "http://localhost:5173"
 
+    # Host header allowlist, comma separated, no scheme and no port.
+    #
+    # nginx serves on `server_name _` and forwards the client's Host verbatim,
+    # so the value reaching the application is attacker-controlled. Anything
+    # that trusts it — absolute URLs in emails, password-reset links, cache
+    # keys, and tenant resolution once it arrives — inherits that. This is the
+    # allowlist that stops it at the door.
+    #
+    # Production must name its real hostnames; the default below is only
+    # useful for local work, and Settings refuses to start in production while
+    # it is still the default.
+    ALLOWED_HOSTS: str = "localhost,127.0.0.1,testserver"
+
     METRICS_TOKEN: str | None = None
 
     # OpenTelemetry OTLP/HTTP traces endpoint (the collector to export spans to).
@@ -268,6 +281,37 @@ class Settings(BaseSettings):
 
     # Require a verified email before password login is allowed.
     REQUIRE_EMAIL_VERIFICATION: bool = True
+
+    # Always accepted, in every environment, and NOT configurable.
+    #
+    # The container healthcheck calls http://localhost:8000/health/live, so its
+    # Host is "localhost" even in production. Leaving these to configuration
+    # means one missing entry marks every container unhealthy and takes the
+    # deployment down. They are only reachable from inside the container, so
+    # accepting them costs nothing.
+    # ClassVar, not a field: it is a constant of the class, and pydantic would
+    # otherwise treat it as configurable — which is exactly what it must not be.
+    LOOPBACK_HOSTS: ClassVar[tuple[str, ...]] = (
+        "localhost",
+        "127.0.0.1",
+        "[::1]",
+        "::1",
+    )
+
+    # Hostnames that only ever exist in-process. Allowed everywhere else, and
+    # refused in production, where their presence means the development default
+    # was deployed rather than edited.
+    DEV_ONLY_HOSTS: ClassVar[tuple[str, ...]] = ("testserver",)
+
+    @property
+    def allowed_hosts_list(self) -> list[str]:
+        configured = [
+            host.strip().lower()
+            for host in self.ALLOWED_HOSTS.split(",")
+            if host.strip()
+        ]
+
+        return list(dict.fromkeys([*configured, *self.LOOPBACK_HOSTS]))
 
     @property
     def allowed_origins_list(self) -> list[str]:
@@ -308,6 +352,41 @@ class Settings(BaseSettings):
 
         return value
 
+
+    @field_validator("ALLOWED_HOSTS")
+    @classmethod
+    def validate_allowed_hosts(
+        cls,
+        value: str,
+        info: ValidationInfo,
+    ) -> str:
+        # Shipping the development default to production would mean the
+        # allowlist accepts only loopback, so nginx's forwarded Host is
+        # rejected and every request 400s. Refusing to start says that now
+        # rather than after the containers are rolling.
+        if info.data.get("ENV") != "production":
+            return value
+
+        hosts = {host.strip().lower() for host in value.split(",") if host.strip()}
+
+        # "testserver" is the hostname httpx uses for in-process test requests.
+        # It is never reachable in a real deployment, and its presence means
+        # the development default was shipped rather than edited.
+        leaked = hosts & set(cls.DEV_ONLY_HOSTS)
+
+        if leaked:
+            raise ValueError(
+                f"ALLOWED_HOSTS contains test-only hostnames in production: "
+                f"{sorted(leaked)}"
+            )
+
+        if not hosts - set(cls.LOOPBACK_HOSTS):
+            raise ValueError(
+                "ALLOWED_HOSTS must name the hostnames this deployment is "
+                "served on; loopback alone rejects everything nginx forwards"
+            )
+
+        return value
 
     @field_validator("PAYMENT_GATEWAY")
     @classmethod

@@ -104,6 +104,34 @@ def test_an_absent_url_is_fine(checker):
     assert any("single source" in line for line in checker.OK)
 
 
+def test_a_routable_allowed_hosts_passes(checker):
+    checker.check_allowed_hosts({"ALLOWED_HOSTS": "clinic.example.com"})
+
+    assert checker.ERRORS == []
+
+
+def test_a_missing_allowed_hosts_is_an_error(checker):
+    checker.check_allowed_hosts({})
+
+    assert checker.ERRORS
+
+
+def test_a_leaked_test_hostname_is_an_error(checker):
+    """Means the development default was shipped rather than edited."""
+    checker.check_allowed_hosts(
+        {"ALLOWED_HOSTS": "clinic.example.com,testserver"}
+    )
+
+    assert checker.ERRORS
+
+
+def test_loopback_alone_is_an_error(checker):
+    """Every request nginx forwards would be rejected."""
+    checker.check_allowed_hosts({"ALLOWED_HOSTS": "localhost,127.0.0.1"})
+
+    assert checker.ERRORS
+
+
 def test_a_percent_encoded_password_is_not_reported(checker):
     """The parts hold the raw value; a URL has to encode it."""
     env = dict(AGREEING)

@@ -24,6 +24,7 @@ from app.try_except.middleware import RequestLoggingMiddleware
 
 from app.try_except.correlation_middleware import CorrelationIdMiddleware
 from app.try_except.security_headers_middleware import SecurityHeadersMiddleware
+from app.try_except.trusted_host_middleware import TrustedHostMiddleware
 from app.websocket.redis_listener import redis_listener
 
 import asyncio
@@ -126,6 +127,12 @@ def create_app() -> FastAPI:
     
     app.state.limiter = limiter
     app.add_middleware(SlowAPIMiddleware)
+
+    # Added LAST so it runs FIRST — Starlette applies middleware in reverse
+    # order of registration. A forged Host is rejected before it is written to
+    # the request log, before it can spend rate-limit budget, and before
+    # anything downstream builds a URL or resolves a tenant from it.
+    app.add_middleware(TrustedHostMiddleware)
 
 
     app.add_exception_handler(AppException, app_exception_handler)
