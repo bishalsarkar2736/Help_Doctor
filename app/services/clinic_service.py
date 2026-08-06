@@ -6,6 +6,10 @@ import re
 from app.core.time import UTC
 from app.models.clinic import Clinic, ClinicStatus
 from app.models.user import User
+from app.schemas.clinic_hours_schema import (
+    HolidayScheduleUpdate,
+    OpeningHoursUpdate,
+)
 from app.schemas.clinic_schema import (
     ClinicUpdate,
     ClinicCreate,
@@ -228,6 +232,52 @@ async def update_clinic(
 
     await db.flush()
 
+    await db.refresh(clinic)
+
+    return clinic
+
+async def set_opening_hours(
+    db: AsyncSession,
+    clinic_id: int,
+    payload: OpeningHoursUpdate,
+) -> Clinic:
+    """Replace the clinic's whole week of opening hours.
+
+    A replace rather than a merge: with a partial update there is no way to say
+    "we no longer open on Sunday", because an absent weekday and a removed one
+    would look identical.
+
+    The column is reassigned rather than mutated in place — SQLAlchemy tracks
+    JSON columns by identity, so editing the existing dict leaves the change
+    invisible to the session and it is silently never written.
+    """
+    clinic = await get_clinic_by_id(db, clinic_id)
+
+    if clinic is None:
+        raise NotFoundError("Clinic not found")
+
+    clinic.opening_hours = payload.to_storage()
+
+    await db.flush()
+    await db.refresh(clinic)
+
+    return clinic
+
+
+async def set_holiday_schedule(
+    db: AsyncSession,
+    clinic_id: int,
+    payload: HolidayScheduleUpdate,
+) -> Clinic:
+    """Replace the clinic's holiday closures. See set_opening_hours."""
+    clinic = await get_clinic_by_id(db, clinic_id)
+
+    if clinic is None:
+        raise NotFoundError("Clinic not found")
+
+    clinic.holiday_schedule = payload.to_storage()
+
+    await db.flush()
     await db.refresh(clinic)
 
     return clinic

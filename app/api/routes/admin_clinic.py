@@ -23,8 +23,20 @@ from app.schemas.clinic_schema import (
     AdminClinicAssign,
 )
 
+from app.schemas.clinic_hours_schema import (
+    HolidayScheduleUpdate,
+    OpeningHoursUpdate,
+)
+
+from app.services.clinic_information_service import (
+    get_clinic_holiday_schedule,
+    get_clinic_opening_hours,
+)
+
 from app.services.clinic_service import (
     get_clinic_by_id,
+    set_holiday_schedule,
+    set_opening_hours,
     update_clinic,
     create_clinic,
     assign_clinic_to_admin,
@@ -217,3 +229,87 @@ async def delete_clinic_endpoint(
 ):
     # Soft delete / archive — data is retained.
     return await soft_delete_clinic(db=db, clinic_id=clinic_id)
+
+
+# ---------------------------------------------------------------------------
+# Opening hours and holidays
+#
+# Separate endpoints rather than fields on ClinicUpdate. That schema requires
+# `name` on every call, so folding hours into it would mean re-sending the
+# clinic's identity to change a closing time — and any client that forgot would
+# rename the clinic as a side effect.
+# ---------------------------------------------------------------------------
+
+
+async def _admin_clinic(db: AsyncSession, admin: User, clinic_id: int):
+    """The clinic this admin is allowed to edit, or 404."""
+    resolved = await resolve_clinic_id(db=db, user=admin, clinic_id=clinic_id)
+
+    clinic = await get_clinic_by_id(db=db, clinic_id=resolved)
+
+    if clinic is None:
+        raise NotFoundError("Clinic not found")
+
+    return clinic
+
+
+@router.get("/opening-hours")
+async def get_opening_hours_endpoint(
+    clinic_id: int,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_roles(UserRole.ADMIN)),
+):
+    clinic = await _admin_clinic(db, admin, clinic_id)
+
+    return get_clinic_opening_hours(clinic)
+
+
+@router.put("/opening-hours")
+async def set_opening_hours_endpoint(
+    clinic_id: int,
+    payload: OpeningHoursUpdate,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_roles(UserRole.ADMIN)),
+):
+    """Replace the whole week.
+
+    A replace, not a merge: with a partial update there is no way to express
+    "we no longer open on Sunday", since a removed day and an unmentioned one
+    look the same.
+    """
+    clinic = await _admin_clinic(db, admin, clinic_id)
+
+    await set_opening_hours(db=db, clinic_id=clinic.id, payload=payload)
+
+    await db.commit()
+    await db.refresh(clinic)
+
+    return get_clinic_opening_hours(clinic)
+
+
+@router.get("/holidays")
+async def get_holidays_endpoint(
+    clinic_id: int,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_roles(UserRole.ADMIN)),
+):
+    clinic = await _admin_clinic(db, admin, clinic_id)
+
+    return get_clinic_holiday_schedule(clinic)
+
+
+@router.put("/holidays")
+async def set_holidays_endpoint(
+    clinic_id: int,
+    payload: HolidayScheduleUpdate,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_roles(UserRole.ADMIN)),
+):
+    clinic = await _admin_clinic(db, admin, clinic_id)
+
+    await set_holiday_schedule(db=db, clinic_id=clinic.id, payload=payload)
+
+    await db.commit()
+    await db.refresh(clinic)
+
+    return get_clinic_holiday_schedule(clinic)
