@@ -609,26 +609,78 @@ def ws_client():
 
 
 
+async def _tenant_for(db, *, doctor_id, clinic_id, factory: str):
+    """Which clinic a fixture-built row belongs to.
+
+    These factories used to answer this with
+
+        clinic = await db.scalar(select(Clinic))
+
+    which is not a lookup, it is a coin flip: no WHERE and no ORDER BY, so
+    Postgres returns whichever row it likes. It read as correct only because
+    most tests build exactly one clinic.
+
+    The moment a test builds a second one, the appointment can land in the
+    wrong tenant — and since appointments are now what make a patient visible
+    to a clinic, a cross-tenant isolation test could put both "tenants" in one
+    clinic and assert nothing at all while still passing.
+
+    So the tenant is derived, never guessed, and a fixture that cannot work out
+    where a row belongs says so instead of picking one.
+    """
+    if clinic_id is not None:
+        return clinic_id
+
+    assert doctor_id is not None, (
+        f"{factory} cannot tell which clinic this belongs to. Pass doctor_id "
+        f"(the clinic is taken from the doctor) or an explicit clinic_id. It "
+        f"deliberately will not fall back to an arbitrary clinic."
+    )
+
+    doctor = await db.get(Doctor, doctor_id)
+
+    assert doctor is not None, (
+        f"{factory} was given doctor_id={doctor_id}, which is not a Doctor "
+        f"row. Note this is Doctor.id, not the doctor's User id."
+    )
+    assert doctor.clinic_id is not None, (
+        f"{factory} was given doctor_id={doctor_id}, who is not assigned to a "
+        f"clinic, so there is no tenant to derive. Assign one in the fixture "
+        f"or pass clinic_id explicitly."
+    )
+
+    return doctor.clinic_id
+
+
 @pytest_asyncio.fixture
 async def appointment_factory(db):
 
     async def factory(
         *,
         patient_id,
-        doctor_id,
+        doctor_id=None,
         status,
+        clinic_id=None,
+        scheduled_at=None,
     ):
-        
-        clinic = await db.scalar(
-            select(Clinic)
+
+        clinic_id = await _tenant_for(
+            db,
+            doctor_id=doctor_id,
+            clinic_id=clinic_id,
+            factory="appointment_factory",
         )
 
         appointment = Appointment(
             patient_id=patient_id,
             doctor_id=doctor_id,
             status=status,
-            scheduled_at=utc_now(),
-            clinic_id=clinic.id,
+            # Defaults to now, as it always did. Overridable because
+            # appointments_no_overlap excludes a doctor from holding two
+            # overlapping slots, so a test that needs a second appointment for
+            # the same doctor has to place it somewhere else in the day.
+            scheduled_at=scheduled_at or utc_now(),
+            clinic_id=clinic_id,
         )
 
         db.add(appointment)
@@ -656,11 +708,8 @@ async def prescription_factory(db, appointment_factory):
         revision_number=1,
         is_latest_revision=True,
         parent_prescription_id=None,
+        clinic_id=None,
     ):
-        
-        clinic = await db.scalar(
-            select(Clinic)
-        )
 
         # ====================================
         # AUTO CREATE APPOINTMENT (SAFE DEFAULT)
@@ -671,9 +720,29 @@ async def prescription_factory(db, appointment_factory):
                 patient_id=patient_id,
                 doctor_id=doctor_id,
                 status=appointment_status,
+                clinic_id=clinic_id,
             )
 
             appointment_id = appointment.id
+
+        # A prescription belongs to the same clinic as the appointment it was
+        # written at. Taking it from the appointment rather than deriving it
+        # again is what keeps the two from ever disagreeing — under the old
+        # arbitrary `select(Clinic)` a prescription could sit in a different
+        # tenant from its own appointment.
+        if clinic_id is None:
+            clinic_id = await db.scalar(
+                select(Appointment.clinic_id).where(
+                    Appointment.id == appointment_id
+                )
+            )
+
+        clinic_id = await _tenant_for(
+            db,
+            doctor_id=doctor_id,
+            clinic_id=clinic_id,
+            factory="prescription_factory",
+        )
 
         prescription = Prescription(
             appointment_id=appointment_id,
@@ -685,7 +754,7 @@ async def prescription_factory(db, appointment_factory):
             parent_prescription_id=parent_prescription_id,
             revision_number=revision_number,
             is_latest_revision=is_latest_revision,
-            clinic_id=clinic.id,
+            clinic_id=clinic_id,
         )
 
         db.add(prescription)
