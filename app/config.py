@@ -245,6 +245,17 @@ class Settings(BaseSettings):
     # Payment gateway: "bkash" (live) or "fake" (dev/test simulate flow).
     PAYMENT_GATEWAY: Literal["bkash", "fake"] = "bkash"
 
+    # --- Medicine assistant v2 ---
+    #
+    # Separate from the scheduling assistant's switch and from v1's
+    # ENABLE_MEDICINE_AI, so the three can be turned on independently. Turning
+    # one on must never start spending on another.
+    #
+    # Disabled, v2 still answers every question from the catalogue — the reply
+    # is built from the same structured payload the model would have been
+    # handed, so this only decides how fluent it reads.
+    ENABLE_MEDICINE_AI_FORMATTING: bool = False
+
     # --- Scheduling assistant ---
     #
     # Turns the OpenAI call off without turning the assistant off. Disabled,
