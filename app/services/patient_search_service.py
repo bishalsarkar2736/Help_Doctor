@@ -22,9 +22,25 @@ Never from a parameter. resolve_clinic_id returns the CALLER-SUPPLIED value
 unchanged for receptionists, so scoping to it would let the search be pointed
 at another tenant by editing a query string — defeating the filter it was added
 to enforce.
+
+THE FIRST-BOOKING EXCEPTION
+---------------------------
+Scoping alone deadlocks reception: a patient becomes findable by being booked,
+and is booked by first being found. So an exact email or an exact phone reaches
+a patient at any clinic, which is what lets the desk register a walk-in.
+
+The identifier is the authorisation. You cannot discover anyone this way, only
+confirm somebody whose full email or phone you were already given — the same
+thing a receptionist has on a referral slip. What keeps that from being
+enumeration is that it is equality and nothing else: partial and fuzzy matching
+stay clinic-scoped, so "017" reaches nobody outside the clinic.
+
+The disclosure is real and worth naming: an exact email returns that person's
+name and phone number. It is recorded in the PHI access log like every other
+surfaced patient.
 """
 
-from sqlalchemy import exists, or_, select
+from sqlalchemy import exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -62,6 +78,34 @@ async def search_patients(
         Appointment.clinic_id == clinic_id,
     )
 
+    q = q.strip()
+
+    # THE FIRST-BOOKING EXCEPTION
+    #
+    # Scoping alone deadlocks reception: a patient becomes findable by being
+    # booked, and is booked by first being found. Somebody walking in for the
+    # first time is invisible to the desk trying to register them.
+    #
+    # So a caller who already holds a patient's full email or phone may reach
+    # them regardless of clinic. The identifier is the authorisation: you
+    # cannot discover someone this way, only confirm a person you were already
+    # given. Partial and fuzzy matching stay clinic-scoped, which is what keeps
+    # this from being enumeration — "017" reaches nobody outside the clinic
+    # because no patient's phone is exactly "017".
+    #
+    # Equality, never LIKE. A pattern here would reopen the whole platform.
+    reachable = belongs_to_clinic
+
+    if q:
+        matches_an_identifier_exactly = or_(
+            # Emails are compared case-insensitively; nothing forces the
+            # stored form to be lowercase.
+            func.lower(User.email) == q.lower(),
+            Patient.phone == q,
+        )
+
+        reachable = or_(belongs_to_clinic, matches_an_identifier_exactly)
+
     query = (
         select(Patient)
         .options(
@@ -71,14 +115,15 @@ async def search_patients(
             User,
             Patient.user_id == User.id,
         )
-        .where(belongs_to_clinic)
+        .where(reachable)
     )
-
-    q = q.strip()
 
     if q:
         pattern = f"%{q}%"
 
+        # Kept as it was. An exact identifier also satisfies this, so the two
+        # conditions never fight: the exception widens WHO is reachable, not
+        # WHAT counts as a match.
         query = query.where(
             or_(
                 User.full_name.ilike(pattern),

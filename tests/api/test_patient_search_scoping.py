@@ -19,6 +19,7 @@ query parameter could be pointed at another tenant by editing a URL.
 from datetime import timedelta
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import Range
 
 from app.core.time import utc_now
@@ -411,6 +412,215 @@ async def test_the_response_shape_is_unchanged(db, two_clinics):
         "email",
         "phone",
     }
+
+
+# ---------------------------------------------------------------------------
+# The first-booking exception
+#
+# Scoping alone deadlocks reception: a patient becomes findable by being
+# booked, and is booked by first being found. An exact email or phone reaches
+# a patient at any clinic, because holding the full identifier is the
+# authorisation — you can confirm somebody you were already given, not
+# discover anyone.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_an_exact_email_finds_a_patient_with_no_appointments(db, two_clinics):
+    """The deadlock this exists to break."""
+    names = await _search(db, two_clinics["alpha"].id, q="n@example.com")
+
+    assert names == ["Searchable NoBookings"]
+
+
+@pytest.mark.asyncio
+async def test_an_exact_phone_finds_a_patient_with_no_appointments(db, two_clinics):
+    phone = await db.scalar(
+        select(Patient.phone).where(
+            Patient.user_id == two_clinics["never_seen"].id
+        )
+    )
+
+    names = await _search(db, two_clinics["alpha"].id, q=phone)
+
+    assert names == ["Searchable NoBookings"]
+
+
+@pytest.mark.asyncio
+async def test_an_exact_email_is_matched_case_insensitively(db, two_clinics):
+    """Nothing forces the stored address to be lowercase."""
+    assert await _search(db, two_clinics["alpha"].id, q="N@ExAmPlE.CoM")
+
+
+@pytest.mark.asyncio
+async def test_the_exception_returns_only_the_exact_match(db, two_clinics):
+    """Not everyone whose address contains the string.
+
+    Every patient here has an @example.com address, so a substring rule would
+    hand over all four — the whole platform, one domain at a time.
+    """
+    results = await search_patients(
+        db=db, clinic_id=two_clinics["alpha"].id, q="n@example.com"
+    )
+
+    assert len(results) == 1
+    assert results[0].user_id == two_clinics["never_seen"].id
+
+
+@pytest.mark.asyncio
+async def test_a_partial_identifier_reaches_nobody_outside_the_clinic(db, two_clinics):
+    """Where the line sits: equality opens the door, nothing else does."""
+    for partial in (
+        "example.com",  # the shared domain
+        "@example",
+        "b@example.co",  # one character short of Beta's patient
+        "+88017",  # the shared phone prefix
+        "Searchable",  # the shared name
+    ):
+        names = await _search(db, two_clinics["alpha"].id, q=partial)
+
+        assert "Searchable BetaOnly" not in names, partial
+        assert "Searchable NoBookings" not in names, partial
+
+
+@pytest.mark.asyncio
+async def test_a_prefix_of_a_full_phone_does_not_reach_out(db, two_clinics):
+    """One character short of the whole number is not the whole number.
+
+    The prefix may still match Alpha's OWN patients as a substring — that is
+    ordinary scoped fuzzy search. What it must not do is reach the patient
+    whose number it is a prefix of, who belongs to no clinic.
+    """
+    phone = await db.scalar(
+        select(Patient.phone).where(
+            Patient.user_id == two_clinics["never_seen"].id
+        )
+    )
+
+    names = await _search(db, two_clinics["alpha"].id, q=phone[:-1])
+
+    assert "Searchable NoBookings" not in names
+
+    # And the whole number does reach them, so the test above is about the
+    # missing character rather than about the number matching nothing.
+    assert "Searchable NoBookings" in await _search(
+        db, two_clinics["alpha"].id, q=phone
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_shared_phone_reaches_everyone_who_shares_it(db, two_clinics):
+    """Email is unique; phone is not, and there is no constraint saying so.
+
+    A household sharing one number is ordinary, so an exact phone lookup can
+    return more than one person. This is recorded rather than prevented: the
+    alternative is picking one of them arbitrarily, and reception booking the
+    wrong sibling is worse than reception being shown both.
+
+    Note this is the ONE case where "exact lookup returns a single patient"
+    does not hold. It is not enumeration — everyone returned genuinely has
+    that number.
+    """
+    a = await _patient(db, email="h1@example.com", name="Household One")
+    b = await _patient(db, email="h2@example.com", name="Household Two")
+
+    shared_number = "+8801999000111"
+
+    for user in (a, b):
+        patient = await db.scalar(
+            select(Patient).where(Patient.user_id == user.id)
+        )
+        patient.phone = shared_number
+
+    await db.commit()
+
+    names = await _search(db, two_clinics["alpha"].id, q=shared_number)
+
+    assert sorted(names) == ["Household One", "Household Two"]
+
+
+@pytest.mark.asyncio
+async def test_after_the_first_appointment_normal_search_finds_them(db, two_clinics):
+    """The exception is a way in, not a permanent channel.
+
+    Once reception has booked the walk-in, the patient is one of the clinic's
+    own and partial name search reaches them like anybody else.
+    """
+    assert "Searchable NoBookings" not in await _search(
+        db, two_clinics["alpha"].id, q="NoBook"
+    )
+
+    await _appointment(
+        db,
+        two_clinics["alpha"],
+        two_clinics["alpha_doctor"],
+        two_clinics["never_seen"],
+        hours=12,
+    )
+    await db.commit()
+
+    assert "Searchable NoBookings" in await _search(
+        db, two_clinics["alpha"].id, q="NoBook"
+    )
+
+    # And still only to the clinic that booked them.
+    assert "Searchable NoBookings" not in await _search(
+        db, two_clinics["beta"].id, q="NoBook"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_exception_does_not_widen_a_partial_search_page(db, two_clinics):
+    """A fuzzy search returns the same rows it did before the exception."""
+    assert sorted(await _search(db, two_clinics["alpha"].id)) == [
+        "Searchable AlphaOnly",
+        "Searchable Shared",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_the_exception_is_available_through_the_endpoint(
+    client, db, two_clinics
+):
+    """Reception's actual path, not just the service."""
+    staff = await _staff(
+        db, two_clinics["alpha"], UserRole.RECEPTIONIST, "recep4@example.com"
+    )
+    await db.commit()
+
+    res = await client.get(
+        "/patients/search",
+        params={"q": "n@example.com"},
+        headers=staff["headers"],
+    )
+
+    assert res.status_code == 200, res.text
+    assert [r["full_name"] for r in res.json()] == ["Searchable NoBookings"]
+
+
+@pytest.mark.asyncio
+async def test_an_exact_lookup_is_recorded_in_the_phi_log(client, db, two_clinics):
+    """The exception reaches outside the clinic, so the trail matters more."""
+    from sqlalchemy import func as sa_func
+
+    from app.models.phi_access_log import PHIAccessLog
+
+    staff = await _staff(
+        db, two_clinics["alpha"], UserRole.RECEPTIONIST, "recep5@example.com"
+    )
+    await db.commit()
+
+    before = await db.scalar(select(sa_func.count(PHIAccessLog.id)))
+
+    await client.get(
+        "/patients/search",
+        params={"q": "n@example.com"},
+        headers=staff["headers"],
+    )
+
+    rows = await db.scalar(select(sa_func.count(PHIAccessLog.id)))
+
+    assert rows == before + 1
 
 
 # ---------------------------------------------------------------------------
