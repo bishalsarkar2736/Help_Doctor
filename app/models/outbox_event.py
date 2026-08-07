@@ -15,6 +15,17 @@ class OutboxEvent(Base):
             "status",
             "next_retry_at",
         ),
+        # The dispatcher's main scan. Created by raw SQL in a migration and
+        # never mirrored here, so autogenerate wanted to drop it -- which would
+        # have turned the outbox poll into a sequential scan that degrades as
+        # the table grows, with nothing failing to say so.
+        Index(
+            "idx_outbox_ready_v2",
+            "status",
+            "failed_at",
+            "next_retry_at",
+            "created_at",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(

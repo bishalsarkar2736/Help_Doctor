@@ -16,15 +16,21 @@ class Medicine(Base):
         primary_key=True,
     )
 
+    # nullable=False states what the database already enforces. Written as a
+    # bare mapped_column with no Mapped[...] annotation, SQLAlchemy infers
+    # nullable=True, so autogenerate read the model as looser than the schema
+    # and wanted to DROP NOT NULL — weakening the column every lookup keys on.
     name = mapped_column(
         String(255),
         unique=True,
         index=True,
+        nullable=False,
     )
 
     generic_name = mapped_column(
         String(255),
         nullable=False,
+        index=True,
     )
 
     # The active substance, as a relation. generic_name above is the label a
@@ -46,11 +52,13 @@ class Medicine(Base):
     strength = mapped_column(
         String(100),
         nullable=True,
+        index=True,
     )
 
     manufacturer = mapped_column(
         String(255),
         nullable=False,
+        index=True,
     )
 
     category = mapped_column(
@@ -81,6 +89,7 @@ class Medicine(Base):
     is_brand = mapped_column(
         Boolean,
         default=True,
+        nullable=False,
     )
 
     # server_default is REQUIRED here, not decorative. The column is NOT NULL

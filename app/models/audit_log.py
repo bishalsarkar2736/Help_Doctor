@@ -15,7 +15,8 @@ class AuditLog(Base):
 
     user_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id"),
-        nullable=True
+        nullable=True,
+        index=True,
     )
 
     action: Mapped[str | None] = mapped_column(String(50))

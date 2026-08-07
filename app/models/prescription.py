@@ -1,7 +1,18 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
 from datetime import datetime
-from sqlalchemy import ForeignKey, String, Text, Integer, DateTime,Enum,Boolean, JSON
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base
 from app.core.time import utc_now
@@ -27,6 +38,31 @@ class PrescriptionStatus(str, enum.Enum):
 
 class Prescription(Base):
     __tablename__ = "prescriptions"
+
+    __table_args__ = (
+        # An appointment has exactly one current prescription. Revisions
+        # supersede one another, and two rows claiming to be the latest is a
+        # state the reader cannot resolve — it would pick one arbitrarily and
+        # show a doctor the wrong medication.
+        #
+        # DECLARED HERE BECAUSE AUTOGENERATE CANNOT SEE RAW SQL.
+        # This index was created by migration e7bc550f31a2 with a CREATE INDEX
+        # statement and never mirrored on the model, so `alembic revision
+        # --autogenerate` believed it was an index nobody asked for and emitted
+        # a DROP for it. Applying such a migration without reading it would
+        # have removed the guarantee silently: no error, no failing test, just
+        # duplicate "latest" revisions appearing from then on.
+        #
+        # app/utils/db_errors.py matches this index BY NAME to turn the
+        # integrity error into a friendly conflict, so the name is part of the
+        # contract — renaming it breaks that translation.
+        Index(
+            "one_latest_prescription_per_appointment",
+            "appointment_id",
+            unique=True,
+            postgresql_where=text("is_latest_revision = true"),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
 

@@ -1,4 +1,5 @@
 from sqlalchemy import (
+    Index,
     Integer,
     String,
     DateTime,
@@ -39,6 +40,16 @@ class MedicineAssistantQuery(Base):
     # side.
     intent = mapped_column(String(40), nullable=True)
     status = mapped_column(String(20), nullable=True)
+
+    # Reporting scans these two together. Created by raw SQL in a migration
+    # and never declared, so autogenerate wanted to drop it.
+    __table_args__ = (
+        Index(
+            "ix_medicine_assistant_queries_intent_status",
+            "intent",
+            "status",
+        ),
+    )
 
     # The question a patient typed is deliberately NOT stored. A chat box
     # invites people to describe their health, and the surest way never to

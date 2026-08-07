@@ -4,6 +4,7 @@ from enum import Enum
 from sqlalchemy import (
     JSON,
     DateTime,
+    Index,
     Integer,
     String,
     func,
@@ -60,6 +61,22 @@ class Clinic(Base):
         String(255),
         index=True,
         nullable=False,
+    )
+
+    # Declared after the column it indexes, so it can reference it directly.
+    #
+    # Clinic names are unique case-insensitively: "City Clinic" and "city
+    # clinic" are the same clinic to everyone except a byte comparison. A
+    # functional index cannot be expressed as unique=True on the column, so it
+    # was written as raw SQL in a migration and never mirrored here — which
+    # left autogenerate proposing to drop it, and duplicate clinic names
+    # differing only in case becoming possible.
+    __table_args__ = (
+        Index(
+            "uq_clinic_name_lower",
+            func.lower(name),
+            unique=True,
+        ),
     )
 
     logo_url: Mapped[str | None] = mapped_column(

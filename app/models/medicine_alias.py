@@ -42,11 +42,16 @@ class MedicineAlias(Base):
             ondelete="CASCADE",
         ),
         nullable=False,
+        index=True,
     )
 
+    # Indexed because this is the lookup: the matcher resolves a typed name to
+    # a medicine through here. Both indexes exist in the database already and
+    # were simply never declared, so autogenerate wanted to drop them.
     alias: Mapped[str] = mapped_column(
         String(255),
         nullable=False,
+        index=True,
     )
 
     medicine: Mapped["Medicine"] = relationship(
