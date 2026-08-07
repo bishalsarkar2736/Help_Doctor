@@ -15,6 +15,7 @@ celery_app = Celery(
         "app.task.payment_reconciliation",
         "app.task.notification_tasks",
         "app.task.phi_access_retention",
+        "app.task.appointment_no_show",
     ],
 )
 
@@ -70,6 +71,19 @@ celery_app.conf.beat_schedule = {
 
     "payment-reconciliation-job": {
         "task": "app.tasks.payment_reconciliation.payment_reconciliation_task",
+        "schedule": 300.0,
+    },
+
+    # Every 5 minutes. The service only acts once an appointment is past its
+    # duration plus a 10-minute grace, so the interval sets how promptly a
+    # no-show is recorded, not whether one is: a slower schedule would leave
+    # the front desk looking at appointments that are still CONFIRMED long
+    # after the patient failed to arrive.
+    #
+    # Cheap to run often — the query is an indexed filter on status and
+    # scheduled_at, and finds nothing at all most of the time.
+    "mark-no-show-appointments": {
+        "task": "app.tasks.appointment_no_show.mark_no_show_task",
         "schedule": 300.0,
     },
 
