@@ -133,8 +133,6 @@ class MedicineAIService:
                 clinic_id=clinic_id,
                 medicine_id=medicine.id,
                 medicine_name=medicine.name,
-                question=question,
-                answer=text,
                 prompt_version=PROMPT_VERSION,
                 tokens_used=tokens,
                 latency_ms=duration_ms,

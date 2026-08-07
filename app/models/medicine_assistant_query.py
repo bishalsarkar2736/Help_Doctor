@@ -30,10 +30,10 @@ class MedicineAssistantQuery(Base):
         index=True,
     )
 
-    question = mapped_column(
-        String(1000),
-        nullable=False,
-    )
+    # The question a patient typed is deliberately NOT stored. A chat box
+    # invites people to describe their health, and the surest way never to
+    # mishandle that text is never to keep it. medicine_name below carries the
+    # analytics signal — what was asked ABOUT — without the words.
 
     medicine_name = mapped_column(
         String(255),

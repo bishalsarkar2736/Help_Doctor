@@ -86,28 +86,29 @@ async def get_failed_queries(
     db: AsyncSession,
     limit: int = 20,
 ):
+    """When the assistant could not match a question to any medicine.
 
+    This used to list the questions themselves, which is the single largest
+    exposure of patient-typed text in the product — surfaced to clinic admins,
+    in plain view. The text is no longer stored.
+
+    What it answers now is "how often are we failing, and when", which is the
+    part that is actionable: a rising count means the catalogue or its aliases
+    need attention. Which words were used is not needed to act on that.
+    """
     result = await db.execute(
         select(
-            MedicineAssistantQuery.question,
-            MedicineAssistantQuery.created_at,
+            func.date(MedicineAssistantQuery.created_at).label("day"),
+            func.count(MedicineAssistantQuery.id).label("failures"),
         )
-        .where(
-            MedicineAssistantQuery.medicine_name.is_(
-                None
-            )
-        )
-        .order_by(
-            MedicineAssistantQuery.created_at.desc()
-        )
+        .where(MedicineAssistantQuery.medicine_name.is_(None))
+        .group_by(func.date(MedicineAssistantQuery.created_at))
+        .order_by(func.date(MedicineAssistantQuery.created_at).desc())
         .limit(limit)
     )
 
     return [
-        {
-            "question": row.question,
-            "created_at": row.created_at,
-        }
+        {"day": row.day, "failures": row.failures}
         for row in result
     ]
 

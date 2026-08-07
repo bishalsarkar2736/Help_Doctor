@@ -17,8 +17,6 @@ async def create_ai_log(
     clinic_id : int,
     medicine_id: int | None,
     medicine_name: str | None,
-    question: str,
-    answer: str,
     prompt_version: str,
     tokens_used: int,
     latency_ms: int,
@@ -31,8 +29,6 @@ async def create_ai_log(
 
         medicine_id=medicine_id,
         medicine_name=medicine_name,
-        question=question,
-        answer=answer,
         prompt_version=prompt_version,
         tokens_used=tokens_used,
         latency_ms=latency_ms,
@@ -105,8 +101,9 @@ async def get_ai_logs(
         {
             "id": log.id,
             "medicine_name": log.medicine_name,
-            "question": log.question,
-            "answer": log.answer,
+            # The question and answer are not stored; see the model. What was
+            # asked ABOUT is medicine_name, and what was said is
+            # reconstructible from the medicine and the intent.
             "prompt_version": log.prompt_version,
             "tokens_used": log.tokens_used,
             "latency_ms": log.latency_ms,

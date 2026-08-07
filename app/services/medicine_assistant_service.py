@@ -42,10 +42,11 @@ async def answer_medicine_question(
         question,
     )
 
+    # The question itself is not recorded — only which medicine it matched, or
+    # that nothing did.
     await log_medicine_assistant_query(
         db,
         clinic_id=clinic_id,
-        question=question,
         medicine_name=(
             medicine.name
             if medicine

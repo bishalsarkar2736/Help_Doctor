@@ -112,33 +112,25 @@ async def get_top_ai_questions(
     clinic_id: int,
     limit: int = 20,
 ):
+    """What the assistant is asked ABOUT, most often.
 
+    Grouped by medicine rather than by the question text, which is no longer
+    stored. This is also the better signal: ten people asking about Napa in ten
+    different phrasings were ten separate rows before, and are one now.
+    """
     result = await db.execute(
         select(
-            MedicineAILog.question,
-            func.count(
-                MedicineAILog.id
-            ).label("total"),
+            MedicineAILog.medicine_name,
+            func.count(MedicineAILog.id).label("total"),
         )
-        .where(
-            MedicineAILog.clinic_id == clinic_id
-        )
-        .group_by(
-            MedicineAILog.question
-        )
-        .order_by(
-            func.count(
-                MedicineAILog.id
-            ).desc()
-        )
+        .where(MedicineAILog.clinic_id == clinic_id)
+        .group_by(MedicineAILog.medicine_name)
+        .order_by(func.count(MedicineAILog.id).desc())
         .limit(limit)
     )
 
     return [
-        {
-            "question": row.question,
-            "total": row.total,
-        }
+        {"medicine_name": row.medicine_name, "total": row.total}
         for row in result
     ]
 
@@ -325,38 +317,29 @@ async def get_most_disliked_questions(
     limit: int = 20,
 ):
 
+    # Grouped by medicine, not by question text, which is no longer stored.
+    # "Which medicines do our answers get wrong" is the actionable form of this
+    # anyway: it points at a catalogue row to fix rather than at a phrasing.
     result = await db.execute(
         select(
-            MedicineAILog.question,
-            func.count(
-                MedicineAIFeedback.id
-            ).label("dislikes"),
+            MedicineAILog.medicine_name,
+            func.count(MedicineAIFeedback.id).label("dislikes"),
         )
         .join(
             MedicineAILog,
-            MedicineAILog.id
-            == MedicineAIFeedback.ai_log_id,
+            MedicineAILog.id == MedicineAIFeedback.ai_log_id,
         )
         .where(
             MedicineAILog.clinic_id == clinic_id,
             MedicineAIFeedback.helpful.is_(False),
         )
-        .group_by(
-            MedicineAILog.question
-        )
-        .order_by(
-            func.count(
-                MedicineAIFeedback.id
-            ).desc()
-        )
+        .group_by(MedicineAILog.medicine_name)
+        .order_by(func.count(MedicineAIFeedback.id).desc())
         .limit(limit)
     )
 
     return [
-        {
-            "question": row.question,
-            "dislikes": row.dislikes,
-        }
+        {"medicine_name": row.medicine_name, "dislikes": row.dislikes}
         for row in result
     ]
 

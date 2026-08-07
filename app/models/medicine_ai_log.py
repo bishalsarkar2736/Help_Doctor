@@ -51,15 +51,10 @@ class MedicineAILog(Base):
         index=True,
     )
 
-    question: Mapped[str] = mapped_column(
-        Text,
-        nullable=False,
-    )
-
-    answer: Mapped[str] = mapped_column(
-        Text,
-        nullable=False,
-    )
+    # Neither the question nor the answer is stored. See
+    # medicine_assistant_query for the question; the answer is omitted because
+    # it is generated text that can quote the question back, and it stays
+    # reconstructible from medicine_id plus intent.
 
     prompt_version: Mapped[str] = mapped_column(
         String(50),
