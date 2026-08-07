@@ -225,6 +225,38 @@ async def test_the_declared_indexes_actually_exist(db):
 
 
 @pytest.mark.asyncio
+async def test_autogenerate_produces_nothing(db):
+    """The property all of the above adds up to.
+
+    `alembic revision --autogenerate` compares the models to the schema. When
+    that comparison is empty, a future generated migration containing anything
+    at all is a real change, and worth reading. When it is permanently noisy —
+    this project's diff was 128 operations — reviewers learn to skim, and the
+    op.drop_table() sitting in the middle of the noise goes through with the
+    rest.
+
+    So this asserts the diff is empty, which is the only state in which
+    autogenerate is trustworthy. It fails whenever a model and the schema part
+    company, whichever of the two is wrong.
+    """
+    from alembic.autogenerate import compare_metadata
+    from alembic.migration import MigrationContext
+
+    connection = await db.connection()
+
+    def _diff(sync_connection):
+        context = MigrationContext.configure(sync_connection)
+        return compare_metadata(context, Base.metadata)
+
+    diff = await connection.run_sync(_diff)
+
+    assert diff == [], (
+        "models and schema disagree; autogenerate would emit:\n  "
+        + "\n  ".join(str(entry)[:160] for entry in diff)
+    )
+
+
+@pytest.mark.asyncio
 async def test_the_prescription_invariant_actually_holds(db):
     """Not the declaration — the behaviour it buys.
 

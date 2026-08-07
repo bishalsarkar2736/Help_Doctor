@@ -37,7 +37,10 @@ class Invitation(Base):
 
     __tablename__ = "invitations"
 
-    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    # No index=True: a primary key already has a unique index, and asking
+    # for a second one only costs writes. The database never had it, so
+    # autogenerate kept proposing to create it.
+    id: Mapped[int] = mapped_column(primary_key=True)
 
     email: Mapped[str] = mapped_column(
         String(255),

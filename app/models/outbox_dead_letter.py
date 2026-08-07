@@ -3,6 +3,8 @@ from datetime import datetime
 
 from sqlalchemy import String, JSON, DateTime, Integer, func
 from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.dialects.postgresql import JSONB
+
 from app.db.base import Base
 
 
@@ -24,8 +26,11 @@ class DeadLetterEvent(Base):
         index=True,
     )
 
+    # JSONB, matching the column that actually exists. Declared as JSON, the
+    # model read as a different type and autogenerate proposed altering it on
+    # every run.
     payload: Mapped[dict] = mapped_column(
-        JSON,
+        JSONB,
     )
 
     retry_count: Mapped[int] = mapped_column(
