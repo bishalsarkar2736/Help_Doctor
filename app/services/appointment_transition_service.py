@@ -3,6 +3,7 @@ import logging
 from app.schemas.event_metadata import EventActor
 from app.models.appointment import Appointment, AppointmentStatus
 from app.models.user import UserRole
+from app.schemas.event_metadata import EventSource
 from app.domain.fsm.appointment_transition import transition_appointment
 from app.services.appointment_audit_service import log_appointment_transition
 from app.try_except.exceptions import ConflictError,ForbiddenError
@@ -55,6 +56,12 @@ async def transition_appointment_locked(
     actor_doctor_id: int | None = None,
     emit_event: bool = False,
     correlation_id: str | None = None,
+    # Declared by the caller rather than inferred from changed_by being None.
+    # The inference would work today — every user-initiated caller passes a
+    # real id and only the no-show job passes None — but it reads "nobody is
+    # recorded" as "the system did it", and those are different statements. A
+    # future caller with no user to attribute would silently stop notifying.
+    source: EventSource = EventSource.USER,
 
 ) -> Appointment:
     
@@ -204,6 +211,7 @@ async def transition_appointment_locked(
 
                         schema_version=1,
                         occurred_at=occurred_at,
+                        source=source,
 
                         aggregate_type="appointment",
                         aggregate_id=appointment.id,

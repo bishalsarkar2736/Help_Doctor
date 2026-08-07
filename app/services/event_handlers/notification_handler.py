@@ -16,6 +16,7 @@ from app.models.appointment import Appointment
 from app.services.notification_preference_service import (
     get_or_create_preferences,
 )
+from app.schemas.event_metadata import EventSource
 
 EVENT_NOTIFICATION_CONFIG = {
 
@@ -163,6 +164,20 @@ async def handle_notification_event(
     if not config:
         return
 
+    # A notification is a message from the clinic to a person. When the system
+    # acted on its own — a scheduled job marking an unattended appointment
+    # NO_SHOW — there is no message to pass on, and the patient does not need
+    # a cron job's verdict on their morning.
+    #
+    # Everything else about the event still happens. It was published, the
+    # audit entry and status history were written by the transition, and the
+    # dashboard refresh below still runs: a clinic's board going stale would be
+    # a real regression, and it is not a patient notification.
+    #
+    # Read off the event rather than the event TYPE, so the same status change
+    # notifies when a doctor makes it and stays quiet when the scheduler does.
+    system_initiated = getattr(validated, "source", None) == EventSource.SYSTEM
+
     user_id = getattr(
         validated,
         config["user_field"],
@@ -186,22 +201,23 @@ async def handle_notification_event(
     else:
         message = config["message"]
 
-    await notify_user(
-        db=db,
-        user_id=user_id,
-        title=config["title"],
-        message=message,
-        category=config["category"],
-        appointment_id=appointment_id,
-        event_id=event_id,
-    )
+    if not system_initiated:
+        await notify_user(
+            db=db,
+            user_id=user_id,
+            title=config["title"],
+            message=message,
+            category=config["category"],
+            appointment_id=appointment_id,
+            event_id=event_id,
+        )
 
     prefs = await get_or_create_preferences(
         db,
         user_id,
     )
 
-    if prefs.realtime_enabled:
+    if prefs.realtime_enabled and not system_initiated:
         await send_realtime_notification(
             db=db,
             user_id=user_id,
