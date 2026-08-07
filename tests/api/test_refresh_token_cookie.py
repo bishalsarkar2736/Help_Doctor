@@ -162,11 +162,12 @@ async def test_refresh_still_accepts_a_body_token(client, db, account):
     localStorage, and must be able to redeem it once."""
     await _login(client, account)
 
-    token = await db.scalar(
-        select(RefreshToken.token)
-        .where(RefreshToken.user_id == account.id, RefreshToken.revoked.is_(False))
-        .order_by(RefreshToken.id.desc())
-    )
+    # Taken from the cookie, not from the database: refresh tokens are stored
+    # as digests now, so the plaintext cannot be read back. That is the point
+    # of the change, and this test only ever needed A valid token — the one
+    # the client was actually issued.
+    token = client.cookies.get(REFRESH_COOKIE_NAME)
+    assert token, "no refresh cookie was set"
 
     client.cookies.clear()
 

@@ -96,7 +96,9 @@ async def _issue_tokens(
     refresh_token = create_refresh_token()
 
     refresh = RefreshToken(
-        token=refresh_token,
+        # Only the digest is stored; refresh_token itself goes to the client
+        # and is never persisted.
+        token_hash=hash_token(refresh_token),
         user_id=user.id,
         expires_at=datetime.now(UTC)
         + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
@@ -324,7 +326,9 @@ async def refresh_tokens(
     # 1️⃣ Validate refresh token from DB
     result = await db.execute(
         select(RefreshToken).where(
-            RefreshToken.token == refresh_token,
+            # Hash the presented value and look for that. Equality on a digest,
+            # so this stays one indexed lookup.
+            RefreshToken.token_hash == hash_token(refresh_token),
             RefreshToken.revoked.is_(False),
             RefreshToken.expires_at > datetime.now(UTC),
         )
@@ -349,7 +353,7 @@ async def refresh_tokens(
     new_refresh_token = create_refresh_token()
 
     new_db_token = RefreshToken(
-        token=new_refresh_token,
+        token_hash=hash_token(new_refresh_token),
         user_id=user.id,
         expires_at=datetime.now(UTC)
         + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
@@ -378,7 +382,7 @@ async def logout_user(
 ):
     result = await db.execute(
         select(RefreshToken).where(
-            RefreshToken.token == refresh_token,
+            RefreshToken.token_hash == hash_token(refresh_token),
             RefreshToken.revoked.is_(False),
         )
     )

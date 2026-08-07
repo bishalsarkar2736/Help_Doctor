@@ -6,6 +6,7 @@ from sqlalchemy.exc import IntegrityError
 from app.models.appointment import Appointment, AppointmentStatus
 from app.models.refresh_token import RefreshToken
 from app.models.user import User, UserRole
+from app.security.tokens import hash_token
 
 
 @pytest.mark.asyncio
@@ -85,7 +86,7 @@ async def test_soft_delete_revokes_refresh_tokens(
     db.add(
         RefreshToken(
             user_id=staff.id,
-            token="live-token",
+            token_hash=hash_token("live-token"),
             revoked=False,
             expires_at=datetime.now(UTC) + timedelta(days=7),
         )

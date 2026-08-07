@@ -20,6 +20,7 @@ from app.services.auth_service import (
     reset_password,
 )
 from app.try_except.exceptions import BadRequestError
+from app.security.tokens import hash_token
 
 
 @pytest.mark.asyncio
@@ -88,7 +89,7 @@ async def test_reset_password_success(
     )
 
     refresh = RefreshToken(
-        token="refresh-token",
+        token_hash=hash_token("refresh-token"),
         user_id=user.id,
         expires_at=datetime.now(UTC)
         + timedelta(days=30),
@@ -232,14 +233,14 @@ async def test_reset_password_revokes_refresh_tokens(
     )
 
     refresh1 = RefreshToken(
-        token="refresh1",
+        token_hash=hash_token("refresh1"),
         user_id=user.id,
         expires_at=datetime.now(UTC)
         + timedelta(days=30),
     )
 
     refresh2 = RefreshToken(
-        token="refresh2",
+        token_hash=hash_token("refresh2"),
         user_id=user.id,
         expires_at=datetime.now(UTC)
         + timedelta(days=30),
