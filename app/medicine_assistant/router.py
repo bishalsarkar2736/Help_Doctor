@@ -152,12 +152,19 @@ _POPULATION_SAFETY = (
     r"\bfor pregnant\b",
 )
 
+# Most specific first. ADVICE_SOUGHT is the broadest — "should I take" and
+# "safe to..." appear inside dosage and pregnancy questions too — so checked
+# earlier it swallows them and both get the generic reply. The reason exists to
+# make the refusal say something useful; ordering it away wastes that.
+#
+# Every question here is refused either way. The order decides only WHICH
+# sentence comes back, and the tests assert all five are distinguishable.
 _REFUSAL_RULES: tuple[tuple[RefusalReason, tuple[str, ...]], ...] = (
+    (RefusalReason.DOSAGE_ADVICE, _DOSAGE_ADVICE),
+    (RefusalReason.POPULATION_SAFETY, _POPULATION_SAFETY),
+    (RefusalReason.DRUG_INTERACTION, _DRUG_INTERACTION),
     (RefusalReason.PERSONAL_MEDICAL_CONTEXT, _PERSONAL_CONTEXT),
     (RefusalReason.ADVICE_SOUGHT, _ADVICE_SOUGHT),
-    (RefusalReason.DOSAGE_ADVICE, _DOSAGE_ADVICE),
-    (RefusalReason.DRUG_INTERACTION, _DRUG_INTERACTION),
-    (RefusalReason.POPULATION_SAFETY, _POPULATION_SAFETY),
 )
 
 # Field intents, most specific first. Each entry is (intent, phrases).

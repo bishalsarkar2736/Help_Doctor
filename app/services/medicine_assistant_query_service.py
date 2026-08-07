@@ -16,11 +16,15 @@ async def log_medicine_assistant_query(
     *,
     clinic_id: int,
     medicine_name: str | None,
+    intent: str | None = None,
+    status: str | None = None,
 ):
 
     db.add(
         MedicineAssistantQuery(
             clinic_id=clinic_id,
             medicine_name=medicine_name,
+            intent=intent,
+            status=status,
         )
     )

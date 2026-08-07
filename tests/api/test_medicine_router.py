@@ -98,9 +98,12 @@ def test_the_specified_refusals(question):
         ("Can I take Napa?", RefusalReason.ADVICE_SOUGHT),
         ("Should I take this medicine?", RefusalReason.ADVICE_SOUGHT),
         ("Is it safe?", RefusalReason.ADVICE_SOUGHT),
-        ("How many tablets should I take?", RefusalReason.ADVICE_SOUGHT),
+        # DOSAGE_ADVICE, not the broader ADVICE_SOUGHT: refusal rules run
+        # most-specific-first so the reply can name what it cannot help with.
+        ("How many tablets should I take?", RefusalReason.DOSAGE_ADVICE),
         ("Can Napa be mixed with Ace?", RefusalReason.DRUG_INTERACTION),
         ("Is Napa ok during pregnancy?", RefusalReason.POPULATION_SAFETY),
+        ("Is Napa safe during pregnancy?", RefusalReason.POPULATION_SAFETY),
         ("Is this suitable for children?", RefusalReason.POPULATION_SAFETY),
     ],
 )
