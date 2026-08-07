@@ -6,6 +6,7 @@ from app.security.jwt import hash_password, verify_password
 from app.models.refresh_token import RefreshToken
 from app.try_except.exceptions import UnauthorizedError, BadRequestError
 from app.security.tokens import hash_token
+from uuid import uuid4
 
 
 @pytest.mark.asyncio
@@ -17,6 +18,7 @@ async def test_change_password_success(
 
     refresh = RefreshToken(
         token_hash=hash_token("refresh-token"),
+        family_id=str(uuid4()),
         user_id=user.id,
         expires_at=datetime.now(UTC) + timedelta(days=30),
     )

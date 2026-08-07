@@ -36,7 +36,27 @@ class RefreshToken(Base):
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     user = relationship("User", back_populates="refresh_tokens")
 
+    # One login, and every token that descended from it by rotation.
+    #
+    # Refresh tokens rotate: redeeming one revokes it and issues a successor.
+    # That means a stolen token can only be used until the real owner refreshes
+    # — but nothing NOTICED. Whoever lost the race simply saw a failed refresh
+    # and logged in again, and the theft left no trace.
+    #
+    # Presenting an already-revoked token is the signal. It means the token was
+    # copied, because a client that rotates correctly never has cause to send a
+    # superseded one twice. The family is what makes the response proportionate:
+    # everything descended from the compromised login is revoked, and the user's
+    # OTHER devices — separate logins, separate families — are untouched.
+    family_id = Column(String(36), nullable=False, index=True)
+
     revoked = Column(Boolean, default=False)
+
+    # When, not just whether. A replay moments after rotation is more likely
+    # two browser tabs waking up together than a thief, so refresh_tokens()
+    # uses this to tell a race from a theft rather than logging someone out of
+    # their own session.
+    revoked_at = Column(DateTime(timezone=True), nullable=True)
 
     expires_at = Column(DateTime(timezone=True), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

@@ -7,6 +7,7 @@ from app.models.appointment import Appointment, AppointmentStatus
 from app.models.refresh_token import RefreshToken
 from app.models.user import User, UserRole
 from app.security.tokens import hash_token
+from uuid import uuid4
 
 
 @pytest.mark.asyncio
@@ -87,6 +88,7 @@ async def test_soft_delete_revokes_refresh_tokens(
         RefreshToken(
             user_id=staff.id,
             token_hash=hash_token("live-token"),
+            family_id=str(uuid4()),
             revoked=False,
             expires_at=datetime.now(UTC) + timedelta(days=7),
         )

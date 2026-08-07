@@ -1,6 +1,6 @@
 import logging
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, update
 from app.models.user import User,AuthProvider,UserRole
 from app.models.doctor import Doctor
 from app.models.clinic import Clinic, ClinicStatus
@@ -16,6 +16,8 @@ from app.config import get_settings
 from datetime import datetime, timedelta
 from app.core.time import UTC
 from app.core.metrics import login_attempts_total
+from uuid import uuid4
+
 from app.models.refresh_token import RefreshToken
 from app.security.jwt import create_access_token
 from app.core.security import create_refresh_token
@@ -100,6 +102,10 @@ async def _issue_tokens(
         # and is never persisted.
         token_hash=hash_token(refresh_token),
         user_id=user.id,
+        # A fresh login starts its own family. Signing in on a second device
+        # therefore cannot be collateral damage when the first device's chain
+        # is found to be compromised.
+        family_id=str(uuid4()),
         expires_at=datetime.now(UTC)
         + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
     )
@@ -319,6 +325,89 @@ async def authentication_user(
     return tokens
 
 
+# A replay arriving within this window of the rotation that superseded it is
+# treated as a race, not a theft. Two browser tabs waking together each hold
+# the same cookie and each refresh once; the loser presents a token that was
+# revoked moments ago. Revoking the family for that would log a user out of
+# their own session for using the product normally.
+#
+# Anything later is not a race. A client that rotates correctly has no reason
+# to send a superseded token minutes afterwards, because it replaced it.
+REUSE_RACE_GRACE = timedelta(seconds=30)
+
+
+async def _handle_possible_reuse(
+    db: AsyncSession,
+    presented_token: str,
+) -> None:
+    """Revoke a token family when a superseded token comes back.
+
+    Rotation alone means a stolen token stops working once the real owner
+    refreshes — but nothing notices. Whoever loses that race sees a failed
+    refresh, logs in again, and the theft leaves no trace at all.
+
+    A revoked token being presented is the signal, because a correct client
+    never sends one twice. Which of the two parties is the thief cannot be
+    known from here, so the safe move is to end the whole chain and make both
+    authenticate: the attacker cannot, the owner can.
+
+    Scoped to the family so it is proportionate. Other logins by the same user
+    are separate families and keep working — being robbed on a phone should not
+    log someone out of the workstation they are treating a patient at.
+
+    Silent when the value was never a token: an expired or invented string is
+    an ordinary 401, and treating it as an incident would make the log
+    meaningless.
+    """
+    replayed = await db.scalar(
+        select(RefreshToken).where(
+            RefreshToken.token_hash == hash_token(presented_token)
+        )
+    )
+
+    if replayed is None:
+        # Never issued, or already deleted. Nothing to infer.
+        return
+
+    if not replayed.revoked:
+        # It exists and is live, so the lookup failed on expiry instead. That
+        # is a session ending on schedule, not a replay.
+        return
+
+    if (
+        replayed.revoked_at is not None
+        and datetime.now(UTC) - replayed.revoked_at < REUSE_RACE_GRACE
+    ):
+        logger.info(
+            "refresh_token_replay_within_grace",
+            extra={
+                "user_id": replayed.user_id,
+                "family_id": replayed.family_id,
+            },
+        )
+        return
+
+    result = await db.execute(
+        update(RefreshToken)
+        .where(
+            RefreshToken.family_id == replayed.family_id,
+            RefreshToken.revoked.is_(False),
+        )
+        .values(revoked=True, revoked_at=datetime.now(UTC))
+    )
+
+    logger.warning(
+        "refresh_token_reuse_detected",
+        extra={
+            "user_id": replayed.user_id,
+            "family_id": replayed.family_id,
+            "sessions_revoked": result.rowcount,
+        },
+    )
+
+    await db.flush()
+
+
 async def refresh_tokens(
     db: AsyncSession,
     refresh_token: str,
@@ -336,6 +425,12 @@ async def refresh_tokens(
     db_token = result.scalar_one_or_none()
 
     if not db_token:
+        # Nothing matched an ACTIVE token. Before refusing, find out whether
+        # this value was ever a token at all: a revoked one coming back is a
+        # different event from a string that never existed, and the difference
+        # is the only evidence of theft this system gets.
+        await _handle_possible_reuse(db, refresh_token)
+
         raise UnauthorizedError("Invalid or expired refresh token")
 
     # 2️⃣ Fetch user
@@ -348,6 +443,7 @@ async def refresh_tokens(
 
     # 3️⃣ Revoke old refresh token (rotation)
     db_token.revoked = True
+    db_token.revoked_at = datetime.now(UTC)
 
     # 4️⃣ Create new refresh token (opaque)
     new_refresh_token = create_refresh_token()
@@ -355,6 +451,8 @@ async def refresh_tokens(
     new_db_token = RefreshToken(
         token_hash=hash_token(new_refresh_token),
         user_id=user.id,
+        # Same family: this token descends from the login that started it.
+        family_id=db_token.family_id,
         expires_at=datetime.now(UTC)
         + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
     )
