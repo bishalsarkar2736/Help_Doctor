@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends,Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.postgres import get_db
@@ -19,6 +19,7 @@ from app.services.phi_access_log_service import (
     log_phi_access,
     log_phi_access_many,
 )
+from app.core.limiter import authenticated_key, limiter
 from app.schemas.patient_search import PatientSearchOut
 from app.try_except.exceptions import NotFoundError, ForbiddenError
 
@@ -100,7 +101,23 @@ async def _searcher_clinic_id(db: AsyncSession, user: User) -> int:
     "/search",
     response_model=list[PatientSearchOut],
 )
+# Per authenticated user, not per address — see authenticated_key. A clinic
+# shares one office connection, so an IP limit would have the front desk
+# throttling itself while a stolen token used elsewhere got a clean budget.
+#
+# 60/minute is far above what a person at a desk produces and far below what
+# a script wants. It does not stop a receptionist reading their own clinic's
+# roster, which they are entitled to do and which the clinic scoping already
+# bounds; it makes bulk extraction slow and noisy, and every surfaced patient
+# is already written to the PHI log.
+#
+# The number is only safe because the frontend debounces. Search runs on every
+# keystroke, so an undebounced 13-character name was 12 requests — and 12
+# PHI-log writes per matched patient. That is a rate limit's worst enemy: real
+# users hitting it during ordinary work.
+@limiter.limit("60/minute", key_func=authenticated_key)
 async def search_patient_endpoint(
+    request: Request,
     q: str = Query(
         ...,
         min_length=1,
