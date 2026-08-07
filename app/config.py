@@ -245,6 +245,17 @@ class Settings(BaseSettings):
     # Payment gateway: "bkash" (live) or "fake" (dev/test simulate flow).
     PAYMENT_GATEWAY: Literal["bkash", "fake"] = "bkash"
 
+    # Which implementation serves /medicines/assistant.
+    #
+    # False keeps v1. This exists to make the cutover reversible in one
+    # environment variable rather than a redeploy: v2 changes what the
+    # assistant REFUSES, and a refusal that fires too eagerly is a support
+    # problem that wants undoing in seconds.
+    #
+    # Temporary. v1 is deleted once v2 has held for a release cycle, and this
+    # flag goes with it.
+    USE_MEDICINE_ASSISTANT_V2: bool = False
+
     # --- Medicine assistant v2 ---
     #
     # Separate from the scheduling assistant's switch and from v1's

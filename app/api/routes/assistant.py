@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.assistant.service import answer
+from app.utils.request_ip import client_ip_from
 from app.db.postgres import get_db
 from app.models.clinic import Clinic
 from app.services.clinic_context import require_clinic
@@ -37,22 +38,6 @@ class AssistantAnswer(BaseModel):
     llm_unavailable_reason: str | None = None
 
 
-def _client_ip(request: Request) -> str:
-    """The caller, for per-IP limiting.
-
-    X-Forwarded-For first, since nginx sits in front and request.client is the
-    proxy otherwise — every visitor would share one bucket and the first twenty
-    questions a minute would exhaust it for everyone.
-    """
-    forwarded = request.headers.get("x-forwarded-for", "")
-
-    if forwarded:
-        # Left-most entry is the original client; the rest are proxies.
-        return forwarded.split(",")[0].strip()
-
-    return request.client.host if request.client else "unknown"
-
-
 @router.post("/ask", response_model=AssistantAnswer)
 async def ask(
     request: Request,
@@ -70,5 +55,5 @@ async def ask(
         db,
         clinic,
         payload.question,
-        client_ip=_client_ip(request),
+        client_ip=client_ip_from(request),
     )

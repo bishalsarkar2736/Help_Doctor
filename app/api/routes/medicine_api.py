@@ -27,9 +27,14 @@ from app.schemas.medicine_assistant_schema import (
     MedicineAssistantResponse,
 )
 
+from app.config import get_settings
+from app.medicine_assistant.service import (
+    answer_medicine_question_v2,
+)
 from app.services.medicine_assistant_service import (
     answer_medicine_question,
 )
+from app.utils.request_ip import client_ip_from
 
 
 router = APIRouter(
@@ -89,8 +94,22 @@ async def medicine_assistant(
         clinic_id=payload.clinic_id,
     )
 
-    # NOTE: the request counter is incremented inside
-    # answer_medicine_question — do not double-count here.
+    # NOTE: the request counter is incremented inside each implementation —
+    # do not double-count here.
+    if get_settings().USE_MEDICINE_ASSISTANT_V2:
+        result = await answer_medicine_question_v2(
+            db,
+            clinic_id=clinic_id,
+            question=payload.question,
+            client_ip=client_ip_from(request),
+        )
+
+        return MedicineAssistantResponse(
+            answer=result["message"],
+            intent=result["intent"],
+            status=result["result"].get("status"),
+            result=result["result"],
+        )
 
     answer = await answer_medicine_question(
         db=db,
