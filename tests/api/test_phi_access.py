@@ -133,9 +133,27 @@ async def test_a_logging_failure_never_denies_access_to_patient_data(
 
 @pytest.mark.asyncio
 async def test_search_records_one_row_per_surfaced_patient(
-    client, db, auth_admin, patient_user
+    client, db, auth_admin, auth_doctor, patient_user, appointment_factory
 ):
-    """Search is the query that reveals someone trawling the patient roster."""
+    """Search is the query that reveals someone trawling the patient roster.
+
+    The appointment is what makes `patient_user` one of the admin's patients:
+    search is scoped to the caller's clinic, so without it this test searches
+    for somebody the admin is not allowed to find and the log it is asserting
+    on is correctly empty.
+
+    That is how this test went quiet — it used to guard itself with a skip when
+    search returned nobody, and scoping made "nobody" the permanent answer. A
+    test that excuses itself when its subject is missing reports success for
+    the one condition it exists to detect, so the guard is now an assertion.
+    """
+
+    await appointment_factory(
+        patient_id=patient_user.id,
+        doctor_id=auth_doctor["doctor"].id,
+        status=AppointmentStatus.CONFIRMED,
+    )
+    await db.commit()
 
     res = await client.get(
         "/patients/search",
@@ -144,8 +162,10 @@ async def test_search_records_one_row_per_surfaced_patient(
     )
     assert res.status_code == 200, res.text
 
-    if not res.json():
-        pytest.skip("search returned nobody — nothing to assert")
+    assert res.json(), (
+        "search surfaced nobody, so this test cannot observe the logging it "
+        "exists to check"
+    )
 
     rows = (
         await db.scalars(

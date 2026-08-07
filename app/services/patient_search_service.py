@@ -101,7 +101,13 @@ async def search_patients(
         PatientSearchOut(
             id=patient.id,
             user_id=patient.user_id,
-            full_name=patient.user.full_name,
+            # users.full_name is nullable while PatientSearchOut.full_name is
+            # a required str, so one nameless patient anywhere in the page
+            # raised a ValidationError and took down the WHOLE response —
+            # reception loses the search, not one row. Registration demands a
+            # name so no live row is affected, but nothing at the database
+            # level enforces that.
+            full_name=patient.user.full_name or "",
             email=patient.user.email,
             phone=patient.phone,
         )

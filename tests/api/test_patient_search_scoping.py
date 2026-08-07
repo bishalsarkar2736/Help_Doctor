@@ -350,6 +350,33 @@ async def test_an_empty_query_lists_the_clinics_patients(db, two_clinics):
 
 
 @pytest.mark.asyncio
+async def test_a_patient_without_a_name_does_not_break_the_page(db, two_clinics):
+    """users.full_name is nullable; PatientSearchOut.full_name is not.
+
+    One nameless patient anywhere in the results raised a ValidationError and
+    took down the whole response, so reception loses the search rather than one
+    row. Registration demands a name, so no live row is affected — nothing at
+    the database level enforces it.
+    """
+    nameless = await _patient(db, email="noname@example.com", name=None)
+
+    await _appointment(
+        db, two_clinics["alpha"], two_clinics["alpha_doctor"], nameless, hours=11
+    )
+    await db.commit()
+
+    results = await search_patients(
+        db=db, clinic_id=two_clinics["alpha"].id, q="noname@example.com"
+    )
+
+    assert len(results) == 1
+    assert results[0].full_name == ""
+
+    # The point: the rest of the page still comes back.
+    assert "Searchable AlphaOnly" in await _search(db, two_clinics["alpha"].id, q="")
+
+
+@pytest.mark.asyncio
 async def test_pagination_is_preserved(db, two_clinics):
     first = await search_patients(
         db=db, clinic_id=two_clinics["alpha"].id, q="Searchable", limit=1, offset=0
