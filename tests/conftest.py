@@ -926,13 +926,18 @@ async def auth_super_admin(db):
 
 
 @pytest_asyncio.fixture
-async def auth_receptionist(db):
+async def auth_receptionist(db, default_clinic):
 
+    # A receptionist works AT a clinic — there is no such thing as an
+    # unattached one, and patient search now derives its tenant from this
+    # column rather than from the request. Leaving it unset made the fixture
+    # describe a user that cannot exist.
     user = User(
         email=f"receptionist-{uuid.uuid4()}@test.com",
         hashed_password="x",
         role=UserRole.RECEPTIONIST,
         is_active=True,
+        clinic_id=default_clinic.id,
     )
 
     db.add(user)

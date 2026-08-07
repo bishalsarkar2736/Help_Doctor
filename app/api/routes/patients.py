@@ -70,6 +70,32 @@ def medical_records(
 
 
 
+async def _searcher_clinic_id(db: AsyncSession, user: User) -> int:
+    """The clinic whose patients this caller may search.
+
+    Taken from the authenticated principal, never from the request.
+    resolve_clinic_id returns the CALLER-SUPPLIED value unchanged for
+    receptionists, so scoping to it would let the search be pointed at another
+    tenant by editing a query string — defeating the filter this exists to
+    enforce.
+    """
+    if user.role == UserRole.DOCTOR:
+        doctor = await db.scalar(
+            select(Doctor.clinic_id).where(Doctor.user_id == user.id)
+        )
+
+        if doctor is None:
+            raise ForbiddenError("Doctor is not assigned to a clinic")
+
+        return doctor
+
+    # Admins and receptionists carry their clinic on the user record.
+    if user.clinic_id is None:
+        raise ForbiddenError("User is not assigned to a clinic")
+
+    return user.clinic_id
+
+
 @router.get(
     "/search",
     response_model=list[PatientSearchOut],
@@ -98,8 +124,11 @@ async def search_patient_endpoint(
         )
     ),
 ):
+    clinic_id = await _searcher_clinic_id(db, current_user)
+
     results = await search_patients(
         db=db,
+        clinic_id=clinic_id,
         q=q,
         limit=limit,
         offset=offset,
