@@ -7,6 +7,7 @@ from app.db.postgres import get_db
 from app.security.jwt import get_current_user
 from app.models.user import User
 from app.services.tenant_resolver import resolve_clinic_id
+from app.try_except.exceptions import BadRequestError
 
 from app.services.medicine_service import (
     get_medicine_by_name,
@@ -87,12 +88,36 @@ async def medicine_assistant(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    # Resolve the tenant the query is logged under (required, NOT NULL FK).
+    # Resolve the tenant the query is logged under.
     clinic_id = await resolve_clinic_id(
         db=db,
         user=current_user,
         clinic_id=payload.clinic_id,
     )
+
+    # resolve_clinic_id returns None for a PATIENT who supplied none — they are
+    # global identities, so there is no clinic on the principal to fall back
+    # to. This is the only endpoint any of the 63 call sites where that can
+    # happen, because it is the only one a patient can reach.
+    #
+    # It did not crash, which is what made it worth finding: MedicineAssistantQuery
+    # declares clinic_id NOT NULL but the column is nullable in the database, so
+    # the row was written with a NULL tenant. An assistant query belonging to no
+    # clinic appears in no clinic's analytics, and the daily model budget is
+    # keyed by clinic — every such request shared one "clinic:None" bucket.
+    #
+    # Correcting that schema drift, which is the stated intent, would turn this
+    # into a 500. Rejecting the request is both the honest answer now and the
+    # thing that stops the tightening migration from breaking a live endpoint.
+    #
+    # 400, not 403: the caller is allowed here, the request is incomplete. The
+    # request schema already documented clinic_id as "Required for
+    # non-clinic-bound callers (e.g. patients)" — that was never enforced.
+    if clinic_id is None:
+        raise BadRequestError(
+            "clinic_id is required: this question is answered from a "
+            "particular clinic's medicine catalogue."
+        )
 
     # NOTE: the request counter is incremented inside each implementation —
     # do not double-count here.
