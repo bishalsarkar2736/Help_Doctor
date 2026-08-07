@@ -552,6 +552,54 @@ async def apply_confirmation_side_effects(
         )
 
 
+async def _require_clinic_accepting_appointments(
+    db: AsyncSession,
+    clinic_id: int | None,
+) -> None:
+    """Refuse to place an appointment into a clinic that is offline.
+
+    A suspended or deleted clinic is temporarily not operating: no slot of its
+    time may be newly claimed. Checked here rather than only in the listings,
+    because hiding a doctor from search does not stop a request against a
+    doctor_id someone already has — a stale tab, a bookmark, a link in an
+    email.
+
+    THIS COVERS RESCHEDULING TOO, WHICH IT ORIGINALLY DID NOT.
+    The check lived inline in the booking path, so booking a suspended clinic
+    returned 409 while MOVING an existing appointment into a new slot there
+    succeeded. Rescheduling is a new booking in everything but name: it claims
+    a slot that was previously free. Suspension that stops one and not the
+    other is not a suspension, and the inconsistency was invisible because
+    each path read as correct on its own.
+
+    Shared rather than repeated so the next path to place an appointment
+    inherits the rule instead of having to remember it.
+
+    WHAT IS STILL ALLOWED
+    Appointments already made are left alone — not cancelled, not hidden, not
+    modified — and CANCELLING one is deliberately still permitted. Suspension
+    is usually a billing matter between the platform and the clinic; trapping
+    a patient in an appointment they want out of would make them pay for it.
+
+    409 rather than 403: nothing about the CALLER is wrong, so a client that
+    reacts to 403 by re-authenticating would retry forever. The request
+    conflicts with the clinic's current state, which is what 409 describes,
+    and it is the code the rest of this codebase already uses for a state
+    conflict.
+
+    Not 503 either — that would report a whole-service outage for one
+    suspended tenant, and every attempt would land in the error-rate graphs as
+    a server fault rather than the ordinary business outcome it is.
+    """
+    clinic = await db.get(Clinic, clinic_id) if clinic_id else None
+
+    if not is_public(clinic):
+        raise ConflictError(
+            "This clinic is temporarily unavailable and is not accepting "
+            "appointments."
+        )
+
+
 # Booking
 
 
@@ -578,31 +626,7 @@ async def _book_appointment_internal(
     if doctor.status != DoctorStatus.APPROVED:
         raise ForbiddenError("Doctor not verified")
 
-    # A suspended or deleted clinic is temporarily offline: nothing new may be
-    # booked into it. Checked here rather than only in the listings, because
-    # hiding a doctor from search does not stop a booking against a doctor_id
-    # someone already has — a stale tab, a bookmark, or a link in an email.
-    #
-    # This blocks NEW bookings only. Appointments already made are left alone:
-    # they are not cancelled, hidden or modified, and the patient can still see
-    # them. Suspension is usually a billing matter, and cancelling clinical
-    # appointments over one would be both destructive and hard to undo.
-    # 409 rather than 403: nothing about the CALLER is wrong, so a client that
-    # reacts to 403 by re-authenticating would retry forever. The request
-    # conflicts with the clinic's current state, which is what 409 describes,
-    # and it is the code the rest of this codebase already uses for a state
-    # conflict.
-    #
-    # Not 503 either — that would report a whole-service outage for one
-    # suspended tenant, and every attempt would land in the error-rate graphs
-    # as a server fault rather than the ordinary business outcome it is.
-    clinic = await db.get(Clinic, doctor.clinic_id) if doctor.clinic_id else None
-
-    if not is_public(clinic):
-        raise ConflictError(
-            "This clinic is temporarily unavailable and is not accepting "
-            "appointments."
-        )
+    await _require_clinic_accepting_appointments(db, doctor.clinic_id)
 
     # 2️⃣ Role check
     if patient.role != UserRole.PATIENT:
@@ -967,6 +991,10 @@ async def patient_reschedule_appointment(
             "Not your appointment"
         )
 
+    # After the ownership check, so a stranger cannot learn a clinic's status
+    # by rescheduling an appointment that is not theirs.
+    await _require_clinic_accepting_appointments(db, appointment.clinic_id)
+
     # Only future, not-yet-started appointments can be rescheduled.
     if appointment.status not in (
         AppointmentStatus.PENDING,
@@ -1264,6 +1292,10 @@ async def doctor_reschedule_appointment(
 
     if appointment.doctor_id != doctor.id:
         raise ForbiddenError("Not your appointment")
+
+    # The doctor's own clinic being offline stops them too. A suspended clinic
+    # is not open for its staff to keep booking time in.
+    await _require_clinic_accepting_appointments(db, appointment.clinic_id)
 
     # Only future, not-yet-started appointments can be rescheduled.
     if appointment.status not in (
