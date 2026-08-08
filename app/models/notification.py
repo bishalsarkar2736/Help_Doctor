@@ -27,6 +27,37 @@ class Notification(Base):
             name="uq_notification_event_user",
         ),
 
+        # The index every read of this table needs, and did not have.
+        #
+        # user_id had a foreign key but no index — Postgres does not create one
+        # for an FK — and the only index containing it,
+        # uq_notification_event_user, leads with event_id, so it cannot serve
+        # `WHERE user_id = ?`. Listing a user's notifications, counting their
+        # unread and syncing were all sequential scans of the whole table.
+        #
+        # Composite because the list query is
+        #   WHERE user_id = ? [AND read_at ... ] [AND category = ...]
+        #   ORDER BY created_at DESC LIMIT ? OFFSET ?
+        # so leading on user_id and continuing on created_at satisfies the
+        # filter AND the ordering from one index scan, with no sort step.
+        #
+        # Stored ascending on purpose. A btree can be scanned backwards at the
+        # same cost, so ORDER BY created_at DESC is served by this index as it
+        # stands; declaring DESC would add an expression index that alembic
+        # compares unreliably for no gain.
+        #
+        # The unread count and mark-all-read (user_id = ? AND read_at IS NULL)
+        # use the user_id prefix and filter read_at from the heap. /sync
+        # (user_id = ?, ORDER BY id) uses the prefix and sorts a single user's
+        # rows. Both are bounded by one user instead of the whole table, which
+        # is the difference that mattered; a partial or (user_id, id) index for
+        # either would be speculative until their plans say otherwise.
+        Index(
+            "ix_notifications_user_id_created_at",
+            "user_id",
+            "created_at",
+        ),
+
         Index(
             "ix_notification_delivery_failed",
             "delivery_failed_at",

@@ -153,6 +153,28 @@ class Settings(BaseSettings):
     # backlog is worked off across successive nightly runs instead.
     PHI_ACCESS_LOG_PURGE_MAX_BATCHES: int = Field(default=50, ge=1, le=1000)
 
+    # ---- notification retention ----------------------------------------
+    #
+    # Notifications are messages ABOUT clinical events, not the events. The
+    # appointment, the prescription and the payment are the record and are kept
+    # under their own rules; this table holds "you were told" and grows by one
+    # row per recipient per event, forever, with nothing reading rows this old.
+    #
+    # A year rather than the six the PHI trail gets: long enough to answer "was
+    # I notified about last year's appointment?", short enough that the table
+    # stays bounded. Not a compliance control — deleting a notification destroys
+    # no clinical fact — so the floor is 30 days rather than a year, but it is a
+    # floor: a typo of 0 or 1 must not empty the table on the next run.
+    NOTIFICATION_RETENTION_DAYS: int = Field(default=365, ge=30, le=3650)
+
+    # Rows per statement, so the table is never locked for long while delivery
+    # is writing to it.
+    NOTIFICATION_PURGE_BATCH_SIZE: int = Field(default=10_000, ge=100, le=100_000)
+
+    # Ceiling per run. A first run against a large backlog works off part of it
+    # and the next nightly run continues, rather than one unbounded transaction.
+    NOTIFICATION_PURGE_MAX_BATCHES: int = Field(default=50, ge=1, le=1000)
+
     REDIS_URL: str = "redis://localhost:6379/0"
 
     # Redis

@@ -16,6 +16,7 @@ celery_app = Celery(
         "app.task.notification_tasks",
         "app.task.phi_access_retention",
         "app.task.appointment_no_show",
+        "app.task.notification_retention",
     ],
 )
 
@@ -94,6 +95,14 @@ celery_app.conf.beat_schedule = {
     "phi-access-log-retention": {
         "task": "app.tasks.phi_access_retention.phi_access_log_purge_task",
         "schedule": crontab(hour=3, minute=20),
+    },
+
+    # Nightly at 03:50 UTC. Half an hour after the PHI purge rather than
+    # alongside it: both are batched deletes competing for the same DB pool,
+    # and nothing here is time-critical enough to want them overlapping.
+    "notification-retention": {
+        "task": "app.tasks.notification_retention.notification_purge_task",
+        "schedule": crontab(hour=3, minute=50),
     },
 
 }
