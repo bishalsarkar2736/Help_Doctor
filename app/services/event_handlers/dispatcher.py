@@ -55,6 +55,12 @@ EVENT_HANDLERS = {
     "PAYMENT_SUCCESS":
         handle_notification_event,
 
+    # Was missing. The event had a schema AND a notification with a written
+    # message, but dispatch_event found no handler and returned, so a refunded
+    # patient was never told. Silently: no error, no dead letter.
+    "PAYMENT_REFUNDED":
+        handle_notification_event,
+
     "CONSULTATION_STARTED":
         handle_notification_event,
 

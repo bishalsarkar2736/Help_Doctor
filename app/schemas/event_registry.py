@@ -1,5 +1,6 @@
 from app.schemas.event import (
     AppointmentCreatedEvent,
+    AppointmentRescheduleRequestEvent,
     AppointmentConfirmedEvent,
     AppointmentCancelledEvent,
     AppointmentRescheduledEvent,
@@ -27,6 +28,14 @@ EVENT_SCHEMAS = {
 
     "APPOINTMENT_RESCHEDULED":
         AppointmentRescheduledEvent,
+
+    # Was missing. The event was published and the dispatcher had a handler for
+    # it, but with no schema here the outbox worker logged
+    # "skipping_unsupported_event", marked the row processed and returned -- so a
+    # patient's reschedule request never reached the doctor, and left no failure
+    # behind to notice.
+    "APPOINTMENT_RESCHEDULE_REQUEST":
+        AppointmentRescheduleRequestEvent,
 
     "APPOINTMENT_STATUS_CHANGED":
         AppointmentStatusChangedEvent,

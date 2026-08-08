@@ -211,7 +211,15 @@ async def refund_payment(
                 role=refunded_by.role.value,
             ),
 
-            user_id=refunded_by.id,
+            # The patient, not the admin who processed it. Every other event
+            # here uses user_id for the RECIPIENT -- PAYMENT_SUCCESS uses
+            # payment.patient_id, appointment events use patient_id or
+            # doctor.user_id -- and `actor` above already records who acted.
+            #
+            # This said refunded_by.id, so wiring up the handler alone would
+            # have sent "Your payment of X has been refunded" to the
+            # administrator who issued it, leaving the patient uninformed.
+            user_id=payment.patient_id,
             appointment_id=payment.appointment_id,
             payment_id=payment.id,
             refund_transaction_id=payment.refund_transaction_id,

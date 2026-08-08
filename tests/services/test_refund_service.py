@@ -539,7 +539,18 @@ async def test_refund_publishes_event(
 
     payload = event.payload
 
-    assert payload["user_id"] == doctor_user.id
+    # The PATIENT, not whoever issued the refund.
+    #
+    # This asserted doctor_user.id, which is what the service used to send. Every
+    # other event in this system uses user_id for the RECIPIENT, and the
+    # notification reads "Your payment of X has been refunded" — addressed to
+    # the refunder it told an administrator about their own money while the
+    # patient heard nothing.
+    assert payload["user_id"] == payment.patient_id
+
+    # Attribution is not lost by moving the recipient: actor still records who
+    # performed the refund.
+    assert payload["actor"]["id"] == doctor_user.id
 
     assert (
         payload["appointment_id"]
