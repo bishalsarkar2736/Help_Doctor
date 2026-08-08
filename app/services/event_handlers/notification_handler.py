@@ -1,3 +1,5 @@
+import logging
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.notification_service import notify_user
@@ -13,10 +15,13 @@ from app.models.notification import (
     NotificationCategory,
 )
 from app.models.appointment import Appointment
+from app.models.doctor import Doctor
 from app.services.notification_preference_service import (
     get_or_create_preferences,
 )
 from app.schemas.event_metadata import EventSource
+
+logger = logging.getLogger(__name__)
 
 EVENT_NOTIFICATION_CONFIG = {
 
@@ -149,6 +154,130 @@ EVENT_NOTIFICATION_CONFIG = {
 }
 
 
+class RecipientNotPartyToEvent(Exception):
+    """A notification was addressed to somebody the event is not about.
+
+    Raised rather than skipped. This can only fire on a programming error — a
+    publisher naming the wrong user — and the safe response to "we are about to
+    tell the wrong person" is to not send, loudly. The outbox retries and then
+    dead-letters the event, so it is preserved for inspection instead of
+    disappearing into a log line.
+
+    Defined here rather than reusing the worker's NonRetryableError: a service
+    importing a worker internal inverts the layering, and the generic retry path
+    reaches the dead-letter queue anyway. The cost is a few doomed retries first.
+
+    Note this also stops the composite PRESCRIPTION_ISSUED handler from sending
+    its email, because that runs after this one. That is correct: if the
+    recipient is wrong, no channel should carry the message.
+    """
+
+
+async def _assert_recipient_is_party_to_event(
+    db: AsyncSession,
+    *,
+    event_type: str,
+    user_field: str,
+    recipient_id: int,
+    appointment_id: int | None,
+) -> None:
+    """The recipient must be someone the event is actually about.
+
+    Nothing checked this. The handler delivered to whatever user id the event
+    named, so a publisher naming the wrong person produced a correctly formatted
+    message sent to a stranger — which is exactly what PAYMENT_REFUNDED did,
+    addressing "Your payment has been refunded" to the administrator who issued
+    it. Wiring alone would not have caught that; this is the layer that does.
+
+    HOW THE CLINIC IS ESTABLISHED
+    Not by comparing clinic ids, which for a patient would mean nothing —
+    patients are global identities and belong to every clinic that has treated
+    them. Instead the allowed set is derived FROM the appointment the event is
+    about: its patient, and its doctor's user. Both are of that appointment's
+    clinic by construction, so "belongs to the event's clinic" is structural
+    rather than a comparison that could be written the wrong way round. A user
+    from another clinic cannot be in the set.
+
+    Every notification configuration resolves through appointment_id, and
+    Payment.appointment_id is NOT NULL, so this is available on all of them.
+
+    HOW THE TYPE IS ESTABLISHED
+    A single event type serves two audiences: booking, confirmation and
+    cancellation each publish one event to the patient and one to the doctor,
+    with the same type and the same configuration. So the audience cannot be
+    declared per type — it is read from which FIELD the configuration takes the
+    recipient from:
+
+      patient_id  the message is written to the patient ("Your prescription is
+                  ready"), so only the appointment's patient will do.
+      user_id     either party, since that is how the fan-out addresses them.
+
+    FAIL-OPEN WHEN THE APPOINTMENT IS GONE
+    If the appointment cannot be loaded the check is skipped with a warning.
+    Events are processed within seconds of publication so this should not
+    happen; failing closed would mean a deleted appointment silently killing
+    legitimate notifications, which trades a real problem for a hypothetical
+    one.
+    """
+    if appointment_id is None:
+        logger.warning(
+            "notification_recipient_unverified",
+            extra={
+                "event_type": event_type,
+                "reason": "event carries no appointment_id",
+                "recipient_id": recipient_id,
+            },
+        )
+        return
+
+    appointment = await db.get(Appointment, appointment_id)
+
+    if appointment is None:
+        logger.warning(
+            "notification_recipient_unverified",
+            extra={
+                "event_type": event_type,
+                "reason": "appointment not found",
+                "appointment_id": appointment_id,
+                "recipient_id": recipient_id,
+            },
+        )
+        return
+
+    allowed = {appointment.patient_id}
+
+    # The doctor is a party too, except where the configuration says the
+    # message is addressed to the patient specifically.
+    if user_field != "patient_id":
+        doctor_user_id = await db.scalar(
+            select(Doctor.user_id).where(Doctor.id == appointment.doctor_id)
+        )
+
+        if doctor_user_id is not None:
+            allowed.add(doctor_user_id)
+
+    if recipient_id in allowed:
+        return
+
+    logger.error(
+        "notification_recipient_rejected",
+        extra={
+            "event_type": event_type,
+            "recipient_id": recipient_id,
+            "appointment_id": appointment_id,
+            "clinic_id": appointment.clinic_id,
+            "allowed": sorted(allowed),
+            "user_field": user_field,
+        },
+    )
+
+    raise RecipientNotPartyToEvent(
+        f"{event_type} addressed to user {recipient_id}, who is neither the "
+        f"patient nor the doctor of appointment {appointment_id} "
+        f"(clinic {appointment.clinic_id})"
+    )
+
+
 async def handle_notification_event(
     *,
     db: AsyncSession,
@@ -188,6 +317,16 @@ async def handle_notification_event(
         validated,
         config["appointment_field"],
         
+    )
+
+    # Before anything is sent, and before the message is even built: the
+    # recipient has to be someone this event is about.
+    await _assert_recipient_is_party_to_event(
+        db,
+        event_type=event_type,
+        user_field=config["user_field"],
+        recipient_id=user_id,
+        appointment_id=appointment_id,
     )
 
     if "message_template" in config:

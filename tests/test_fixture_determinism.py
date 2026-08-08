@@ -26,7 +26,7 @@ than merely describing the new one.
 from datetime import date, timedelta
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.core.time import utc_now
 from app.models.appointment import Appointment, AppointmentStatus
@@ -134,11 +134,28 @@ async def test_the_arbitrary_answer_would_have_been_the_wrong_one(
     assertion would pass under both implementations and prove nothing. This
     asserts the two genuinely differ, so the fixture above is a real test.
     """
-    arbitrary = await db.scalar(select(Clinic))
+    # Asserted as "a wrong answer exists for the arbitrary query to find",
+    # NOT as "the arbitrary query returned the wrong one".
+    #
+    # The first version compared select(Clinic) against the doctor's clinic and
+    # required them to differ. That made this test depend on the physical row
+    # order of an unordered query — the exact non-determinism the rest of the
+    # file is about — so it passed alone and failed once another test file
+    # added clinics and shifted which row came back first.
+    #
+    # What has to be true for the tests above to mean anything is that the
+    # table contains a clinic that is not the doctor's, so the old
+    # implementation COULD have picked wrongly. That is deterministic.
+    wrong_answers = await db.scalar(
+        select(func.count(Clinic.id)).where(
+            Clinic.id != crowded["doctor"].clinic_id
+        )
+    )
 
-    assert arbitrary.id != crowded["doctor"].clinic_id, (
-        "the unfiltered query returned the doctor's own clinic, so these "
-        "tests cannot distinguish the implementations — rework the fixture"
+    assert wrong_answers >= 1, (
+        "every clinic in the table is the doctor's, so an arbitrary pick "
+        "could not have been wrong and these tests prove nothing — rework "
+        "the fixture"
     )
 
     appointment = await appointment_factory(
@@ -147,7 +164,7 @@ async def test_the_arbitrary_answer_would_have_been_the_wrong_one(
         status=AppointmentStatus.CONFIRMED,
     )
 
-    assert appointment.clinic_id != arbitrary.id
+    assert appointment.clinic_id == crowded["doctor"].clinic_id
 
 
 @pytest.mark.asyncio
