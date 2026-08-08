@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.time import utc_now
 from app.domain.clinics.visibility import clinic_is_public
+from app.domain.scheduling.occupancy import slot_is_blocked
 from app.models.clinic import Clinic
 from app.models.doctor import Doctor, DoctorStatus
 from app.models.doctor_slot import DoctorSlot
@@ -77,7 +78,10 @@ async def find_earliest_available_doctor(
             *clinic_is_public(),
             Doctor.status == DoctorStatus.APPROVED,
             User.is_active.is_(True),
-            DoctorSlot.is_booked.is_(False),
+            # Derived from appointments, not a stored flag: this service
+            # recommends a time to a patient, and recommending an occupied
+            # one is the worst version of the old bug.
+            ~slot_is_blocked(),
             DoctorSlot.start_time > floor,
         )
         .order_by(DoctorSlot.start_time)

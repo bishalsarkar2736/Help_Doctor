@@ -13,6 +13,8 @@ from app.core.time import utc_now
 from app.models.clinic import Clinic, ClinicStatus
 from app.models.doctor import Doctor, DoctorStatus
 from app.models.doctor_slot import DoctorSlot
+from sqlalchemy.dialects.postgresql import Range
+from app.models.appointment import Appointment, AppointmentStatus
 from app.models.user import User, UserRole
 from app.services.earliest_slot_service import find_earliest_available_doctor
 
@@ -67,17 +69,47 @@ async def _doctor(
 
 
 async def _slot(db, doctor, *, minutes_from_now, is_booked=False):
+    """A slot, optionally occupied.
+
+    `is_booked` now books it for real. Slot availability is derived from
+    appointments rather than stored on the slot, so writing a flag would be
+    describing a state that no longer exists — and the test would pass while
+    proving nothing.
+    """
     start = utc_now() + timedelta(minutes=minutes_from_now)
+    end = start + timedelta(minutes=30)
 
     db.add(
         DoctorSlot(
             doctor_id=doctor.id,
             start_time=start,
-            end_time=start + timedelta(minutes=30),
-            is_booked=is_booked,
+            end_time=end,
         )
     )
     await db.flush()
+
+    if is_booked:
+        patient = User(
+            email=f"booked-{doctor.id}-{minutes_from_now}@example.com",
+            full_name="Booked Patient",
+            hashed_password="x",
+            role=UserRole.PATIENT,
+            is_active=True,
+        )
+        db.add(patient)
+        await db.flush()
+
+        db.add(
+            Appointment(
+                patient_id=patient.id,
+                doctor_id=doctor.id,
+                clinic_id=doctor.clinic_id,
+                scheduled_at=start,
+                status=AppointmentStatus.CONFIRMED,
+                time_range=Range(start, end),
+            )
+        )
+        await db.flush()
 
 
 # ---------------------------------------------------------------------------

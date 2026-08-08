@@ -194,6 +194,20 @@ def test_the_previously_orphaned_tables_are_in_the_metadata(table):
     assert table in Base.metadata.tables
 
 
+def test_doctor_slots_stores_no_booking_flag():
+    """doctor_slots.is_booked was dropped, and must stay dropped.
+
+    Nothing ever wrote True to it, so every slot reported itself free forever.
+    Availability is derived from appointments now
+    (app/domain/scheduling/occupancy.py). A re-added column would be a second
+    copy of that fact, free to drift the moment a booking path forgets it —
+    which is exactly how the original became permanently empty.
+    """
+    from app.models.doctor_slot import DoctorSlot  # noqa: F401
+
+    assert "is_booked" not in Base.metadata.tables["doctor_slots"].columns
+
+
 # ---------------------------------------------------------------------------
 # Against the live database
 # ---------------------------------------------------------------------------

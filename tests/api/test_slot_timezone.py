@@ -66,7 +66,6 @@ async def dhaka_doctor(db):
             doctor_id=doctor.id,
             start_time=start,
             end_time=start + timedelta(minutes=30),
-            is_booked=False,
         )
 
     # The UTC day 00:00-24:00 corresponds to 06:00-06:00 local here, so the

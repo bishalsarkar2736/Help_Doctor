@@ -91,7 +91,6 @@ async def _slot(db, doctor, *, at: datetime):
             doctor_id=doctor.id,
             start_time=at,
             end_time=at + timedelta(minutes=30),
-            is_booked=False,
         )
     )
     await db.flush()

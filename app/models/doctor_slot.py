@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import ForeignKey, DateTime, Boolean, Index
+from sqlalchemy import DateTime, ForeignKey, Index
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -35,7 +35,21 @@ class DoctorSlot(Base):
         DateTime(timezone=True), nullable=False
     )
 
-    is_booked: Mapped[bool] = mapped_column(Boolean, default=False)
+    # NO is_booked COLUMN, DELIBERATELY.
+    #
+    # There was one. Nothing ever wrote True to it -- no code, no trigger, no
+    # migration -- so every slot reported itself free forever: the public list
+    # offered booked times, only_available filtered nothing, the assistant
+    # recommended occupied slots, and utilisation was permanently zero.
+    #
+    # It is not re-added maintained, because a stored flag is a second copy of
+    # what the appointments table already knows, and the two drift the first
+    # time a booking path forgets to update one. Occupancy is derived instead --
+    # see app/domain/scheduling/occupancy.py -- from the same predicate the
+    # exclusion constraint uses, so a slot cannot claim to be free while the
+    # database refuses to book it.
+    #
+    # The API still returns an `is_booked` field. It is computed per request.
 
 
     doctor = relationship(

@@ -6,6 +6,7 @@ from app.models.appointment import Appointment, AppointmentStatus
 from app.models.doctor import Doctor
 from app.models.doctor_slot import DoctorSlot
 from app.models.notification import Notification
+from app.domain.scheduling.occupancy import slot_is_utilised
 
 
 
@@ -264,7 +265,12 @@ async def get_doctor_utilization(
         .where(
             DoctorSlot.doctor_id == doctor_id,
             Doctor.clinic_id == clinic_id,
-            DoctorSlot.is_booked.is_(True),
+            # Utilisation counts time that was used or held and lost, so this
+            # includes COMPLETED and NO_SHOW. Using the availability predicate
+            # here would count no past appointment at all -- every one of them
+            # ends up COMPLETED or NO_SHOW -- which is why this figure used to
+            # read zero.
+            slot_is_utilised(),
         )
     )
 
@@ -307,7 +313,7 @@ async def get_system_utilization(
         )
         .where(
             Doctor.clinic_id == clinic_id,
-            DoctorSlot.is_booked.is_(True),
+            slot_is_utilised(),
         )
     )
 

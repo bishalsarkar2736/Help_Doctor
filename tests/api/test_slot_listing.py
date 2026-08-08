@@ -28,7 +28,6 @@ async def test_listing_slots_succeeds(client, db, auth_doctor):
             doctor_id=doctor_id,
             start_time=start,
             end_time=start + timedelta(minutes=30),
-            is_booked=False,
         )
     )
     await db.commit()
@@ -56,7 +55,6 @@ async def test_stored_slot_times_keep_their_offset(db, auth_doctor):
             doctor_id=auth_doctor["doctor"].id,
             start_time=start,
             end_time=start + timedelta(minutes=30),
-            is_booked=False,
         )
     )
     await db.commit()

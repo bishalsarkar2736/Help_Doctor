@@ -69,7 +69,6 @@ async def _clinic_with_doctor(db, *, name, status, deleted=False, email, tz="Asi
             doctor_id=doctor.id,
             start_time=start,
             end_time=start + timedelta(minutes=30),
-            is_booked=False,
         )
     )
     await db.flush()

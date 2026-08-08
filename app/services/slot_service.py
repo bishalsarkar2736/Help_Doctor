@@ -8,7 +8,7 @@ from app.domain.clinics.visibility import clinic_is_public
 from app.models.clinic import Clinic
 from app.models.doctor import Doctor
 from app.models.doctor_slot import DoctorSlot
-from app.core.cache import get_cache, set_cache
+from app.domain.scheduling.occupancy import slot_is_blocked
 from app.core.time import UTC
 from app.utils.clinic_time import doctor_clinic_timezone, get_clinic_day_window
 
@@ -55,43 +55,57 @@ async def get_doctor_slots(
 
     start_dt, end_dt = get_clinic_day_window(tz_name, start_date, days)
 
-    # The timezone belongs in the cache key. The same doctor_id and date map to
-    # a different UTC window if the clinic's timezone is corrected, and the key
-    # without it would keep serving the window computed under the old one.
-    cache_key = (
-        f"doctor:{doctor_id}:slots:"
-        f"{start_date.isoformat()}:{days}:{only_available}:{limit}:{offset}:"
-        f"{start_dt.isoformat()}"
-    )
+    # NOT CACHED, DELIBERATELY.
+    #
+    # This response was held for 300 seconds. Availability is now derived from
+    # appointments, and caching a derived value for five minutes reproduces the
+    # bug the derivation exists to fix: somebody books 10:00 and every other
+    # patient is still shown 10:00 as free until the entry expires. They pick
+    # it, and the exclusion constraint refuses them.
+    #
+    # Invalidating instead would mean deleting every key that could contain the
+    # slot — each date, day-count, limit, offset and only_available combination
+    # — from the booking path. That is a second source of truth wearing a
+    # different hat, and it fails in the same direction.
+    #
+    # What the cache bought was one indexed range scan on doctor_slots. What it
+    # cost was showing patients times they cannot have. The occupancy check
+    # rides the GiST index that already backs the exclusion constraint.
+    #
+    # /slots is public and unauthenticated, so this endpoint is now one query
+    # per request with nothing in front of it. Worth a rate limit; noted rather
+    # than added here, because it is a separate decision from correctness.
+    is_blocked = slot_is_blocked()
 
-    cached = await get_cache(cache_key)
-    if cached:
-        return cached
-
-    query = select(DoctorSlot).where(
+    query = select(
+        DoctorSlot.id,
+        DoctorSlot.start_time,
+        DoctorSlot.end_time,
+        is_blocked.label("is_booked"),
+    ).where(
         DoctorSlot.doctor_id == doctor_id,
         DoctorSlot.start_time >= start_dt,
         DoctorSlot.start_time < end_dt,
     )
 
     if only_available:
-        query = query.where(DoctorSlot.is_booked.is_(False))
+        # Filtered in SQL rather than after the fact, so limit and offset
+        # paginate the available slots instead of paginating everything and
+        # then removing rows from the page.
+        query = query.where(~is_blocked)
 
     query = query.order_by(DoctorSlot.start_time).limit(limit).offset(offset)
 
-    result = await db.execute(query)
-    slots = result.scalars().all()
+    rows = (await db.execute(query)).all()
 
-    data = [
+    # `is_booked` is kept in the response. It is now computed rather than
+    # stored, but clients read this key and the contract has not changed.
+    return [
         {
-            "id": s.id,
-            "start_time": s.start_time.isoformat(),
-            "end_time": s.end_time.isoformat(),
-            "is_booked": s.is_booked,
+            "id": row.id,
+            "start_time": row.start_time.isoformat(),
+            "end_time": row.end_time.isoformat(),
+            "is_booked": row.is_booked,
         }
-        for s in slots
+        for row in rows
     ]
-
-    await set_cache(cache_key, data, ttl=300)
-
-    return data
