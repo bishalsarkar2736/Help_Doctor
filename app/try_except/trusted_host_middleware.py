@@ -15,6 +15,10 @@ Starlette ships TrustedHostMiddleware, which does the same comparison but
 answers with a plain-text 400 that bypasses the application's error envelope.
 Every other rejection this API makes is {"error": {"type", "message"}}, and a
 client parsing that would see this one as a transport failure instead.
+
+One path is exempt -- /metrics, scraped internally by Prometheus under a Host it
+cannot override. See METRICS_PATH below for why that is safe there and nowhere
+else.
 """
 
 from fastapi import Request
@@ -24,9 +28,39 @@ from starlette.responses import JSONResponse
 from app.config import get_settings
 
 
+# The one path the allowlist does not apply to.
+#
+# Prometheus scrapes this over the internal network as `api:8000`, and the Host
+# header it sends is derived from the target address -- Prometheus has no option
+# to override it. So the scrape arrived as `Host: api`, which is not a hostname
+# this deployment serves, and every scrape was answered 400. The `fastapi` target
+# had been DOWN for as long as it had existed, which meant every alert built on
+# API metrics -- error rates, latency, "no traffic received" -- had no data
+# behind it and could never fire.
+#
+# Exempting a path rather than accepting the hostname, because the two differ in
+# blast radius. Accepting `api` would accept it EVERYWHERE: nginx matches
+# `server_name _` and forwards any client-supplied Host verbatim, so an external
+# caller could send it to the password-reset route, where the value is built into
+# an absolute URL. This exemption reaches one endpoint instead.
+#
+# It is safe for that endpoint specifically, because the reason this middleware
+# exists does not apply to it. Nothing in /metrics reads the Host header: it
+# renders a static exposition of counters and builds no URL, no cache key and no
+# tenant. And it is not unauthenticated -- it requires `Bearer $METRICS_TOKEN`
+# when that is set, and 404s outright when ENV=production and it is not.
+METRICS_PATH = "/metrics"
+
+
 class TrustedHostMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next):
+        # Compared exactly, not by prefix: a `startswith` would also exempt
+        # /metrics-something, and the exemption should reach precisely the route
+        # it was reasoned about.
+        if request.url.path == METRICS_PATH:
+            return await call_next(request)
+
         settings = get_settings()
 
         # The port is not part of the identity being checked: the same host
