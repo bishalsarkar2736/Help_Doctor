@@ -116,6 +116,7 @@ async def handle_prescription_issued_whatsapp(
         await mark_whatsapp_delivered(
             db=db,
             event_id=event_id,
+            user_id=prescription.patient.id,
         )
 
         logger.info(
@@ -132,6 +133,7 @@ async def handle_prescription_issued_whatsapp(
         await mark_whatsapp_failed(
             db=db,
             event_id=event_id,
+            user_id=prescription.patient.id,
             error=str(exc),
         )
 

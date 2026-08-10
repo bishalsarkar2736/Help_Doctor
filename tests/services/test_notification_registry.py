@@ -36,7 +36,7 @@ from app.models.clinic import Clinic, ClinicStatus
 from app.models.doctor import Doctor, DoctorStatus
 from app.models.notification import Notification
 from app.models.patient import Gender, Patient
-from app.models.outbox_event import OutboxEvent
+from app.models.outbox_event import OutboxEvent, OutboxStatus
 from app.models.user import User, UserRole
 from app.schemas.event_registry import EVENT_SCHEMAS
 from app.services.event_handlers.dispatcher import EVENT_HANDLERS
@@ -242,7 +242,7 @@ async def _queue(db, event_type: str, payload: dict) -> OutboxEvent:
         id=uuid.uuid4(),
         event_type=event_type,
         payload=payload,
-        status="PENDING",
+        status=OutboxStatus.PENDING,
     )
     db.add(event)
     await db.flush()

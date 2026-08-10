@@ -1,5 +1,5 @@
-from datetime import datetime
-from app.core.time import UTC
+from datetime import datetime, timedelta
+from app.core.time import UTC, _ensure_utc
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -43,8 +43,11 @@ from app.models.enums.activity_action import (
     ActivityAction,
 )
 
+from app.core.constants import REMINDER_LEAD_MINUTES
+
 from app.schemas.event import (
     AppointmentCancelledEvent,
+    AppointmentReminderEvent,
     AppointmentRescheduledEvent,
     AppointmentRescheduleRequestEvent,
     AppointmentCreatedEvent,
@@ -303,6 +306,50 @@ async def apply_cancellation_side_effects(
 # =========================
 # RESCHEDULE SIDE EFFECTS
 # =========================
+def move_appointment_to(
+    appointment: Appointment,
+    new_datetime: datetime,
+) -> bool:
+    """Move an appointment, and re-arm its reminder if the time really changed.
+
+    WHY THE FLAG HAS TO BE TOUCHED AT ALL
+    reminder_sent is one-shot: once the reminder job has published a reminder for
+    an appointment it never selects that row again. Correct, until the
+    appointment moves — at that point the patient has been reminded of a time
+    that no longer exists, and the reminder job will never tell them the new one
+    because the flag still says they were told.
+
+    ONLY WHEN THE INSTANT CHANGES
+    A reschedule that resubmits the same slot must not re-arm anything: a
+    double-submitted form or a retried request would otherwise earn the patient a
+    second identical reminder. Compared as instants, so the same moment written
+    in a different offset is correctly treated as no change.
+
+    BOTH WRITES IN ONE PLACE
+    The time and the flag are set together here, by the only two callers that
+    move an appointment, so neither can be updated without the other and the two
+    reschedule paths cannot drift apart.
+
+    NOT COMMITTED HERE
+    Deliberately. Neither reschedule function commits — the route's transaction
+    owns the whole operation, including the status transition, the outbox event
+    and the activity log. So a reschedule that fails after this point (the
+    exclusion constraint rejecting a double booking is the expected one) rolls
+    the reset back with everything else, and the old reminder state survives
+    exactly as it was.
+
+    Returns whether the reminder was re-armed, for the caller's logs.
+    """
+    rescheduled = appointment.scheduled_at != new_datetime
+
+    if rescheduled:
+        appointment.reminder_sent = False
+
+    appointment.scheduled_at = new_datetime
+
+    return rescheduled
+
+
 async def apply_reschedule_side_effects(
     *,
     db: AsyncSession,
@@ -409,6 +456,22 @@ async def apply_reschedule_side_effects(
             event=event,
         )
 
+    # A reschedule can drop an appointment straight into the lead time, past the
+    # 23-24 hour band the scheduled job scans. move_appointment_to has already
+    # re-armed reminder_sent, so without this the appointment would sit inside the
+    # lead time, eligible, and never be selected again.
+    #
+    # The SAME helper the confirmation path uses — one implementation of the
+    # decision, called from both side-effect groups. It re-checks everything
+    # itself, which is what makes this safe on the patient path too: that one
+    # leaves the appointment PENDING, so the helper declines and nothing is sent
+    # until the doctor confirms.
+    await maybe_publish_immediate_reminder(
+        db=db,
+        appointment=appointment,
+        correlation_id=correlation_id,
+    )
+
 
 
 async def apply_booking_side_effects(
@@ -489,6 +552,113 @@ async def apply_booking_side_effects(
 
 
 
+async def maybe_publish_immediate_reminder(
+    *,
+    db: AsyncSession,
+    appointment: Appointment,
+    correlation_id: str | None = None,
+) -> bool:
+    """Remind now, if confirmation has left the appointment inside the lead time.
+
+    THE GAP THIS CLOSES
+    A patient-initiated reschedule re-opens the appointment to PENDING, and the
+    scheduled reminder job selects only CONFIRMED rows passing through the 23-24
+    hour band. So an appointment confirmed when it is already 20 hours away has
+    missed the band while it was PENDING and can never re-enter it: the patient is
+    never reminded at all.
+
+    TWO ENTRY CONDITIONS, ONE REMINDER PATH
+    This is deliberately NOT a widening of the job's window to 0-24 hours. That
+    would remind an appointment booked for this afternoon, telling it that it is
+    "tomorrow" — the exact bug the band was introduced to fix. Instead there are
+    two narrow entry conditions into the same event:
+
+        the job      an appointment CROSSING the 23-24 hour band
+        this         an appointment already INSIDE the lead time at confirmation
+
+    and everything after the entry condition is shared — same
+    AppointmentReminderEvent, same publish_domain_event, same outbox, same
+    dispatcher, same WhatsApp handler with its preference, kill switch, template,
+    patient-only validation, receipt and retry. Nothing here touches WhatsApp.
+
+    WHAT DISQUALIFIES AN APPOINTMENT
+    Not CONFIRMED — a PENDING appointment has not been agreed to yet.
+    Already reminded — the flag is the shared guard against a second message.
+    In the past — nothing to remind anyone about.
+    More than the lead time away — that one belongs to the job, which will catch
+    it in the ordinary way; reminding now would be a day early.
+
+    IDEMPOTENCY AND THE RACE
+    reminder_sent is set here, in the same transaction as the event, exactly as
+    the job does it. That is what makes the two paths mutually exclusive: the job
+    filters on reminder_sent = False, so once this has committed the job cannot
+    also select the row, and the reverse cannot happen because the job never sees
+    a PENDING appointment in the first place. The caller already holds the row
+    under SELECT ... FOR UPDATE, so two concurrent confirmations serialise.
+
+    NOT COMMITTED HERE
+    The caller's transaction owns the confirmation, the transition, the confirmed
+    events and this. If publishing fails, the confirmation rolls back with it and
+    reminder_sent is unchanged.
+
+    Returns whether a reminder was published, for the caller's logs and tests.
+    """
+    if appointment.status != AppointmentStatus.CONFIRMED:
+        return False
+
+    if appointment.reminder_sent:
+        return False
+
+    now = datetime.now(UTC)
+
+    scheduled_at = _ensure_utc(appointment.scheduled_at)
+
+    if scheduled_at <= now:
+        return False
+
+    if scheduled_at > now + timedelta(minutes=REMINDER_LEAD_MINUTES):
+        # Still ahead of the band. The job owns it.
+        return False
+
+    await publish_domain_event(
+        db=db,
+        event=AppointmentReminderEvent(
+            event_type="APPOINTMENT_REMINDER",
+
+            occurred_at=now.isoformat(),
+
+            aggregate_type="appointment",
+            aggregate_id=appointment.id,
+
+            correlation_id=correlation_id,
+
+            # The patient, and never the doctor. Confirmation publishes an event
+            # to BOTH parties; a reminder goes to whoever is attending, and the
+            # recipient is checked against this appointment's patient_id again
+            # downstream.
+            user_id=appointment.patient_id,
+
+            appointment_id=appointment.id,
+        ),
+    )
+
+    # After the publish, mirroring the job: if the publish raises this is never
+    # reached, and the caller's rollback discards it either way.
+    appointment.reminder_sent = True
+
+    logger.info(
+        "immediate_reminder_published",
+        extra={
+            "appointment_id": appointment.id,
+            "minutes_until_appointment": int(
+                (scheduled_at - now).total_seconds() // 60
+            ),
+        },
+    )
+
+    return True
+
+
 async def apply_confirmation_side_effects(
     *,
     db: AsyncSession,
@@ -550,6 +720,16 @@ async def apply_confirmation_side_effects(
             db=db,
             event=event,
         )
+
+    # Confirmation may have left the appointment already inside the reminder lead
+    # time — which happens routinely after a patient-initiated reschedule, since
+    # that re-opens the appointment to PENDING and the scheduled job only selects
+    # CONFIRMED rows. Same event, same outbox, same transaction.
+    await maybe_publish_immediate_reminder(
+        db=db,
+        appointment=appointment,
+        correlation_id=correlation_id,
+    )
 
 
 async def _require_clinic_accepting_appointments(
@@ -1040,7 +1220,7 @@ async def patient_reschedule_appointment(
 
     # 🔁 Update schedule (this triggers exclusion constraint safely)
     try:
-        appointment.scheduled_at = new_datetime
+        move_appointment_to(appointment, new_datetime)
         await db.flush()
 
     except IntegrityError:
@@ -1340,7 +1520,7 @@ async def doctor_reschedule_appointment(
         raise
 
     try:
-        appointment.scheduled_at = new_datetime
+        move_appointment_to(appointment, new_datetime)
         await db.flush()
 
     except IntegrityError:

@@ -58,6 +58,18 @@ async def lifespan(app: FastAPI):
 
     if os.getenv("TESTING") != "1":
 
+        # Which database is this process actually talking to? A real incident and
+        # hard to notice, which is why an import-time print used to answer it.
+        # Host, port and name only — never the URL, which carries the password.
+        logger.info(
+            "database_connection_configured",
+            extra={
+                "db_host": settings.POSTGRES_HOST,
+                "db_port": settings.POSTGRES_PORT,
+                "db_name": settings.POSTGRES_DB,
+            },
+        )
+
         try:
             async with engine.begin() as conn:
                 await conn.run_sync(lambda _: None)

@@ -10,6 +10,7 @@ from app.models.user import (
 )
 
 from app.security.rbac import require_roles
+from app.try_except.exceptions import ForbiddenError, NotFoundError
 
 from app.core.cache import (
     get_cache,
@@ -20,6 +21,9 @@ from app.services.notification_service import (
     sync_notifications,
 )
 
+from app.services.notification_receipt_service import (
+    mark_notifications_seen,
+)
 from app.services.notification_center_service import (
     get_notifications,
     get_unread_notification_count,
@@ -35,6 +39,7 @@ from app.schemas.notification_schema import (
 )
 
 from app.models.notification import (
+    Notification,
     NotificationCategory,
 )
 
@@ -125,6 +130,63 @@ async def mark_single_notification_read(
 
     return {
         "message": "Notification marked as read"
+    }
+
+
+# ==========================================
+# MARK SEEN
+# ==========================================
+
+@router.patch(
+    "/{notification_id}/seen",
+    response_model=NotificationMarkReadResponse,
+)
+async def mark_single_notification_seen(
+    notification_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(
+        require_roles(
+            UserRole.ADMIN,
+            UserRole.DOCTOR,
+            UserRole.PATIENT,
+        )
+    ),
+):
+    """Mark one notification as seen.
+
+    seen_at could previously only be written through the WebSocket
+    `notification_seen` message, so any client without a live socket — a mobile
+    app, a polling client, a browser whose connection dropped — could mark a
+    notification READ but never SEEN. The two dimensions had entirely different
+    reachability for no reason anybody chose.
+
+    Ownership is resolved the same way as /read: 404 when it does not exist, 403
+    when it is not yours. Deliberately identical, so the two endpoints cannot
+    drift apart — including in what they reveal, which is a pre-existing
+    property of /read and not something this endpoint should decide alone.
+
+    Bulk marking already exists over the WebSocket and is not duplicated here;
+    this is the smallest addition that closes the gap.
+    """
+    notification = await db.get(Notification, notification_id)
+
+    if notification is None:
+        raise NotFoundError("Notification not found")
+
+    if notification.user_id != current_user.id:
+        raise ForbiddenError("Not allowed")
+
+    # Reuses the existing writer, which is already user-scoped, write-once and
+    # bulk-capable. Passing a single id keeps one implementation of what "seen"
+    # means rather than adding a second.
+    await mark_notifications_seen(
+        db=db,
+        notification_ids=[notification_id],
+        user_id=current_user.id,
+    )
+
+    return {
+        "message": "Notification marked as seen"
     }
 
 

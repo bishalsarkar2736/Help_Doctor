@@ -62,6 +62,7 @@ async def test_mark_email_delivered(db):
     await mark_email_delivered(
         db=db,
         event_id=event.id,
+        user_id=notification.user_id,
     )
 
     await db.commit()
@@ -86,6 +87,7 @@ async def test_mark_email_failed(db):
     await mark_email_failed(
         db=db,
         event_id=event.id,
+        user_id=notification.user_id,
         error="SMTP timeout",
     )
 
@@ -111,6 +113,7 @@ async def test_mark_whatsapp_delivered(db):
     await mark_whatsapp_delivered(
         db=db,
         event_id=event.id,
+        user_id=notification.user_id,
     )
 
     await db.commit()
@@ -135,6 +138,7 @@ async def test_mark_whatsapp_failed(db):
     await mark_whatsapp_failed(
         db=db,
         event_id=event.id,
+        user_id=notification.user_id,
         error="Twilio unavailable",
     )
 
@@ -160,6 +164,9 @@ async def test_mark_push_delivered(db):
     await mark_push_delivered(
         db=db,
         event_id=event.id,
+        # A notification is identified by (event_id, user_id): one event can
+        # carry a row for several recipients, so the receipt has to say which.
+        user_id=notification.user_id,
     )
 
     await db.commit()
@@ -185,6 +192,7 @@ async def test_mark_push_failed(db):
     await mark_push_failed(
         db=db,
         event_id=event.id,
+        user_id=notification.user_id,
         error="WebPush failed",
     )
 

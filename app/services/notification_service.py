@@ -121,6 +121,88 @@ async def notify_user_realtime(
         }
     )
 
+# Long enough to outlast any legitimate redelivery of one event, short enough
+# that the keys do not accumulate. The outbox retries at most max_retries=5
+# times with min(2 ** n, 300) second backoff — under half an hour in the worst
+# case — and a worker reclaiming a stale "processing" row adds to that but not
+# by days.
+PUSH_ENQUEUE_TTL_SECONDS = 24 * 60 * 60
+
+
+def _push_enqueue_key(event_id, user_id: int) -> str:
+    return f"push:enqueued:{event_id}:{user_id}"
+
+
+async def _claim_push_enqueue(event_id, user_id: int) -> bool:
+    """Whether THIS delivery is the one that gets to enqueue the push.
+
+    The outbox is at-least-once, and the notification RECORD already survives
+    that — create_notification uses ON CONFLICT DO NOTHING over
+    uq_notification_event_user, so a redelivery finds the existing row. The
+    push did not: notify_user enqueued unconditionally, so every redelivery
+    sent the device another copy of a notification the user already had. The
+    database looked correct while the phone buzzed three times.
+
+    SETNX, so the claim and the test are one atomic operation and two workers
+    cannot both win it.
+
+    Keyed on (event_id, user_id), not event_id: uq_notification_event_user
+    permits two users on one event, and a guard keyed on the event alone would
+    silence the second recipient — trading a duplicate push for a missing one.
+
+    FAILS OPEN. If Redis is unreachable this returns True and the push is
+    enqueued. A duplicate push is a nuisance; a Redis outage silently
+    suppressing every notification is an incident, and this guard exists to
+    remove an annoyance, not to become a new single point of failure.
+    """
+    try:
+        redis = await get_redis()
+
+        claimed = await redis.set(
+            _push_enqueue_key(event_id, user_id),
+            "1",
+            ex=PUSH_ENQUEUE_TTL_SECONDS,
+            nx=True,
+        )
+
+        return bool(claimed)
+
+    except Exception as exc:
+        logger.warning(
+            "push_enqueue_guard_unavailable",
+            extra={
+                "user_id": user_id,
+                "event_id": str(event_id),
+                "error": str(exc),
+            },
+        )
+
+        return True
+
+
+async def _release_push_enqueue(event_id, user_id: int) -> None:
+    """Give the claim back when the enqueue itself failed.
+
+    Without this, a broker that is briefly down would leave the key set, and
+    the redelivery that was supposed to recover the push would see the claim
+    already taken and skip it — turning a transient failure into a notification
+    the user never receives.
+    """
+    try:
+        redis = await get_redis()
+        await redis.delete(_push_enqueue_key(event_id, user_id))
+
+    except Exception as exc:
+        logger.warning(
+            "push_enqueue_guard_release_failed",
+            extra={
+                "user_id": user_id,
+                "event_id": str(event_id),
+                "error": str(exc),
+            },
+        )
+
+
 async def notify_user(
     *,
     db: AsyncSession,
@@ -153,18 +235,28 @@ async def notify_user(
             user_id,
         )
 
-        if prefs.push_enabled:
+        if prefs.push_enabled and await _claim_push_enqueue(
+            event_id, user_id
+        ):
 
-            send_push_notification_task.delay(
-                user_id = user_id,
-                payload = {
-                    "title": title,
-                    "body": message,
-                    "event": "notification",
-                    "appointment_id": appointment_id,
-                },
-                event_id=str(event_id),
-            )
+            try:
+                send_push_notification_task.delay(
+                    user_id = user_id,
+                    payload = {
+                        "title": title,
+                        "body": message,
+                        "event": "notification",
+                        "appointment_id": appointment_id,
+                    },
+                    event_id=str(event_id),
+                )
+
+            except Exception:
+                # The claim is only meaningful once the task is actually
+                # queued. Hand it back so a redelivery can retry, then let the
+                # handler below log it as it always did.
+                await _release_push_enqueue(event_id, user_id)
+                raise
         
     except Exception as e:
         logger.error(

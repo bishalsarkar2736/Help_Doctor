@@ -37,6 +37,9 @@ async def test_default_preferences_created(
     assert prefs.push_enabled is True
     assert prefs.realtime_enabled is True
 
+    # The odd one out, asserted alongside its siblings: WhatsApp is opt-in.
+    assert prefs.whatsapp_enabled is False
+
 
 @pytest.mark.asyncio
 async def test_update_preferences(

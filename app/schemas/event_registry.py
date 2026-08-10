@@ -1,5 +1,6 @@
 from app.schemas.event import (
     AppointmentCreatedEvent,
+    AppointmentReminderEvent,
     AppointmentRescheduleRequestEvent,
     AppointmentConfirmedEvent,
     AppointmentCancelledEvent,
@@ -28,6 +29,13 @@ EVENT_SCHEMAS = {
 
     "APPOINTMENT_RESCHEDULED":
         AppointmentRescheduledEvent,
+
+    # Was missing in the other direction: the reminder job published an event on
+    # every run and nothing here matched it, so the worker logged
+    # "skipping_unsupported_event", marked it processed, and the reminder was
+    # gone -- while the appointment had already been flagged reminder_sent.
+    "APPOINTMENT_REMINDER":
+        AppointmentReminderEvent,
 
     # Was missing. The event was published and the dispatcher had a handler for
     # it, but with no schema here the outbox worker logged

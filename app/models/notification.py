@@ -115,6 +115,20 @@ class Notification(Base):
         nullable=True,
     )
 
+    # Realtime is a delivery channel like the others and now records its own
+    # timestamp.
+    #
+    # It used to write ONLY the aggregate delivered_at, guarded on that column
+    # being NULL — so if push or email had already delivered, a realtime
+    # acknowledgement was discarded and nothing recorded that the socket
+    # received it. This column is added because that information was being
+    # lost, not for symmetry: without it the aggregate cannot be explained by
+    # the per-channel columns.
+    realtime_delivered_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
     push_delivered_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
@@ -175,8 +189,27 @@ class Notification(Base):
         server_default=NotificationCategory.SYSTEM.value,
     )
     
+    # RESTRICT, not CASCADE.
+    #
+    # Under CASCADE, deleting an outbox event deleted its notifications with it.
+    # Nothing deletes outbox events today, so nothing was lost — but the
+    # notification retention job establishes the pattern, and the first outbox
+    # retention job written to match it would have silently taken the
+    # notification history along. Silently: a purge that deletes more than it
+    # was asked to raises nothing and logs nothing.
+    #
+    # SET NULL was considered and ruled out on evidence rather than taste. This
+    # column is NOT NULL, so it would have to become nullable — and
+    # uq_notification_event_user is (event_id, user_id), where Postgres treats
+    # NULLs as distinct. Nullable event_id would therefore stop deduplicating
+    # notifications, trading a retention risk for a correctness one.
+    #
+    # RESTRICT changes nothing about current behaviour and makes a future purge
+    # fail loudly instead of quietly: the DELETE errors, the operator sees it,
+    # and they decide what should happen to the notifications rather than
+    # discovering afterwards that it happened for them.
     event_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("outbox_events.id", ondelete="CASCADE"),
+        ForeignKey("outbox_events.id", ondelete="RESTRICT"),
         nullable=False,
     )
 

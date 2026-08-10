@@ -97,7 +97,22 @@ async def mark_all_notifications_read(
     for notification in notifications:
         notification.read_at = now
 
+        # Reading implies having seen it. Only filled when empty: a seen_at
+        # already recorded by the client is when the user actually saw it, and
+        # is earlier and more accurate than this.
+        #
+        # The invariant is one-directional — read implies seen, seen does not
+        # imply read — because a notification can appear on screen without
+        # being opened.
+        if notification.seen_at is None:
+            notification.seen_at = now
+
     await db.flush()
+
+    # The same key mark_notification_read invalidates. Without this the unread
+    # badge kept serving its cached value for up to the TTL after the user had
+    # just cleared everything.
+    await delete_cache(f"notification_count:{user_id}")
 
     return len(notifications)
 
@@ -124,9 +139,13 @@ async def mark_notification_read(
         )
 
     if notification.read_at is None:
-        notification.read_at = datetime.now(
-            UTC
-        )
+        now = datetime.now(UTC)
+
+        notification.read_at = now
+
+        # Reading implies having seen it; an existing seen_at is left alone.
+        if notification.seen_at is None:
+            notification.seen_at = now
 
         await db.flush()
 

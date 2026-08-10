@@ -81,6 +81,31 @@ class AppointmentRescheduledEvent(BaseEvent):
 
 
 # =========================
+# APPOINTMENT REMINDER
+# =========================
+class AppointmentReminderEvent(BaseEvent):
+    """The scheduled nudge before an appointment.
+
+    Registered here so the outbox worker recognises it. It was previously
+    published as the raw string "appointment.reminder", which normalises to
+    APPOINTMENT.REMINDER, matches nothing in EVENT_SCHEMAS, and was therefore
+    marked processed and dropped on every run.
+
+    Deliberately the same minimal shape as its siblings: the recipient and the
+    appointment, and nothing else. The doctor, the time and the clinic's timezone
+    are read from the appointment aggregate when a message is built, so a name
+    that changes later cannot be frozen into an immutable event.
+    """
+
+    event_type: Literal[
+        "APPOINTMENT_REMINDER"
+    ]
+
+    user_id: int
+    appointment_id: int
+
+
+# =========================
 # APPOINTMENT RESCHEDULE REQUEST
 # =========================
 class AppointmentRescheduleRequestEvent(BaseEvent):

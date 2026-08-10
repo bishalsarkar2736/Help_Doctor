@@ -548,13 +548,29 @@ async def test_duplicate_integrity_error_is_ignored(db):
 
     await db.commit()
 
+    # Shaped like a real duplicate: SQLSTATE 23505 on
+    # uq_notification_event_user, as the driver reports it.
+    #
+    # This used to be orig=Exception("duplicate") — a bare exception with no
+    # sqlstate and no constraint — and it passed, because the worker treated
+    # EVERY IntegrityError as a duplicate. That is precisely the defect being
+    # fixed: a foreign key violation took this same path and the event was
+    # marked processed. The test's intent is unchanged, its fixture now
+    # represents what it claims to.
+    class _DuplicateCause(Exception):
+        sqlstate = "23505"
+        constraint_name = "uq_notification_event_user"
+
+    _duplicate_orig = Exception("duplicate key value violates unique constraint")
+    _duplicate_orig.__cause__ = _DuplicateCause()
+
     with patch(
         "app.workers.outbox_worker.dispatch_event",
         new=AsyncMock(
             side_effect=sa.exc.IntegrityError(
                 statement=None,
                 params=None,
-                orig=Exception("duplicate"),
+                orig=_duplicate_orig,
             )
         ),
     ):

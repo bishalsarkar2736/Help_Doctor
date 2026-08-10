@@ -30,7 +30,7 @@ from app.models.appointment import Appointment, AppointmentStatus
 from app.models.clinic import Clinic, ClinicStatus
 from app.models.doctor import Doctor, DoctorStatus
 from app.models.notification import Notification
-from app.models.outbox_event import OutboxEvent
+from app.models.outbox_event import OutboxEvent, OutboxStatus
 from app.models.patient import Gender, Patient
 from app.models.user import User, UserRole
 from app.services.event_handlers.notification_handler import (
@@ -104,7 +104,7 @@ async def two_clinics(db):
 async def _deliver(db, event_type: str, payload: dict):
     """Through the handler, with a real outbox row for the FK."""
     event = OutboxEvent(
-        id=uuid.uuid4(), event_type=event_type, payload=payload, status="PENDING"
+        id=uuid.uuid4(), event_type=event_type, payload=payload, status=OutboxStatus.PENDING
     )
     db.add(event)
     await db.flush()

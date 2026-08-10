@@ -3,7 +3,9 @@
 # Staging environment: a second, isolated instance of the stack for validating
 # deployment and operations before promoting a change to production.
 #
-#   scripts/staging.sh up      build, start, wait for health, apply migrations
+#   scripts/staging.sh up       build, start, migrate, wait for health, verify
+#   scripts/staging.sh migrate  apply pending migrations to a RUNNING staging
+#   scripts/staging.sh check    verify the schema is at head and free of drift
 #   scripts/staging.sh seed    bootstrap super admin + clinic + test accounts
 #   scripts/staging.sh smoke   run the operational checks against it
 #   scripts/staging.sh status  what is running
@@ -29,7 +31,7 @@ ENV_FILE=.env.staging
 # The application services. The observability stack and backup loops are left
 # out on purpose: they double the container count on a single machine and add
 # little to deployment validation.
-SERVICES=(postgres redis minio minio_init mailhog migrate api celery_worker celery_beat web)
+SERVICES=(postgres redis minio minio_init mailhog migrate api celery_worker celery_beat outbox_worker web)
 
 API_URL=http://127.0.0.1:18000
 WEB_URL=http://127.0.0.1:15173
@@ -96,6 +98,46 @@ load_staging_env() {
     set +a
 }
 
+verify_schema() {
+    # Migrations have already run by this point: `migrate` is in SERVICES, and
+    # api, celery_worker, celery_beat and outbox_worker all declare
+    #
+    #     depends_on: migrate: { condition: service_completed_successfully }
+    #
+    # so compose starts none of them unless `alembic upgrade head` exited 0.
+    # That ordering is the mechanism; this is the receipt for it.
+    #
+    # Two questions, because they fail differently. Is the database at the
+    # revision this code expects — the check that would have caught staging
+    # sitting eight days behind while every container reported healthy. And does
+    # the schema still match the models, which catches a migration that ran but
+    # does not describe what the code now declares.
+    #
+    # `alembic upgrade head` is idempotent, so at head this whole path is a
+    # no-op that succeeds.
+    echo "==> verifying the staging schema"
+
+    if ! compose run --rm --entrypoint sh migrate -c '
+        set -e
+        current=$(alembic current 2>/dev/null | grep -oE "^[0-9a-f]{12}" | head -1)
+        head=$(alembic heads 2>/dev/null | grep -oE "^[0-9a-f]{12}" | head -1)
+
+        if [ "$current" != "$head" ]; then
+            echo "!!! staging is at ${current:-<none>}, code head is $head" >&2
+            exit 1
+        fi
+
+        echo "==> at $current"
+
+        # Non-zero when the models describe something the schema does not.
+        alembic check
+    '; then
+        echo "!!! staging schema verification FAILED" >&2
+        echo "!!! run: scripts/staging.sh migrate" >&2
+        exit 1
+    fi
+}
+
 wait_for_health() {
     echo "==> waiting for the api to report ready"
     local n=0
@@ -120,10 +162,33 @@ case "${1:-}" in
         echo "==> starting"
         compose up -d "${SERVICES[@]}"
         wait_for_health
+        verify_schema
         echo
         echo "  api : $API_URL"
         echo "  web : $WEB_URL"
         echo "  run: scripts/staging.sh smoke"
+        ;;
+
+    migrate)
+        # The gap that let staging drift. `migrate` is a one-shot service, so it
+        # only re-runs when the stack is brought up; a stack that simply keeps
+        # running never applies anything new. This applies pending migrations to
+        # a RUNNING staging without recreating it.
+        #
+        # Safe to run at any time: alembic upgrade head does nothing,
+        # successfully, when there is nothing to do.
+        load_staging_env
+        echo "==> applying migrations"
+        compose run --rm migrate
+        verify_schema
+        echo "==> staging schema is current"
+        ;;
+
+    check)
+        # Verification on its own, for a cron or a pre-promotion gate.
+        load_staging_env
+        verify_schema
+        echo "==> staging schema is current"
         ;;
 
     seed)
@@ -185,7 +250,7 @@ case "${1:-}" in
         ;;
 
     *)
-        echo "usage: scripts/staging.sh {up|seed|smoke|status|logs|down}" >&2
+        echo "usage: scripts/staging.sh {up|migrate|check|seed|smoke|status|logs|down}" >&2
         exit 2
         ;;
 esac

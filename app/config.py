@@ -195,6 +195,53 @@ class Settings(BaseSettings):
     WHATSAPP_ACCESS_TOKEN: str
     WHATSAPP_PHONE_NUMBER_ID: str
 
+    # ---- WhatsApp notification channel ---------------------------------
+    #
+    # OFF by default, and that is the point rather than caution.
+    #
+    # Meta only accepts business-initiated messages that reference a template
+    # approved in Business Manager. Until those templates exist and their names
+    # are configured below, every send is a 400 from Meta — so a deploy that
+    # switched this on by default would turn a working system into one whose
+    # outbox retries and dead-letters WhatsApp events forever.
+    #
+    # Turn it on once the templates are approved AND named below.
+    WHATSAPP_NOTIFICATIONS_ENABLED: bool = False
+
+    # The Meta-approved template name per event. Empty means "not approved yet",
+    # and the channel declines to send rather than guessing a name — every one of
+    # these must be filled in from Business Manager before its event can deliver.
+    #
+    # One setting per event rather than one shared name, because Meta approves
+    # each template separately and they are approved at different times: a clinic
+    # can go live on appointment confirmations while the refund template is still
+    # in review.
+    #
+    # There is a setting here for each event in WHATSAPP_EVENTS and for no other
+    # event. A name for an event the platform does not publish would be
+    # configuration an operator could fill in and then wait forever on.
+    WHATSAPP_TEMPLATE_PRESCRIPTION_ISSUED: str = ""
+
+    # Two body parameters each, in this order: date, then time. Positional,
+    # because Meta templates interpolate {{1}} and {{2}} by position.
+    WHATSAPP_TEMPLATE_APPOINTMENT_CONFIRMED: str = ""
+    WHATSAPP_TEMPLATE_APPOINTMENT_CANCELLED: str = ""
+    WHATSAPP_TEMPLATE_APPOINTMENT_RESCHEDULED: str = ""
+
+    # Three body parameters, in this order: doctor, date, time.
+    WHATSAPP_TEMPLATE_APPOINTMENT_REMINDER: str = ""
+
+    # No body parameters: the event carries no amount, so the approved template
+    # must not contain an {{amount}} placeholder. See _PARAMETERLESS below.
+    WHATSAPP_TEMPLATE_PAYMENT_SUCCESS: str = ""
+
+    # One body parameter: the refunded amount, which this event does carry.
+    WHATSAPP_TEMPLATE_PAYMENT_REFUNDED: str = ""
+
+    # BCP-47 code of the approved template's language. Meta matches on this, so a
+    # mismatch is rejected even when the name is right.
+    WHATSAPP_TEMPLATE_LANGUAGE: str = "en"
+
     BKASH_BASE_URL: AnyUrl
     BKASH_APP_KEY: str
     BKASH_APP_SECRET: str

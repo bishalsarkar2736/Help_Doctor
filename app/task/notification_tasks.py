@@ -50,6 +50,7 @@ async def send_push_notification_task(
             await mark_push_delivered(
                 db=db,
                 event_id=event_uuid,
+                user_id=user_id,
             )
 
             await db.commit()
@@ -64,6 +65,7 @@ async def send_push_notification_task(
                 await mark_delivery_failed(
                     db=db,
                     event_id=event_uuid,
+                    user_id=user_id,
                     error=str(exc),
                 )
 

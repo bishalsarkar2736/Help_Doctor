@@ -57,6 +57,14 @@ EVENT_NOTIFICATION_CONFIG = {
         "appointment_field": "appointment_id",
     },
 
+    "APPOINTMENT_REMINDER": {
+        "title": "Appointment Reminder",
+        "message": "You have an upcoming appointment",
+        "category": NotificationCategory.APPOINTMENT,
+        "user_field": "user_id",
+        "appointment_field": "appointment_id",
+    },
+
     "APPOINTMENT_RESCHEDULE_REQUEST": {
         "title": "Reschedule Request",
         "message": "A patient requested to reschedule an appointment",

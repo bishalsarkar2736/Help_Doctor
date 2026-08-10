@@ -29,7 +29,7 @@ from app.models.appointment_history import AppointmentStatusHistory
 from app.models.clinic import Clinic, ClinicStatus
 from app.models.doctor import Doctor, DoctorStatus
 from app.models.notification import Notification
-from app.models.outbox_event import OutboxEvent
+from app.models.outbox_event import OutboxEvent, OutboxStatus
 from app.models.patient import Gender, Patient
 from app.models.user import User, UserRole
 from app.schemas.event import AppointmentStatusChangedEvent
@@ -121,7 +121,7 @@ async def outbox_event_id(db):
         id=uuid4(),
         event_type="APPOINTMENT_STATUS_CHANGED",
         payload={},
-        status="PENDING",
+        status=OutboxStatus.PENDING,
     )
     db.add(event)
     await db.flush()

@@ -116,7 +116,25 @@ services:
       # survive a restart. Stale files from dead workers get aggregated into
       # the next run's totals, so counters jump and worker_up counts processes
       # that no longer exist. The startup cleanup is a second line of defence.
+      #
+      # No uid/gid/mode options, deliberately. Docker mounts a tmpfs 1777
+      # (world-writable, sticky), which the non-root `app` user can already
+      # write — verified in the running container, where every .db file is
+      # owned by 999:999. Pinning uid=999 here would hard-code a number that
+      # lives in the Dockerfile's useradd, and would silently break the mount
+      # the day that uid changes; the default is robust to it.
       - /tmp/prometheus_multiproc
+    # Celery prefork needs far more descriptors than the daemon's default soft
+    # limit of 1024, and this container inherits that default. With 1024 the four
+    # pool children exhaust it during pool setup and every task is rejected with
+    # "[Errno 24] Too many open files" before its body runs — the worker looks
+    # healthy and silently executes nothing. Measured: at 65536 the whole pool
+    # sits under 100 descriptors, so this is headroom, not a leak being papered
+    # over.
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     # Override the image's HTTP healthcheck — this service runs no web server.
     healthcheck:
       test: ["CMD-SHELL", "celery -A app.core.celery inspect ping -d celery@$$HOSTNAME || exit 1"]
@@ -155,6 +173,54 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    restart: unless-stopped
+    logging: *default-logging
+
+  # The outbox dispatcher: the process that turns published events into
+  # notifications. It had no service at all, which is why outbox_events
+  # accumulated `pending` for weeks and nothing downstream of an event — in-app
+  # notifications, email, WhatsApp, appointment reminders — ever ran outside the
+  # tests. Publishing was correct; nothing consumed it.
+  #
+  # A SEPARATE SERVICE, not a thread in the api. It restarts, scales and fails on
+  # its own, and an api deploy does not interrupt a batch mid-flight.
+  #
+  # NOT a Celery worker. It is a plain asyncio poll loop (POLL_INTERVAL = 5s) with
+  # its own claiming, retry backoff, stuck-event recovery and dead-lettering; it
+  # uses Celery only in the sense that a handler may enqueue a push task. So no
+  # -A flag, no queues, and deliberately none of celery_worker's
+  # PROMETHEUS_MULTIPROC_DIR/tmpfs setup: that is prefork-only machinery, and it
+  # is what currently crash-loops celery_worker on a permission error.
+  outbox_worker:
+    build: .
+    image: helpdoctor-app:local
+    container_name: helpdoctor_outbox_worker
+    # -m, so the package is imported the same way the tests import it and
+    # __name__ == "__main__" reaches asyncio.run(main()).
+    command: python -m app.workers.run_outbox_worker
+    env_file:
+      - .env.docker
+    # The same three the api waits for. Postgres because the loop selects and
+    # advances outbox rows; Redis because the dispatch path uses it for the
+    # notification cooldown, the push-enqueue idempotency claim and as the Celery
+    # broker when a handler enqueues a push. Nothing else is required, so nothing
+    # else is depended on.
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # No web server and nothing to inspect — disable the image's inherited HTTP
+    # healthcheck rather than report a permanently false "unhealthy", exactly as
+    # celery_beat does. A truthful liveness probe would need the loop to publish
+    # a heartbeat; `restart: unless-stopped` covers the process dying, which is
+    # the failure this can actually detect today.
+    healthcheck:
+      disable: true
+    # No ports. Nothing about this process is reachable from outside the network,
+    # and it needs nothing published to do its work.
     restart: unless-stopped
     logging: *default-logging
 

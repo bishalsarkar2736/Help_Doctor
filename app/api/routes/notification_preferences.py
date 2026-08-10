@@ -70,6 +70,7 @@ async def update_preferences(
         db=db,
         user_id=current_user.id,
         email_enabled=payload.email_enabled,
+        whatsapp_enabled=payload.whatsapp_enabled,
         push_enabled=payload.push_enabled,
         realtime_enabled=payload.realtime_enabled,
     )

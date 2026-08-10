@@ -17,7 +17,23 @@ config = context.config
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # disable_existing_loggers=False is the whole point of naming it.
+    #
+    # fileConfig defaults to True, which sets disabled = True on every logger
+    # that already exists when it runs. Under pytest the conftest imports the
+    # application and THEN runs `alembic upgrade head`, so every application
+    # logger created at import time was silenced for the rest of the session:
+    # logger.info() returned without emitting, and a test asserting on log
+    # output failed for a reason nowhere near itself.
+    #
+    # It matters outside the tests too. Anything that migrates in the same
+    # process it then serves from — a management command, a container that runs
+    # migrations before handing over to the app, a REPL — loses application
+    # logging entirely and silently.
+    fileConfig(
+        config.config_file_name,
+        disable_existing_loggers=False,
+    )
 
 # add your model's MetaData object here
 # for 'autogenerate' support

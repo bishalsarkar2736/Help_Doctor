@@ -60,6 +60,15 @@ services:
     container_name: staging_celery_beat
     env_file: !override [.env.staging]
 
+  # Same two overrides as every other app service: the container name is global
+  # rather than scoped by compose project, and env_file MERGES across files, so
+  # without !override staging would silently inherit production's values for any
+  # key .env.staging does not define — which is how a staging run once reached
+  # the production database. No ports entry: this service publishes none.
+  outbox_worker:
+    container_name: staging_outbox_worker
+    env_file: !override [.env.staging]
+
   postgres:
     container_name: staging_postgres
     ports: !override ["127.0.0.1:15433:5432"]

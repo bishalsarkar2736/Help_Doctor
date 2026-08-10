@@ -6,7 +6,16 @@ from opentelemetry.instrumentation.sqlalchemy import (
 )
 
 settings = get_settings()
-print("APP CONNECTING TO DB:", settings.POSTGRES_DB)
+
+# The "APP CONNECTING TO DB:" print that used to be here is gone. It ran at
+# IMPORT time, before setup_logging had configured anything, so it could never be
+# structured, never be levelled and never be suppressed — and it ran in every
+# process that imported this module, including each Celery child and every test
+# session.
+#
+# The question it answered is a fair one, so it survives as a structured record
+# in the application's startup path, where logging is configured: see the
+# database_connection_configured line in app.main.lifespan.
 
 
 engine = create_async_engine(

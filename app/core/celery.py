@@ -55,6 +55,13 @@ celery_app.conf.update(
 # the worker exports nothing and background jobs fail silently.
 from app.core import celery_metrics  # noqa: E402,F401
 
+# Same reason: connecting the setup_logging signal is what stops Celery
+# configuring logging itself, so worker logs are JSON like the API's rather than
+# Celery's plain text. Without it, outbox_integrity_error,
+# notification_purge_complete and every dead-letter record are emitted in a
+# format structured log tooling cannot query.
+from app.core import celery_logging  # noqa: E402,F401
+
 
 # periodic scheduler
 celery_app.conf.beat_schedule = {
