@@ -187,17 +187,31 @@ def create_app() -> FastAPI:
             and redis["status"] == "healthy"
         )
 
-        return {
-            "status": (
-                "ready"
-                if ready
-                else "not_ready"
-            ),
-            "services": {
-                "database": database,
-                "redis": redis,
+        # 503 when not ready, not 200 with a sad body.
+        #
+        # This used to return a plain dict, so FastAPI sent 200 whatever the
+        # checks said — a readiness probe that reported "not_ready" in JSON and
+        # "fine" in the status line. Everything that consumes a readiness probe
+        # reads the status line: a load balancer deciding whether to route to
+        # this instance, an orchestrator deciding whether a rollout succeeded,
+        # and scripts/staging.sh, which waits for a 200 and would have proceeded
+        # against an API with no database.
+        #
+        # The body is unchanged, so anything already parsing it keeps working.
+        return JSONResponse(
+            status_code=200 if ready else 503,
+            content={
+                "status": (
+                    "ready"
+                    if ready
+                    else "not_ready"
+                ),
+                "services": {
+                    "database": database,
+                    "redis": redis,
+                },
             },
-        }
+        )
         
 
     @app.get(
