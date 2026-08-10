@@ -50,6 +50,15 @@ scrape_configs:
       - targets: ["celery_worker:9100"]
     metrics_path: /metrics
 
+  # The outbox dispatcher. outbox_worker_heartbeat has been set on every poll
+  # for as long as the worker has existed, with no job here to read it and no
+  # HTTP server in that process to read it from -- unobservable rather than
+  # merely unwatched.
+  - job_name: "outbox_worker"
+    static_configs:
+      - targets: ["outbox_worker:9103"]
+    metrics_path: /metrics
+
   # Prometheus scrapes itself so that `up` and process_* exist for rules that
   # check Prometheus's own liveness.
   - job_name: "prometheus"

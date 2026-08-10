@@ -193,13 +193,25 @@ def test_it_restarts_after_failure(base):
 
 
 def test_it_does_not_inherit_the_images_http_healthcheck(base):
-    """The image's HEALTHCHECK curls :8000/health/live. This service runs no web
-    server, so inheriting it reports a permanently false "unhealthy" — the same
-    reason celery_beat disables it."""
+    """The image's HEALTHCHECK curls :8000/health/live, which this service does
+    not serve — inheriting it reports a permanently false "unhealthy".
+
+    This used to assert the healthcheck was DISABLED, which was correct while the
+    worker exposed nothing to probe. It now serves its metrics endpoint, so the
+    same intent is met by overriding the probe rather than switching it off: the
+    check must exist, and must not be the image's :8000 one.
+    """
     healthcheck = base[SERVICE].get("healthcheck")
 
     assert healthcheck is not None, "the image's HTTP healthcheck is inherited"
-    assert healthcheck.get("disable") is True
+
+    if healthcheck.get("disable") is True:
+        return
+
+    probe = " ".join(healthcheck["test"])
+
+    assert "8000" not in probe, "still probing the API's port"
+    assert "/health/live" not in probe
 
 
 def test_it_avoids_the_prometheus_multiproc_setup(base):

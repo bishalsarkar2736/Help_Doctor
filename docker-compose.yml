@@ -223,13 +223,25 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    # No web server and nothing to inspect — disable the image's inherited HTTP
-    # healthcheck rather than report a permanently false "unhealthy", exactly as
-    # celery_beat does. A truthful liveness probe would need the loop to publish
-    # a heartbeat; `restart: unless-stopped` covers the process dying, which is
-    # the failure this can actually detect today.
+    environment:
+      # Internal only — deliberately not published to the host. Prometheus
+      # scrapes it over the compose network.
+      OUTBOX_METRICS_PORT: "9103"
+    # LIVENESS, and only liveness: the process is up and its metrics server
+    # answers. It does NOT prove the poll loop is turning — /metrics is served
+    # from a separate thread and would keep answering a wedged loop.
+    #
+    # Progress is a different question, answered by Prometheus from
+    # outbox_worker_heartbeat, which the loop refreshes on every poll. Docker
+    # healthchecks cannot express "has made progress recently" without embedding
+    # a threshold in a shell one-liner, and that belongs in an alert rule beside
+    # the others.
     healthcheck:
-      disable: true
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9103/metrics > /dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
     # No ports. Nothing about this process is reachable from outside the network,
     # and it needs nothing published to do its work.
     restart: unless-stopped

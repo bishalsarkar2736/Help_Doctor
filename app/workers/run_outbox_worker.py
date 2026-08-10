@@ -1,5 +1,8 @@
 import asyncio
 import logging
+import os
+
+from prometheus_client import start_http_server
 
 from app.workers.outbox_worker import process_outbox
 
@@ -18,6 +21,37 @@ logger = logging.getLogger(__name__)
 
 
 POLL_INTERVAL = 5  # seconds
+
+# Where this process publishes its metrics. Internal to the compose network and
+# never published to the host: Prometheus scrapes it over the network, and
+# nothing else has any business reading it.
+#
+# Chosen to not collide with celery_worker's 9100. Same env-var pattern that
+# service uses, so the two are configured the same way.
+METRICS_PORT = int(os.getenv("OUTBOX_METRICS_PORT", "9103"))
+
+
+def _start_metrics_server() -> None:
+    """Make this process scrapeable.
+
+    outbox_worker_heartbeat has existed and been updated on every poll for as
+    long as the worker has, and it was worth exactly nothing: this process runs
+    no HTTP server, so the gauge was set in memory that Prometheus had no way to
+    read. A heartbeat nobody can scrape is not a heartbeat.
+
+    Serving the DEFAULT registry, not a multiprocess one. This worker is a single
+    asyncio process with no prefork children, so the mmap'd multiprocess files
+    celery_worker needs would add a failure mode (they are what currently
+    crash-loops that service on a permission error) for no benefit.
+
+    A port already in use must not take the worker down. Metrics are how we watch
+    the outbox; they are not the outbox.
+    """
+    try:
+        start_http_server(METRICS_PORT)
+        logger.info("outbox_metrics_server_started", extra={"port": METRICS_PORT})
+    except OSError:
+        logger.warning("outbox_metrics_port_in_use", extra={"port": METRICS_PORT})
 
 
 def _startup_context() -> dict:
@@ -51,6 +85,8 @@ def _startup_context() -> dict:
 
 async def main():
     logger.info("outbox_worker_started", extra=_startup_context())
+
+    _start_metrics_server()
 
     try:
         while True:

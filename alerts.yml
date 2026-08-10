@@ -135,6 +135,90 @@ groups:
             PHI log retention have all stopped. Patients still book; nothing
             scheduled happens.
 
+      - alert: OutboxWorkerDown
+        # The dispatcher between publishing an event and anything happening
+        # because of it: in-app notifications, email, WhatsApp, appointment
+        # reminders. It had no service at all for weeks, and no alert could have
+        # said so, because nothing scraped it.
+        #
+        # LIVENESS: the process is gone or unreachable. Whether a live worker is
+        # doing anything is OutboxWorkerStalled, below.
+        expr: up{job="outbox_worker"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "The outbox worker is not running"
+          description: >-
+            Domain events are still being written to outbox_events and nothing
+            is draining them. In-app notifications, email, WhatsApp and
+            appointment reminders have all stopped, silently.
+
+      - alert: OutboxWorkerStalled
+        # PROGRESS, not liveness. The process can be up, its metrics port
+        # answering and its container healthcheck green while the poll loop is
+        # wedged -- blocked on a lock, or stuck on an event it can neither
+        # complete nor fail. An aborted transaction did exactly that: one event
+        # became immortal and the loop retried it forever.
+        #
+        # The loop refreshes this gauge at the top of every poll and
+        # POLL_INTERVAL is 5s, so 120s is twenty-four missed polls: well outside
+        # jitter, and loose enough that a slow batch does not page anyone.
+        expr: time() - outbox_worker_heartbeat{job="outbox_worker"} > 120
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "The outbox worker is alive but has stopped polling"
+          description: >-
+            The process is up and scrapeable, but its loop has not completed a
+            pass in over two minutes. Events are accumulating unprocessed.
+
+      - alert: CeleryWorkerNotExecuting
+        # The failure `celery inspect ping` could not see. When the prefork pool
+        # cannot start a task -- it exhausted its file descriptors and rejected
+        # every one with [Errno 24] -- the parent still answers ping, the
+        # container still reports healthy, and nothing runs.
+        #
+        # So this asks about COMPLETIONS rather than about the process. That is
+        # only a sound question because beat dispatches appointment-reminder-job
+        # every 60 seconds unconditionally: this system is never legitimately
+        # idle for fifteen minutes, so a flat completion count is an anomaly
+        # rather than a quiet period.
+        #
+        # Paired with a live worker so it cannot double-fire with
+        # CeleryWorkerDown.
+        expr: >-
+          celery_worker_up{job="celery"} >= 1
+          and increase(celery_tasks_total{job="celery"}[15m]) == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Celery worker is alive but has executed nothing"
+          description: >-
+            The worker is up and answering, and no task has completed in fifteen
+            minutes while beat schedules one every minute. Check for rejected
+            tasks -- file descriptor exhaustion produces exactly this.
+
+      - alert: CeleryBeatNotDispatching
+        # Distinguished from CeleryWorkerNotExecuting by the QUEUE. A wedged
+        # worker leaves tasks piling up in Redis; a dead beat leaves nothing to
+        # pile up. Same silence, opposite queue depth, different thing to fix.
+        expr: >-
+          celery_worker_up{job="celery"} >= 1
+          and increase(celery_tasks_total{job="celery"}[15m]) == 0
+          and celery_queue_length{job="celery"} == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Celery beat appears to have stopped scheduling"
+          description: >-
+            No task has completed in fifteen minutes and the queue is empty, so
+            nothing is being dispatched. Beat runs as its own container with no
+            healthcheck; check that it is still up.
+
       - alert: CeleryTaskFailures
         # Scoped for the same reason as CeleryWorkerDown: the api exports these
         # names too, at zero.
