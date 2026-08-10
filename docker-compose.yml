@@ -24,7 +24,18 @@ services:
     build: .
     image: helpdoctor-app:local
     container_name: helpdoctor_migrate
-    command: alembic upgrade head
+    # Migrate, then PROVE the result before anything is allowed to serve.
+    #
+    # api, celery_worker, celery_beat and outbox_worker all wait on this
+    # service completing successfully, so a non-zero exit here -- from the
+    # upgrade or from the verification -- stops the whole application from
+    # starting. That ordering already existed; putting the check inside this
+    # command is what extends it from "migrations ran" to "the schema is the
+    # one this code expects", in production and staging alike.
+    #
+    # `&&` matters: verification runs only if the upgrade succeeded, and the
+    # container's exit status is the first failure either way.
+    command: sh -c 'alembic upgrade head && python -m scripts.verify_schema'
     env_file:
       - .env.docker
     depends_on:

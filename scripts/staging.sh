@@ -99,39 +99,21 @@ load_staging_env() {
 }
 
 verify_schema() {
-    # Migrations have already run by this point: `migrate` is in SERVICES, and
-    # api, celery_worker, celery_beat and outbox_worker all declare
+    # ONE implementation, shared with production.
     #
-    #     depends_on: migrate: { condition: service_completed_successfully }
+    # This used to inline the whole check here in shell. It now lives in
+    # scripts/verify_schema.py and runs inside the image, which is also what the
+    # `migrate` service itself runs after upgrading:
     #
-    # so compose starts none of them unless `alembic upgrade head` exited 0.
-    # That ordering is the mechanism; this is the receipt for it.
+    #     command: sh -c 'alembic upgrade head && python -m scripts.verify_schema'
     #
-    # Two questions, because they fail differently. Is the database at the
-    # revision this code expects — the check that would have caught staging
-    # sitting eight days behind while every container reported healthy. And does
-    # the schema still match the models, which catches a migration that ran but
-    # does not describe what the code now declares.
-    #
-    # `alembic upgrade head` is idempotent, so at head this whole path is a
-    # no-op that succeeds.
+    # So `staging.sh up` is already gated by compose before this line is
+    # reached. This call is for the OTHER case -- checking a stack that is
+    # already running, where nothing has re-run the migrate service -- and for
+    # `staging.sh check`.
     echo "==> verifying the staging schema"
 
-    if ! compose run --rm --entrypoint sh migrate -c '
-        set -e
-        current=$(alembic current 2>/dev/null | grep -oE "^[0-9a-f]{12}" | head -1)
-        head=$(alembic heads 2>/dev/null | grep -oE "^[0-9a-f]{12}" | head -1)
-
-        if [ "$current" != "$head" ]; then
-            echo "!!! staging is at ${current:-<none>}, code head is $head" >&2
-            exit 1
-        fi
-
-        echo "==> at $current"
-
-        # Non-zero when the models describe something the schema does not.
-        alembic check
-    '; then
+    if ! compose run --rm --entrypoint sh migrate -c 'python -m scripts.verify_schema'; then
         echo "!!! staging schema verification FAILED" >&2
         echo "!!! run: scripts/staging.sh migrate" >&2
         exit 1
