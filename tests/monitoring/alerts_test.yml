@@ -162,3 +162,159 @@ tests:
       - eval_time: 10m
         alertname: NoTrafficReceived
         exp_alerts: []
+
+  # ===========================================================================
+  # The alerting pipeline itself.
+  #
+  # These reproduce the state measured on the running deployment: alerts firing,
+  # Alertmanager up and answering, and every notification failing with a 404 --
+  # a total loss of alert delivery that no rule could report.
+  # ===========================================================================
+
+  - interval: 1m
+    name: failing notifications raise a critical alert
+    input_series:
+      # Exactly what was measured: 10 failed webhook notifications, and the
+      # attempt counter climbing in step with it.
+      - series: 'alertmanager_notifications_failed_total{job="alertmanager",integration="webhook",reason="clientError"}'
+        values: "0+1x60"
+      - series: 'alertmanager_notifications_total{job="alertmanager",integration="webhook"}'
+        values: "0+1x60"
+      - series: 'up{job="alertmanager"}'
+        values: "1x60"
+      - series: 'alertmanager_config_last_reload_successful{job="alertmanager"}'
+        values: "1x60"
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: AlertmanagerNotificationsFailing
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              integration: webhook
+            exp_annotations:
+              summary: "Alertmanager cannot deliver webhook notifications"
+              description: >-
+                Alerts are firing and reaching Alertmanager, and its
+                notifications to this integration are failing. Every other alert
+                in this file is currently going nowhere. Check the receiver URL
+                or credential, and the Alertmanager log for the exact status
+                code.
+      # Alertmanager itself is healthy — only delivery is broken.
+      - eval_time: 30m
+        alertname: AlertmanagerDown
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: AlertmanagerConfigReloadFailed
+        exp_alerts: []
+
+  - interval: 1m
+    name: successful delivery stays quiet
+    input_series:
+      - series: 'alertmanager_notifications_failed_total{job="alertmanager",integration="webhook",reason="clientError"}'
+        values: "0x60"
+      - series: 'alertmanager_notifications_total{job="alertmanager",integration="webhook"}'
+        values: "0+2x60"
+      - series: 'up{job="alertmanager"}'
+        values: "1x60"
+      - series: 'alertmanager_config_last_reload_successful{job="alertmanager"}'
+        values: "1x60"
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: AlertmanagerNotificationsFailing
+        exp_alerts: []
+
+  - interval: 1m
+    name: a brief burst of failures that recovers does not page
+    input_series:
+      # Fails for two minutes, then delivery recovers and the counter goes flat.
+      - series: 'alertmanager_notifications_failed_total{job="alertmanager",integration="email",reason="serverError"}'
+        values: "0+1x2 3x60"
+      - series: 'up{job="alertmanager"}'
+        values: "1x60"
+    alert_rule_test:
+      # `for: 10m` plus a 15m rate window: still pending here, not firing.
+      - eval_time: 8m
+        alertname: AlertmanagerNotificationsFailing
+        exp_alerts: []
+      # Well after the rate window has moved past the burst.
+      - eval_time: 40m
+        alertname: AlertmanagerNotificationsFailing
+        exp_alerts: []
+
+  - interval: 1m
+    name: a down alertmanager raises an alert
+    input_series:
+      - series: 'up{job="alertmanager"}'
+        values: "0x60"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: AlertmanagerDown
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              job: alertmanager
+            exp_annotations:
+              summary: "Alertmanager is down or not being scraped"
+              description: >-
+                Prometheus rules still evaluate, but nothing routes, groups,
+                deduplicates or delivers what they produce. If this fires because
+                the scrape job disappeared, alerting is unmonitored rather than
+                down.
+
+  - interval: 1m
+    name: a healthy alertmanager stays quiet
+    input_series:
+      - series: 'up{job="alertmanager"}'
+        values: "1x60"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: AlertmanagerDown
+        exp_alerts: []
+
+  - interval: 1m
+    name: a missing alertmanager scrape job raises an alert
+    # The absent() arm. If the job is deleted or renamed there is no
+    # up{job="alertmanager"} series at all, and `== 0` alone would stay silent
+    # about a completely unmonitored alerting pipeline.
+    #
+    # The alert still carries job="alertmanager": absent() synthesises labels
+    # from the equality matchers in its selector, so both arms of the rule
+    # produce the same label set even though one of them has no input series.
+    input_series:
+      - series: 'up{job="fastapi"}'
+        values: "1x60"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: AlertmanagerDown
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              job: alertmanager
+            exp_annotations:
+              summary: "Alertmanager is down or not being scraped"
+              description: >-
+                Prometheus rules still evaluate, but nothing routes, groups,
+                deduplicates or delivers what they produce. If this fires because
+                the scrape job disappeared, alerting is unmonitored rather than
+                down.
+
+  - interval: 1m
+    name: a rejected configuration reload raises an alert
+    input_series:
+      - series: 'alertmanager_config_last_reload_successful{job="alertmanager"}'
+        values: "0x60"
+      - series: 'up{job="alertmanager"}'
+        values: "1x60"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: AlertmanagerConfigReloadFailed
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              job: alertmanager
+            exp_annotations:
+              summary: "Alertmanager rejected its configuration"
+              description: >-
+                The last reload failed and Alertmanager kept the configuration it
+                had before it. Routing and receivers are not what the config file
+                says. Check `amtool check-config` and the Alertmanager log.

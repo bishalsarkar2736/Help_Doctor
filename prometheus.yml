@@ -62,6 +62,20 @@ scrape_configs:
       - targets: ["outbox_worker:9103"]
     metrics_path: /metrics
 
+  # Alertmanager's own metrics -- the LAST hop, and the only one nothing
+  # watched. `alerting.alertmanagers` above is Prometheus SENDING alerts here;
+  # it says nothing about whether Alertmanager then delivered them. Measured
+  # before this job existed: 10 notifications attempted, 10 failed with 404,
+  # including CeleryWorkerDown and OutboxWorkerDown, while Prometheus reported
+  # zero send errors and every target up.
+  #
+  # No credential: Alertmanager has no authentication and is published only on
+  # loopback, so this job is identical in prometheus.production.yml.
+  - job_name: "alertmanager"
+    static_configs:
+      - targets: ["alertmanager:9093"]
+    metrics_path: /metrics
+
   # Prometheus scrapes itself so that `up` and process_* exist for rules that
   # check Prometheus's own liveness.
   - job_name: "prometheus"

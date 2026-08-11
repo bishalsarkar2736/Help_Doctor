@@ -74,6 +74,14 @@ scrape_configs:
       - targets: ["outbox_worker:9103"]
     metrics_path: /metrics
 
+  # Alertmanager's own metrics. Identical to prometheus.yml: Alertmanager has no
+  # authentication and is reachable only on the compose network, so unlike the
+  # fastapi job this one needs no credential in production.
+  - job_name: "alertmanager"
+    static_configs:
+      - targets: ["alertmanager:9093"]
+    metrics_path: /metrics
+
   - job_name: "prometheus"
     static_configs:
       - targets: ["localhost:9090"]

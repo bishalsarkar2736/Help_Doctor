@@ -381,3 +381,79 @@ groups:
           description: >-
             The integrity constraint is doing its job, but this rate suggests
             the booking UI is offering slots it should already know are taken.
+
+  # ---------------------------------------------------------------------------
+  # The alerting pipeline itself. Every other rule in this file assumes that a
+  # firing alert reaches a human; nothing until now checked that assumption.
+  #
+  # Measured on this deployment before these rules existed:
+  #
+  #   alertmanager_alerts_received_total{status="firing"}          34
+  #   alertmanager_notifications_total{integration="webhook"}      10
+  #   alertmanager_notifications_failed_total{...clientError}      10
+  #
+  # Ten out of ten notifications failed with "unexpected status code 404", among
+  # them CeleryWorkerDown and OutboxWorkerDown -- real alerts about background
+  # workers, fired correctly, delivered to nobody. Alertmanager was up, its API
+  # answered, and Prometheus reported zero send errors, because the failure is on
+  # the LAST hop and nothing scraped Alertmanager to see it.
+  #
+  # KNOWN LIMIT, stated because it decides how much these rules are worth: an
+  # alert about broken delivery is itself delivered by the thing it reports
+  # broken. These make the failure visible in the Prometheus UI, Grafana and the
+  # firing history, which is where it was invisible before -- they cannot page
+  # through a path that is down. Closing that needs a dead-man's-switch routed to
+  # an external service, which is deliberately not this milestone.
+  # ---------------------------------------------------------------------------
+  - name: alerting_pipeline
+    rules:
+      - alert: AlertmanagerNotificationsFailing
+        # THE ONE THAT WOULD HAVE CAUGHT THE 10/10. `by (integration)` so the
+        # message names which delivery path is broken rather than just that one
+        # is.
+        #
+        # Alertmanager retries before counting an attempt failed, and a transient
+        # 5xx recovers on its own, so `for: 10m` keeps a blip from paging while
+        # an unrecoverable clientError -- a wrong URL, a revoked webhook, an
+        # unreadable credential -- persists and fires.
+        expr: sum by (integration) (rate(alertmanager_notifications_failed_total{job="alertmanager"}[15m])) > 0
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Alertmanager cannot deliver {{ $labels.integration }} notifications"
+          description: >-
+            Alerts are firing and reaching Alertmanager, and its notifications to
+            this integration are failing. Every other alert in this file is
+            currently going nowhere. Check the receiver URL or credential, and
+            the Alertmanager log for the exact status code.
+
+      - alert: AlertmanagerDown
+        # `absent()` for the same reason NoTrafficReceived needs it: if the
+        # scrape job is removed or renamed, up{job="alertmanager"} has no series
+        # at all, and an empty vector compared to 0 is still empty -- the rule
+        # that reports the alerting pipeline broken would itself go quiet.
+        expr: up{job="alertmanager"} == 0 or absent(up{job="alertmanager"})
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Alertmanager is down or not being scraped"
+          description: >-
+            Prometheus rules still evaluate, but nothing routes, groups,
+            deduplicates or delivers what they produce. If this fires because the
+            scrape job disappeared, alerting is unmonitored rather than down.
+
+      - alert: AlertmanagerConfigReloadFailed
+        # A rejected reload leaves the PREVIOUS config running, so the deploy
+        # looks successful and the change silently did not happen.
+        expr: alertmanager_config_last_reload_successful{job="alertmanager"} == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Alertmanager rejected its configuration"
+          description: >-
+            The last reload failed and Alertmanager kept the configuration it had
+            before it. Routing and receivers are not what the config file says.
+            Check `amtool check-config` and the Alertmanager log.
