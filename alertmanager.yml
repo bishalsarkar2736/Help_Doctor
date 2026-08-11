@@ -3,12 +3,35 @@
 # Prometheus decides WHEN something is wrong; this decides WHO hears about it.
 # Without this service the rules in alerts.yml evaluate and fire into nothing.
 #
-# Ships with a webhook receiver pointed at MailHog's HTTP API in development,
-# so the whole path is exercised end to end locally. Replace the receiver with
-# a real one before production — see docs/MONITORING.md.
+# Ships with an SMTP receiver pointed at the local MailHog container, so the
+# whole path is exercised end to end locally and the result is readable in the
+# MailHog UI on :8025. Replace the receivers with something that reaches a human
+# before production — see docs/MONITORING.md and alertmanager.production.yml.
 
 global:
   resolve_timeout: 5m
+
+  # DEVELOPMENT SMTP -- MailHog, on the compose network. Production overrides all
+  # of this in alertmanager.production.yml; nothing here reaches a real server.
+  smtp_smarthost: "mailhog:1025"
+  smtp_from: "alerts@helpdoctor.local"
+
+  # Required, and counter-intuitive. MailHog's EHLO advertises only `auth` and
+  # `pipelining` -- no STARTTLS -- so with Alertmanager's default of true every
+  # send fails with "'require_tls' is true (default) but the server does not
+  # advertise STARTTLS". Measured: 0 messages delivered with the flag omitted, 1
+  # with it. This is a development-only relaxation; production keeps
+  # smtp_require_tls: true against a real smarthost.
+  smtp_require_tls: false
+
+  # NO smtp_auth_username / smtp_auth_password HERE, deliberately.
+  #
+  # MailHog advertises `auth`, so adding credentials looks like hardening. It is
+  # not: Go's SMTP client refuses PLAIN auth over an unencrypted connection, and
+  # delivery breaks with "*smtp.plainAuth auth: unencrypted connection".
+  # Measured, 0 messages delivered. MailHog accepts unauthenticated mail and
+  # holds it locally, which is the whole point of it. Production authenticates
+  # with a mounted secret file instead.
 
 route:
   # Group by alertname so a flapping condition sends one notification thread
@@ -45,17 +68,25 @@ inhibit_rules:
     equal: ["job"]
 
 receivers:
+  # Development delivers by SMTP to MailHog, which is what MailHog is for.
+  #
+  # These were webhook_configs posting to http://mailhog:8025/api/v2/messages,
+  # and every notification failed with 404 -- 10 of 10 on this deployment,
+  # including CeleryWorkerDown and OutboxWorkerDown. Port 8025 is MailHog's READ
+  # api and web UI; it has no ingest endpoint at all. Measured: POST returns 404
+  # on /api/v2/messages, /api/v1/messages, / and /webhook alike. So no webhook
+  # URL could have worked -- the receiver type was wrong, not the address.
+  #
+  # Mail goes to port 1025 instead, and the delivery path is now genuinely
+  # exercised locally: the message is visible in the MailHog UI at :8025.
   - name: default
-    webhook_configs:
-      # Dev placeholder: Alertmanager posts alert JSON here. Points at the
-      # local MailHog container purely so the delivery path is real and
-      # testable without external services.
-      - url: "http://mailhog:8025/api/v2/messages"
+    email_configs:
+      - to: "oncall@helpdoctor.local"
         send_resolved: true
 
   - name: critical
-    webhook_configs:
-      - url: "http://mailhog:8025/api/v2/messages"
+    email_configs:
+      - to: "oncall@helpdoctor.local"
         send_resolved: true
 
 # PRODUCTION — replace the receivers above with something that reaches a human.
