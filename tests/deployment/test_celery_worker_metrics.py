@@ -6,13 +6,18 @@ The symptom was a crash loop:
 
     PermissionError: '/tmp/prometheus_multiproc/gauge_livesum_1.db'
 
-The obvious reading — a root-owned tmpfs the non-root `app` user cannot write —
-turned out to be wrong. Docker mounts a tmpfs 1777 (world-writable, sticky), uid
-999 writes to it happily, and the compose definition was already correct. The
-crashing container was simply STALE: created four days earlier from an image that
-had since been replaced. Recreating it fixed the permission error, and no tmpfs
-option was added, because adding uid=999 would hard-code a number that lives in
-the Dockerfile and would break the mount the day that uid changed.
+The first diagnosis here was WRONG, and is corrected below. It read the crash as
+a stale container -- one created days earlier from a since-replaced image --
+because recreating the container did fix it and a fresh tmpfs is indeed 1777,
+world-writable, and happily written by uid 999.
+
+Recreation fixed it for a different reason. Docker applies that 1777 only when it
+CREATES a container; every later start of the same container remounts the tmpfs
+755 root:root. So the mount was writable exactly once per container, and every
+`restart` -- including the restart-policy one that follows the crash -- put it
+back into the failing state. That is why the crash kept coming back, and why the
+image being stale was a coincidence of how it got fixed rather than a cause. The
+mount now states mode=1777, which holds for the container's whole life.
 
 What the crash loop had been HIDING was real. Once the worker started, every task
 was rejected before its body ran:
@@ -46,6 +51,32 @@ DOCKERFILE = REPO / "Dockerfile"
 
 SERVICE = "celery_worker"
 METRICS_DIR = "/tmp/prometheus_multiproc"
+
+# The mode Docker applies to an unqualified tmpfs when it CREATES a container,
+# and drops on every restart of that container. Stated explicitly so the mount
+# keeps it for the container's whole life.
+REQUIRED_MODE = "mode=1777"
+
+
+def _metrics_mount(service: dict) -> str:
+    """The tmpfs entry mounting the metrics dir, options and all.
+
+    Entries are `path` or `path:opt=value,opt=value`, so the target has to be
+    split off rather than matched as a substring -- otherwise a test asserting
+    the mount exists also passes for `/tmp/prometheus_multiproc_backup`.
+    """
+    for entry in service["tmpfs"]:
+        if entry.split(":", 1)[0] == METRICS_DIR:
+            return entry
+
+    raise AssertionError(f"no tmpfs mounts {METRICS_DIR}: {service['tmpfs']}")
+
+
+def _mount_options(entry: str) -> list[str]:
+    _, _, options = entry.partition(":")
+
+    return [option for option in options.split(",") if option]
+
 
 docker_available = pytest.mark.skipif(
     shutil.which("docker") is None,
@@ -88,7 +119,7 @@ def staging() -> dict:
 def test_the_metrics_directory_is_a_tmpfs(base):
     """A volume would let a dead worker's .db files be aggregated into the next
     run's totals; the files are mmap'd scratch and must not survive a restart."""
-    assert METRICS_DIR in base[SERVICE]["tmpfs"]
+    assert _metrics_mount(base[SERVICE])
 
 
 def test_the_multiprocess_directory_is_exported(base):
@@ -109,17 +140,64 @@ def test_multiprocess_metrics_were_not_removed_to_dodge_the_crash(base):
 
 
 def test_the_tmpfs_is_not_pinned_to_a_hard_coded_uid(base):
-    """Deliberately no uid=/gid= option.
+    """Deliberately no uid=/gid= option, even now that mode is explicit.
 
-    The default 1777 mount is already writable by the non-root user, and a
-    hard-coded uid here would duplicate the Dockerfile's useradd and break
-    silently if it ever changed.
+    mode=1777 is enough on its own -- measured: the directory stays root-owned
+    and world-writable across restarts, and uid 999 writes to it. A hard-coded
+    uid here would duplicate the Dockerfile's useradd and break the mount
+    silently the day that number changed.
     """
     entries = base[SERVICE]["tmpfs"]
 
     for entry in entries:
         assert "uid=" not in entry, f"tmpfs pins a uid: {entry}"
         assert "gid=" not in entry, f"tmpfs pins a gid: {entry}"
+
+
+# ---------------------------------------------------------------------------
+# The mount keeps its mode across a restart
+# ---------------------------------------------------------------------------
+
+
+def test_the_metrics_tmpfs_specifies_mode_1777(base):
+    """THE REGRESSION.
+
+    Docker applies a tmpfs's default 1777 only when it CREATES the container. On
+    every subsequent start of the SAME container -- `compose restart`, a
+    restart-policy restart after a crash, a daemon restart, a host reboot -- the
+    mount comes back 755 root:root. Measured on one container:
+
+        boot 1  mode=1777  write=OK
+        boot 2  mode=755   write=DENIED
+        boot 3  mode=755   write=DENIED
+
+    uid 999 then cannot create gauge_livesum_1.db, the worker exits 2, and
+    `restart: unless-stopped` restarts the same container into the same broken
+    mount: a permanent crash loop that no retry escapes, only recreation. Stating
+    the mode makes it a property of the mount rather than of how the container
+    happened to start.
+    """
+    options = _mount_options(_metrics_mount(base[SERVICE]))
+
+    assert REQUIRED_MODE in options, (
+        f"the metrics tmpfs does not state {REQUIRED_MODE}, so the mount reverts "
+        f"to 755 on the container's first restart and the worker crash-loops: "
+        f"{_metrics_mount(base[SERVICE])!r}"
+    )
+
+
+def test_the_mode_is_not_left_to_the_docker_default(base):
+    """The pre-fix configuration exactly: a bare path with no options.
+
+    It looks correct and works in every test that only ever creates a container,
+    which is why it survived a previous investigation of this same crash loop.
+    """
+    entry = _metrics_mount(base[SERVICE])
+
+    assert _mount_options(entry), (
+        f"the metrics tmpfs is unqualified ({entry!r}); its mode is then whatever "
+        "Docker last applied, which is 755 after any restart"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -197,7 +275,7 @@ def test_the_resolved_staging_config_carries_the_fix():
     service = yaml.safe_load(result.stdout)["services"][SERVICE]
 
     assert service["ulimits"]["nofile"]["soft"] >= 65536
-    assert any(METRICS_DIR in entry for entry in service["tmpfs"])
+    assert REQUIRED_MODE in _mount_options(_metrics_mount(service))
     assert service["container_name"] == "staging_celery_worker"
 
 

@@ -128,13 +128,20 @@ services:
       # the next run's totals, so counters jump and worker_up counts processes
       # that no longer exist. The startup cleanup is a second line of defence.
       #
-      # No uid/gid/mode options, deliberately. Docker mounts a tmpfs 1777
-      # (world-writable, sticky), which the non-root `app` user can already
-      # write — verified in the running container, where every .db file is
-      # owned by 999:999. Pinning uid=999 here would hard-code a number that
-      # lives in the Dockerfile's useradd, and would silently break the mount
-      # the day that uid changes; the default is robust to it.
-      - /tmp/prometheus_multiproc
+      # mode=1777 is stated rather than inherited. Docker applies a tmpfs's
+      # default 1777 only when it CREATES the container; every later start of
+      # the SAME container — `compose restart`, a restart-policy restart after
+      # a crash, a daemon restart, a host reboot — remounts it 755 root:root.
+      # The non-root `app` user then cannot create gauge_livesum_1.db, the
+      # worker exits 2, and `unless-stopped` restarts it into the same broken
+      # mount: a permanent crash loop that only recreation escapes. Measured on
+      # one container: boot 1 = 1777 writable, boots 2-6 = 755 denied.
+      #
+      # Still no uid/gid, deliberately. mode alone is sufficient — the mount
+      # stays root-owned and world-writable, and uid 999 writes to it. Pinning
+      # uid=999 would hard-code a number that lives in the Dockerfile's
+      # useradd and break the mount silently the day it changed.
+      - /tmp/prometheus_multiproc:mode=1777
     # Celery prefork needs far more descriptors than the daemon's default soft
     # limit of 1024, and this container inherits that default. With 1024 the four
     # pool children exhaust it during pool setup and every task is rejected with
