@@ -207,8 +207,9 @@ services:
   # its own claiming, retry backoff, stuck-event recovery and dead-lettering; it
   # uses Celery only in the sense that a handler may enqueue a push task. So no
   # -A flag, no queues, and deliberately none of celery_worker's
-  # PROMETHEUS_MULTIPROC_DIR/tmpfs setup: that is prefork-only machinery, and it
-  # is what currently crash-loops celery_worker on a permission error.
+  # PROMETHEUS_MULTIPROC_DIR/tmpfs setup: that is prefork-only machinery, and a
+  # single-process loop has no pool children whose metrics need aggregating.
+  # This service exports its own metrics directly instead.
   outbox_worker:
     build: .
     image: helpdoctor-app:local

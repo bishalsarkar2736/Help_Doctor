@@ -21,7 +21,7 @@ That the service exists in both environments, runs the real worker module, waits
 for what it actually needs, publishes no port, and does not inherit either of the
 two traps in this compose file: the image's HTTP healthcheck (there is no web
 server) and celery_worker's Prometheus multiprocess setup (which is prefork-only,
-and is what currently crash-loops that service).
+and whose tmpfs once crash-looped that service on a permission error).
 """
 
 import pathlib
@@ -216,9 +216,10 @@ def test_it_does_not_inherit_the_images_http_healthcheck(base):
 
 def test_it_avoids_the_prometheus_multiproc_setup(base):
     """celery_worker's PROMETHEUS_MULTIPROC_DIR + tmpfs is prefork-only
-    machinery. It is also, right now, what crash-loops that service with a
-    permission error on the root-owned tmpfs, so copying it here would have
-    reproduced a live outage in a new service."""
+    machinery: this service is a single asyncio loop with no pool children whose
+    metrics need aggregating, and it exports its own directly. Copying the setup
+    would also have inherited the tmpfs permission crash that service hit, since
+    fixed by pinning mode=1777 on the mount."""
     service = base[SERVICE]
 
     assert "tmpfs" not in service
