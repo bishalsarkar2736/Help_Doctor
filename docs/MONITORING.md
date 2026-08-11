@@ -98,7 +98,17 @@ around. Use `multiprocess` mode or a single worker per container.
 * Replace the Alertmanager receivers in `alertmanager.yml`. They currently
   point at MailHog so the delivery path is real and testable in development;
   they reach nobody in production. Put SMTP/Slack credentials in a mounted
-  secret file, not inline.
+  secret file, not inline — deploy with
+  `ALERTMANAGER_CONFIG=./alertmanager.production.yml`.
+* **Those secret files must be readable by uid 65534.** Alertmanager runs as
+  `nobody`, so `chmod 600 secrets/*` owned by the deploying user locks it out —
+  and nothing tells you: the container starts, `amtool check-config` returns
+  SUCCESS, alerts show as firing, and every notification dies at send time with
+  `permission denied`. Measured: 54 attempts, 54 failures, nothing delivered.
+  Use `chmod 644 secrets/*`, or `chown 65534 secrets/* && chmod 600 secrets/*`
+  on a host with untrusted local users. `scripts/check_production_env.py`
+  derives the required files from `alertmanager.production.yml` and fails the
+  deploy if any of them is missing or unreadable.
 * Prometheus is published on `127.0.0.1:9091` and Alertmanager on
   `127.0.0.1:9093`. Keep them on loopback — metrics describe internals and
   `/metrics` is unauthenticated when `METRICS_TOKEN` is unset.

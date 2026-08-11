@@ -69,7 +69,7 @@ receivers:
 #           from: alerts@yourclinic.example
 #           smarthost: smtp.example.com:587
 #           auth_username: alerts@yourclinic.example
-#           auth_password_file: /etc/alertmanager/smtp_password
+#           auth_password_file: /etc/alertmanager/secrets/smtp_password
 #       slack_configs:
-#         - api_url_file: /etc/alertmanager/slack_webhook
+#         - api_url_file: /etc/alertmanager/secrets/slack_webhook
 #           channel: "#oncall"

@@ -16,7 +16,15 @@
 #   mkdir -p secrets
 #   printf '%s' 'your-smtp-password'      > secrets/smtp_password
 #   printf '%s' 'https://hooks.slack...'  > secrets/slack_webhook
-#   chmod 600 secrets/*
+#   chmod 644 secrets/*
+#
+# 644, NOT 600 — and this line used to say 600, which is the whole reason the
+# check exists. This container runs as nobody (uid 65534), so a 0600 file owned
+# by the deploying user is unreadable to it. Alertmanager still starts, amtool
+# still reports SUCCESS, alerts still show as firing, and every notification
+# dies at send time with "permission denied". Measured: 54 attempts, 54
+# failures, nothing delivered. On a host with untrusted local users, prefer
+# `chown 65534 secrets/* && chmod 600 secrets/*` instead.
 #
 # Then verify BEFORE deploying — a config error here means silence, which looks
 # exactly like "no alerts firing":

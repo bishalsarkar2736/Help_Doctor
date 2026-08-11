@@ -14,17 +14,73 @@ that its own configuration invites.
 Exit code is 0 only if nothing is wrong, so it works as a deploy gate.
 """
 
+import os
 import re
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from urllib.parse import unquote, urlsplit
+
+import yaml
 
 REPO = Path(__file__).resolve().parent.parent
 
-# prom/prometheus runs as nobody. Measured: `docker run --rm --entrypoint id
-# prom/prometheus` -> uid=65534(nobody). A secret it cannot read is a scrape
-# that fails with a permission error rather than a wrong token.
-PROMETHEUS_UID = 65534
+# Both monitoring containers run as nobody. Measured:
+#   docker run --rm --entrypoint id prom/prometheus   -> uid=65534(nobody)
+#   docker run --rm --entrypoint id prom/alertmanager -> uid=65534(nobody)
+# A mounted secret they cannot read fails at USE time, not at startup, so the
+# container looks healthy while the thing it exists to do never happens.
+SECRET_READER_UID = 65534
+
+# Where compose mounts ./secrets inside each container. A *_file directive
+# pointing anywhere else names a path that does not exist at runtime.
+ALERTMANAGER_SECRETS_MOUNT = PurePosixPath("/etc/alertmanager/secrets")
+
+ALERTMANAGER_PRODUCTION_CONFIG = REPO / "alertmanager.production.yml"
+
+
+def _describe(path: Path) -> str:
+    """Repo-relative where possible, so messages are copy-pasteable."""
+    try:
+        return str(path.relative_to(REPO))
+    except ValueError:
+        return str(path)
+
+
+def check_mounted_secret(path: Path, *, consequence: str) -> bool:
+    """Is this file present, regular, and readable by the container that needs it?
+
+    Shared by the Prometheus token and every Alertmanager credential, because
+    the failure is identical in all of them and was found the same way twice:
+    0600 owned by the deploying user is the mode every instinct reaches for, and
+    it is exactly the one that locks out a container running as nobody.
+    """
+    if not path.exists():
+        fail(f"{_describe(path)} does not exist — {consequence}")
+        return False
+
+    if not path.is_file():
+        fail(f"{_describe(path)} is not a regular file — {consequence}")
+        return False
+
+    info = path.stat()
+
+    readable = (
+        info.st_mode & 0o004
+        or (info.st_uid == SECRET_READER_UID and info.st_mode & 0o400)
+        or (info.st_gid == SECRET_READER_UID and info.st_mode & 0o040)
+    )
+
+    if not readable:
+        fail(
+            f"{_describe(path)} is mode {oct(info.st_mode & 0o777)} owned by "
+            f"{info.st_uid}:{info.st_gid} — the container runs as "
+            f"{SECRET_READER_UID} and cannot read it, so {consequence}. Either "
+            f"`chmod 644 {_describe(path)}`, or `chown {SECRET_READER_UID} "
+            f"{_describe(path)}` and keep 600."
+        )
+        return False
+
+    return True
 
 ERRORS: list[str] = []
 WARNINGS: list[str] = []
@@ -203,22 +259,7 @@ def check_metrics_scrape_credential(env: dict[str, str]) -> None:
         # so a 0600 file owned by the deploying user is UNREADABLE to it and
         # every scrape fails with "unable to read authorization credentials".
         # 0640 fails too. The file has to be readable by that uid.
-        info = secret.stat()
-
-        readable = (
-            info.st_mode & 0o004
-            or (info.st_uid == PROMETHEUS_UID and info.st_mode & 0o400)
-            or (info.st_gid == PROMETHEUS_UID and info.st_mode & 0o040)
-        )
-
-        if not readable:
-            fail(
-                f"{secret.relative_to(REPO)} is mode "
-                f"{oct(info.st_mode & 0o777)} owned by {info.st_uid}:{info.st_gid} "
-                f"— Prometheus runs as {PROMETHEUS_UID} and cannot read it, so "
-                "every scrape fails. Either `chmod 644` it, or "
-                f"`chown {PROMETHEUS_UID} {secret.relative_to(REPO)}` and keep 600."
-            )
+        check_mounted_secret(secret, consequence="every scrape fails with 401")
 
     production_config = REPO / "prometheus.production.yml"
 
@@ -241,6 +282,99 @@ def check_metrics_scrape_credential(env: dict[str, str]) -> None:
     )
 
 
+def alertmanager_secret_references(config: object) -> list[str]:
+    """Every `*_file` value in the config, however deeply nested.
+
+    Derived from the config rather than hard-coded, so adding a receiver that
+    reads a new credential does not silently escape the check. Alertmanager
+    spells them `smtp_auth_password_file`, `api_url_file`, `auth_password_file`,
+    `bearer_token_file` and so on -- the suffix is the stable part.
+    """
+    found: list[str] = []
+
+    def walk(node: object) -> None:
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if isinstance(key, str) and key.endswith("_file") and isinstance(value, str):
+                    found.append(value)
+                else:
+                    walk(value)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+
+    walk(config)
+
+    return found
+
+
+def check_alertmanager_secrets(env: dict[str, str]) -> None:
+    """Can Alertmanager actually read the credentials it is configured to use?
+
+    THE FAILURE THIS EXISTS FOR, reproduced before it was written:
+    prom/alertmanager runs as nobody (65534) and the mounted secrets are 0600
+    owned by the deploying user. Alertmanager STARTS cleanly, `amtool
+    check-config` returns SUCCESS, the HTTP API answers 200, and Prometheus
+    shows alerts firing. Delivery fails only at send time:
+
+        notify retry canceled due to unrecoverable error after 1 attempts:
+        open /etc/alertmanager/secrets/slack_webhook: permission denied
+
+        find auth mechanism: could not read
+        /etc/alertmanager/secrets/smtp_password: permission denied
+
+    Measured: 54 attempts, 54 failures, nothing delivered. No page, no email, no
+    Slack message -- for every rule in alerts.yml. Unlike the Prometheus token,
+    no static validator catches this and no scraped metric reveals it, so the
+    deploy gate is the only place it can be caught before an incident.
+    """
+    if not ALERTMANAGER_PRODUCTION_CONFIG.is_file():
+        fail(
+            f"{ALERTMANAGER_PRODUCTION_CONFIG.name} is missing — production has "
+            "no alert delivery configuration"
+        )
+        return
+
+    try:
+        config = yaml.safe_load(ALERTMANAGER_PRODUCTION_CONFIG.read_text())
+    except yaml.YAMLError as error:
+        fail(f"{ALERTMANAGER_PRODUCTION_CONFIG.name} is not valid YAML: {error}")
+        return
+
+    references = alertmanager_secret_references(config)
+
+    if not references:
+        warn(
+            f"{ALERTMANAGER_PRODUCTION_CONFIG.name} references no *_file secrets "
+            "— credentials are either inline (a committed secret) or absent"
+        )
+        return
+
+    for reference in sorted(set(references)):
+        # normpath collapses `..` so a reference cannot climb out of the mount
+        # and read, say, /etc/passwd or a file the operator never reviewed.
+        resolved = PurePosixPath(os.path.normpath(reference))
+
+        if not resolved.is_relative_to(ALERTMANAGER_SECRETS_MOUNT):
+            fail(
+                f"{ALERTMANAGER_PRODUCTION_CONFIG.name} reads {reference!r}, "
+                f"which is outside {ALERTMANAGER_SECRETS_MOUNT} — compose mounts "
+                "only that directory, so the file does not exist at runtime"
+            )
+            continue
+
+        host_path = REPO / "secrets" / resolved.relative_to(ALERTMANAGER_SECRETS_MOUNT)
+
+        if check_mounted_secret(
+            host_path,
+            consequence=(
+                f"Alertmanager cannot deliver notifications through {reference} "
+                "— alerts fire and reach nobody"
+            ),
+        ):
+            ok(f"{_describe(host_path)} is readable by Alertmanager")
+
+
 def check(env: dict[str, str]) -> None:
     # --- the app refuses to start on these, but say so clearly here ---------
     if env.get("ENV") != "production":
@@ -259,6 +393,7 @@ def check(env: dict[str, str]) -> None:
     check_database_target(env)
     check_allowed_hosts(env)
     check_metrics_scrape_credential(env)
+    check_alertmanager_secrets(env)
 
     # --- loads fine, still wrong -------------------------------------------
     for key, example in EXAMPLE_VALUES.items():

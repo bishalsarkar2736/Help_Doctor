@@ -168,6 +168,46 @@ After deploying, confirm the target recovered — `health` must be `up`:
 curl -s localhost:9091/api/v1/targets | grep -o '"job":"fastapi".*"health":"[a-z]*"'
 ```
 
+### 4.2.2 Production alert delivery
+
+Alertmanager reads its SMTP password and Slack webhook from the same mounted
+`./secrets` directory, and **runs as `nobody` (uid 65534)**. That combination has
+one trap, and it is the same one the metrics token has:
+
+```bash
+ALERTMANAGER_CONFIG=./alertmanager.production.yml docker compose up -d
+
+printf '%s' 'your-smtp-password'     > secrets/smtp_password
+printf '%s' 'https://hooks.slack...' > secrets/slack_webhook
+
+# 644, NOT 600 — see below
+chmod 644 secrets/smtp_password secrets/slack_webhook
+```
+
+`chmod 600` owned by the deploying user makes both files unreadable to
+Alertmanager, and **nothing reports it**: the container starts, `amtool
+check-config` returns SUCCESS, the API answers 200, and Prometheus shows alerts
+firing. Delivery fails only at send time:
+
+```
+notify retry canceled due to unrecoverable error after 1 attempts:
+open /etc/alertmanager/secrets/slack_webhook: permission denied
+```
+
+Measured in a throwaway stack: 54 attempts, 54 failures, nothing delivered — for
+every rule in `alerts.yml`. Unlike the Prometheus token there is no static
+validator that catches it (`promtool` exits 1, `amtool` does not) and no scraped
+metric that reveals it, so the deploy gate is the only place it can be caught:
+
+```bash
+python scripts/check_production_env.py .env.production
+```
+
+That derives the required files from `alertmanager.production.yml` itself, so a
+receiver added later with a new credential is covered automatically. On a host
+with untrusted local users, `chown 65534 secrets/* && chmod 600 secrets/*` is
+accepted too.
+
 ### 4.3 Database
 
 - Provision managed Postgres (or a hardened self-managed instance).
