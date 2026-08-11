@@ -113,6 +113,13 @@ docker build -t helpdoctor-web:<version> \
   into the image. The image contains no secrets.
 - Set the production values from the
   [CONFIGURATION.md checklist](CONFIGURATION.md#production-env-checklist).
+- **`ALLOWED_HOSTS` must name the hostnames this deployment answers on.** The API
+  refuses to start when `ENV=production` and it is still the development default,
+  empty, loopback-only, or a wildcard — so a missing value fails at startup with a
+  message rather than as every request returning 400 once traffic arrives. Set it
+  in the same place as the rest of the environment (the `env_file` compose reads,
+  or your platform's secret manager); do **not** rely on exporting it in the
+  deploying shell.
 
 ### 4.3 Database
 

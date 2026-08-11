@@ -496,6 +496,28 @@ class Settings(BaseSettings):
                 f"{sorted(leaked)}"
             )
 
+        # A wildcard is refused rather than honoured, and refusing it is not
+        # pedantry -- it does not do what whoever wrote it expects.
+        #
+        # TrustedHostMiddleware compares the Host header against this list by
+        # equality, not by glob, so "*" matches a request whose Host is literally
+        # "*" and nothing else. Setting it does not open the allowlist up; it
+        # closes it, and every real request 400s. That is a total outage produced
+        # by a line that reads like it disabled the check, discovered only when
+        # traffic arrives.
+        #
+        # Any entry CONTAINING "*" is refused for the same reason: "*.example.com"
+        # is not matched as a pattern either, so it silently covers nothing.
+        patterned = sorted(host for host in hosts if "*" in host)
+
+        if patterned:
+            raise ValueError(
+                f"ALLOWED_HOSTS entries must be literal hostnames, not patterns: "
+                f"{patterned}. The Host header is compared by equality, so a "
+                f"wildcard matches nothing and rejects every real request. Name "
+                f"each hostname this deployment is served on."
+            )
+
         if not hosts - set(cls.LOOPBACK_HOSTS):
             raise ValueError(
                 "ALLOWED_HOSTS must name the hostnames this deployment is "

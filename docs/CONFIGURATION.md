@@ -21,6 +21,7 @@ Copy [`.env.example`](../.env.example) to `.env` as a starting point.
 | `APP_NAME`  | no       | `HelpDoctor`  | Shown in health responses and OpenAPI title. |
 | `ENV`       | no       | `development` | One of `development`, `staging`, `production`. Gates prod-only behavior. |
 | `DEBUG`     | no       | `false`       | Enables SQL echo + FastAPI debug. **Must be `false` in production.** |
+| `ALLOWED_HOSTS` | **in production** | `localhost,127.0.0.1,testserver` | Comma-separated hostnames this deployment answers on. The app **refuses to start** when `ENV=production` and this is still the default, empty, loopback-only, or contains a wildcard. Literal hostnames only — the `Host` header is compared by equality, so `*` and `*.example.com` match nothing and reject everything. Ports are ignored. `localhost` and `127.0.0.1` are always accepted and need not be listed. |
 
 ## PostgreSQL
 
@@ -192,6 +193,7 @@ never stored — only gateway references. See [docs/SECURITY.md](SECURITY.md).
 - [ ] `ENV=production`, `DEBUG=false`
 - [ ] `JWT_SECRET_KEY` is a fresh random ≥32-char value (not the dev one)
 - [ ] `POSTGRES_PASSWORD` rotated from any value that ever lived in git/dev
+- [ ] `ALLOWED_HOSTS` set to your real hostname(s), comma-separated (the app refuses to start otherwise — see Application above)
 - [ ] `ALLOWED_ORIGINS` set to your real frontend origin(s), comma-separated
 - [ ] `METRICS_TOKEN` set to a random secret
 - [ ] `BASE_URL` and all `*_CALLBACK_URL`s point to your real HTTPS domain
