@@ -1,0 +1,164 @@
+# promtool unit tests for alerts.yml.
+#
+#   docker run --rm -v "$PWD:/w" -w /w --entrypoint promtool prom/prometheus \
+#     test rules tests/monitoring/alerts_test.yml
+#
+# Run from pytest by tests/deployment/test_no_traffic_alert.py where Docker is
+# available. These feed synthetic series through the real rule file, so they
+# prove the rule FIRES at its threshold rather than merely parsing -- which no
+# test in this repository did before.
+#
+# NOTE for anyone adding cases: `exp_annotations` must match the rendered
+# annotation text exactly, and `eval_time` has to exceed the rule's `for:`.
+
+rule_files:
+  - ../../alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  # -------------------------------------------------------------------------
+  # THE REGRESSION: only Prometheus and the Docker healthcheck are talking to
+  # the API. That is precisely the production state measured on this stack
+  # (0.30 req/s, all of it /metrics and /health/live), and the old rule could
+  # not fire in it.
+  # -------------------------------------------------------------------------
+  - interval: 15s
+    name: infrastructure traffic alone must not look like a healthy API
+    input_series:
+      - series: 'http_requests_total{job="fastapi",method="GET",path="/metrics",status="200"}'
+        values: "0+1x200"
+      - series: 'http_requests_total{job="fastapi",method="GET",path="/health/live",status="200"}'
+        values: "0+1x200"
+      - series: 'http_requests_total{job="fastapi",method="GET",path="/health/ready",status="200"}'
+        values: "0+1x200"
+      - series: 'http_requests_total{job="fastapi",method="GET",path="/health",status="200"}'
+        values: "0+1x200"
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: NoTrafficReceived
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "API has served no requests for 15 minutes"
+              description: >-
+                Either genuinely idle, or nothing can reach it. Check the web
+                tier and the proxy upstream before assuming it is quiet.
+
+  # -------------------------------------------------------------------------
+  # Scanner noise is not application traffic either.
+  # -------------------------------------------------------------------------
+  - interval: 15s
+    name: unrouted scanner traffic must not mask an outage
+    input_series:
+      - series: 'http_requests_total{job="fastapi",method="GET",path="/metrics",status="200"}'
+        values: "0+1x200"
+      - series: 'http_requests_total{job="fastapi",method="GET",path="<unmatched>",status="404"}'
+        values: "0+3x200"
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: NoTrafficReceived
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "API has served no requests for 15 minutes"
+              description: >-
+                Either genuinely idle, or nothing can reach it. Check the web
+                tier and the proxy upstream before assuming it is quiet.
+
+  # -------------------------------------------------------------------------
+  # Real application traffic keeps it quiet.
+  # -------------------------------------------------------------------------
+  - interval: 15s
+    name: real application traffic keeps the alert silent
+    input_series:
+      - series: 'http_requests_total{job="fastapi",method="GET",path="/metrics",status="200"}'
+        values: "0+1x200"
+      - series: 'http_requests_total{job="fastapi",method="GET",path="/api/appointments",status="200"}'
+        values: "0+2x200"
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: NoTrafficReceived
+        exp_alerts: []
+
+  # -------------------------------------------------------------------------
+  # A route that merely LOOKS like a health endpoint is application traffic.
+  # This is what the anchored regex buys: `/health.*` would have excluded it.
+  # -------------------------------------------------------------------------
+  - interval: 15s
+    name: an application route named like a health endpoint still counts
+    input_series:
+      - series: 'http_requests_total{job="fastapi",method="GET",path="/metrics",status="200"}'
+        values: "0+1x200"
+      - series: 'http_requests_total{job="fastapi",method="GET",path="/health-records/{record_id}",status="200"}'
+        values: "0+2x200"
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: NoTrafficReceived
+        exp_alerts: []
+
+  # -------------------------------------------------------------------------
+  # Traffic that STOPS. The series stay present at a flat value, so rate() is
+  # 0 -- the case the `== 0` arm is for.
+  # -------------------------------------------------------------------------
+  - interval: 15s
+    name: application traffic that stops raises the alert
+    input_series:
+      - series: 'http_requests_total{job="fastapi",method="GET",path="/metrics",status="200"}'
+        values: "0+1x200"
+      # Climbs for 5 minutes, then flat for the rest.
+      - series: 'http_requests_total{job="fastapi",method="GET",path="/api/appointments",status="200"}'
+        values: "0+2x20 40x180"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: NoTrafficReceived
+        exp_alerts: []
+      - eval_time: 45m
+        alertname: NoTrafficReceived
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "API has served no requests for 15 minutes"
+              description: >-
+                Either genuinely idle, or nothing can reach it. Check the web
+                tier and the proxy upstream before assuming it is quiet.
+
+  # -------------------------------------------------------------------------
+  # Nothing at all: a deployment that has never served a real request. The
+  # `== 0` arm cannot see this -- an empty vector compared to 0 stays empty --
+  # which is why absent() is there.
+  # -------------------------------------------------------------------------
+  - interval: 15s
+    name: a deployment that never served a real request raises the alert
+    input_series:
+      - series: 'http_requests_total{job="fastapi",method="GET",path="/metrics",status="200"}'
+        values: "0+1x200"
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: NoTrafficReceived
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "API has served no requests for 15 minutes"
+              description: >-
+                Either genuinely idle, or nothing can reach it. Check the web
+                tier and the proxy upstream before assuming it is quiet.
+
+  # -------------------------------------------------------------------------
+  # The alert must not fire before its `for:` has elapsed.
+  # -------------------------------------------------------------------------
+  - interval: 15s
+    name: the alert waits for its pending period
+    input_series:
+      - series: 'http_requests_total{job="fastapi",method="GET",path="/metrics",status="200"}'
+        values: "0+1x200"
+      - series: 'http_requests_total{job="fastapi",method="GET",path="/api/appointments",status="200"}'
+        values: "0x200"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: NoTrafficReceived
+        exp_alerts: []

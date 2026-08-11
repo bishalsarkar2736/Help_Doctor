@@ -100,7 +100,34 @@ groups:
         # A silent API is indistinguishable from a healthy one on a rate graph.
         # `up` stays 1 while nginx cannot reach the backend, which is exactly
         # how a stale upstream IP hid a total outage once already.
-        expr: sum(rate(http_requests_total[10m])) == 0
+        #
+        # THE PATH FILTER IS THE ALERT. Without it this rule could never fire:
+        # Prometheus scrapes /metrics every 15s and Docker probes /health/live
+        # every 30s, and both are counted by the same middleware. Measured on the
+        # running stack with zero real users:
+        #
+        #   sum(rate(http_requests_total[10m]))            = 0.30   (never 0)
+        #   ... {path!~"/metrics|/health|/health/(live|ready)"} = no data
+        #
+        # So the unfiltered rule was watching its own monitoring traffic, and a
+        # total loss of user traffic would have produced no alert at all.
+        #
+        # <unmatched> is excluded too: it is the bucket for requests that hit no
+        # route, which on a public address is mostly scanner noise -- background
+        # radiation that would mask exactly the outage this rule exists to catch.
+        #
+        # The regex is anchored by PromQL, and spelled out rather than as
+        # `/health.*`, so an application route like /health-records keeps
+        # counting as real traffic.
+        #
+        # The `absent()` arm covers the case the `== 0` arm cannot: when no real
+        # request has EVER been served, the filtered series do not exist, and an
+        # empty vector compared to 0 is still empty -- silence again, in a new
+        # form.
+        expr: >-
+          sum(rate(http_requests_total{path!~"/metrics|/health|/health/(live|ready)|<unmatched>"}[10m])) == 0
+          or
+          absent(http_requests_total{path!~"/metrics|/health|/health/(live|ready)|<unmatched>"})
         for: 15m
         labels:
           severity: warning
