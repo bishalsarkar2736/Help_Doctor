@@ -154,8 +154,11 @@ change required.
 - `/metrics` exposes Prometheus metrics.
 - **Protected:** requires `Authorization: Bearer $METRICS_TOKEN` when the token
   is set; returns 404 in production if the token is unset.
-- Prometheus scrape config: [`prometheus.yml`](../prometheus.yml) — add
-  `bearer_token` matching `METRICS_TOKEN` for production scraping.
+- Prometheus scrape config: [`prometheus.yml`](../prometheus.yml) in development,
+  [`prometheus.production.yml`](../prometheus.production.yml) in production. The
+  production file reads the token from the mounted `secrets/metrics_token` via
+  `bearer_token_file` — never a literal `bearer_token`, since that file is
+  committed. See [DEPLOYMENT.md](DEPLOYMENT.md#production-metrics-scraping).
 - Grafana (Compose) on port 3000 for dashboards.
 
 ### Tracing

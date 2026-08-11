@@ -121,6 +121,53 @@ docker build -t helpdoctor-web:<version> \
   or your platform's secret manager); do **not** rely on exporting it in the
   deploying shell.
 
+### 4.2.1 Production metrics scraping
+
+`METRICS_TOKEN` protects `/metrics` **and locks Prometheus out at the same time**,
+so it takes three coordinated steps, not one. Doing only the first leaves the API
+serving traffic normally while the `fastapi` target sits DOWN and every alert
+built on API metrics — error rates, latency, payment failures, login spikes —
+silently has no data behind it.
+
+```bash
+# 1. the API side: the token itself, in the env file / secret manager
+METRICS_TOKEN=<random secret>
+
+# 2. the scraper side: the SAME value, in a gitignored file (printf, not echo —
+#    a trailing newline makes the token wrong)
+mkdir -p secrets
+printf '%s' "$METRICS_TOKEN" > secrets/metrics_token
+
+#    644, NOT 600. prom/prometheus runs as nobody (65534), so a 0600 file owned
+#    by the deploying user is unreadable to it and every scrape fails with
+#    "unable to read authorization credentials". 0640 fails for the same reason.
+#    On a host with untrusted local users, prefer:
+#        chown 65534 secrets/metrics_token && chmod 600 secrets/metrics_token
+chmod 644 secrets/metrics_token
+
+# 3. select the config that reads it
+PROMETHEUS_CONFIG=./prometheus.production.yml docker compose up -d
+```
+
+Verify before deploying — this fails with a non-zero exit if any of the three
+disagree:
+
+```bash
+python scripts/check_production_env.py .env.production
+```
+
+Why a separate config file: `promtool check config` exits 1 when
+`bearer_token_file` names a path that does not exist, and the token file is
+gitignored and created per host. Putting the directive in the shared
+`prometheus.yml` would break that check on every fresh clone and in CI.
+`alertmanager.production.yml` exists for the same reason.
+
+After deploying, confirm the target recovered — `health` must be `up`:
+
+```bash
+curl -s localhost:9091/api/v1/targets | grep -o '"job":"fastapi".*"health":"[a-z]*"'
+```
+
 ### 4.3 Database
 
 - Provision managed Postgres (or a hardened self-managed instance).

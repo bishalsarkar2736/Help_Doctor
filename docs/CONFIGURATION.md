@@ -195,7 +195,7 @@ never stored — only gateway references. See [docs/SECURITY.md](SECURITY.md).
 - [ ] `POSTGRES_PASSWORD` rotated from any value that ever lived in git/dev
 - [ ] `ALLOWED_HOSTS` set to your real hostname(s), comma-separated (the app refuses to start otherwise — see Application above)
 - [ ] `ALLOWED_ORIGINS` set to your real frontend origin(s), comma-separated
-- [ ] `METRICS_TOKEN` set to a random secret
+- [ ] `METRICS_TOKEN` set to a random secret, **and** the same value written to `secrets/metrics_token`, **and** deployed with `PROMETHEUS_CONFIG=./prometheus.production.yml` — setting only the first locks Prometheus out and every API alert silently loses its data
 - [ ] `BASE_URL` and all `*_CALLBACK_URL`s point to your real HTTPS domain
 - [ ] Payment gateways pointed at **production** (not sandbox) URLs & credentials
 - [ ] `MAIL_*` uses a real transactional-email credential

@@ -489,8 +489,16 @@ services:
       # files on the host — docker silently creates a DIRECTORY for a missing
       # bind-mount source, which is how alerts.yml became an empty directory
       # and Prometheus loaded zero rules while appearing healthy.
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      # Defaults to the unauthenticated dev config. Production must select the
+      # one that sends a bearer token, or /metrics answers 404/401 and the
+      # fastapi target sits DOWN while the API serves traffic normally:
+      #   PROMETHEUS_CONFIG=./prometheus.production.yml docker compose up -d
+      - ${PROMETHEUS_CONFIG:-./prometheus.yml}:/etc/prometheus/prometheus.yml:ro
       - ./alerts.yml:/etc/prometheus/alerts.yml:ro
+      # METRICS_TOKEN, read by bearer_token_file in the production config. Same
+      # gitignored directory alertmanager reads its SMTP password from, mounted
+      # read-only for the same reason.
+      - ./secrets:/etc/prometheus/secrets:ro
     restart: unless-stopped
     logging: *default-logging
 

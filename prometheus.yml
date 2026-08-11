@@ -28,20 +28,23 @@ scrape_configs:
       - targets: ["api:8000"]
     metrics_path: /metrics
 
-    # PRODUCTION: /metrics is protected. app/main.py requires
-    # `Authorization: Bearer $METRICS_TOKEN` when METRICS_TOKEN is set, and
-    # returns 404 when ENV=production and it is NOT set. So in production you
-    # must set METRICS_TOKEN and uncomment the line below, or scraping stops
-    # dead the moment you switch ENV.
+    # NO CREDENTIAL HERE, deliberately: /metrics is unauthenticated while
+    # METRICS_TOKEN is unset, which is the case in development and staging.
     #
-    # bearer_token_file, never a literal bearer_token: this file is committed,
-    # and a token written here is a published secret.
+    # PRODUCTION IS A DIFFERENT FILE. app/main.py answers 404 when ENV=production
+    # and METRICS_TOKEN is unset, and 401 without `Authorization: Bearer
+    # $METRICS_TOKEN` when it is set, so this config would leave the target DOWN.
+    # Use prometheus.production.yml, which adds bearer_token_file and nothing
+    # else:
     #
     #   mkdir -p secrets && printf '%s' "$METRICS_TOKEN" > secrets/metrics_token
-    #   # then mount it on the prometheus service in docker-compose.yml:
-    #   #   - ./secrets/metrics_token:/etc/prometheus/metrics_token:ro
+    #   chmod 644 secrets/metrics_token   # NOT 600 — see DEPLOYMENT.md
+    #   PROMETHEUS_CONFIG=./prometheus.production.yml docker compose up -d
     #
-    # bearer_token_file: /etc/prometheus/metrics_token
+    # The directive lives there rather than here because `promtool check config`
+    # fails when bearer_token_file names a missing path, and the token file is
+    # gitignored -- so putting it here would break the check on every fresh
+    # clone. scripts/check_production_env.py verifies the production wiring.
 
   # The celery worker exports on its own port from the prefork parent. Without
   # this job, background jobs fail silently — nothing scraped them at all.

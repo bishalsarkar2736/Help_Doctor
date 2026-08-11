@@ -89,8 +89,12 @@ around. Use `multiprocess` mode or a single worker per container.
 * `/metrics` is protected: `app/main.py` requires `Authorization: Bearer
   $METRICS_TOKEN` when set, and returns **404** when `ENV=production` and it is
   **not** set. So switching `ENV` to production without configuring this stops
-  scraping dead. Set `METRICS_TOKEN` and enable `bearer_token_file` in
-  `prometheus.yml` — never a literal `bearer_token`, that file is committed.
+  scraping dead. Set `METRICS_TOKEN`, write the same value to
+  `secrets/metrics_token`, and deploy with
+  `PROMETHEUS_CONFIG=./prometheus.production.yml` — that config reads the token
+  through `bearer_token_file`, never a literal `bearer_token`, since
+  `prometheus.yml` is committed. `python scripts/check_production_env.py
+  .env.production` verifies all three and fails the deploy if they disagree.
 * Replace the Alertmanager receivers in `alertmanager.yml`. They currently
   point at MailHog so the delivery path is real and testable in development;
   they reach nobody in production. Put SMTP/Slack credentials in a mounted

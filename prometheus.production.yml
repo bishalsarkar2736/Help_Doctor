@@ -1,0 +1,79 @@
+# Prometheus configuration for ENV=production. Identical to prometheus.yml
+# except that the fastapi job authenticates.
+#
+# WHY A SECOND FILE RATHER THAN ONE CONFIG WITH THE TOKEN ALWAYS ON
+# `promtool check config` FAILS when bearer_token_file names a path that does
+# not exist -- measured, exit 1:
+#
+#     FAILED: error checking authorization credentials or bearer token file
+#     "/etc/prometheus/secrets/metrics_token": no such file or directory
+#
+# The token file is gitignored and generated per host, so it is absent on a
+# fresh clone. Putting the directive in the shared config would therefore break
+# `promtool check config` for every developer and in CI, to fix a problem only
+# production has. This mirrors alertmanager.production.yml, which exists for the
+# same reason.
+#
+# Select it at deploy time (see docs/DEPLOYMENT.md):
+#
+#     PROMETHEUS_CONFIG=./prometheus.production.yml docker compose up -d
+#
+# KEEP IN SYNC WITH prometheus.yml. tests/deployment/test_metrics_authentication.py
+# asserts both files declare the same jobs and targets and that this is the only
+# difference, so drift fails the suite rather than silently un-monitoring a
+# service in production only.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - "alerts.yml"
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+scrape_configs:
+  - job_name: "fastapi"
+    static_configs:
+      - targets: ["api:8000"]
+    metrics_path: /metrics
+
+    # THE ONLY DIFFERENCE FROM prometheus.yml.
+    #
+    # Under ENV=production app/main.py answers /metrics with 404 when
+    # METRICS_TOKEN is unset, and 401 unless the request carries
+    # `Authorization: Bearer $METRICS_TOKEN` when it is set. Without this
+    # directive the target sits DOWN the moment ENV flips, and every alert built
+    # on API metrics -- error rates, latency, payment failures, login spikes --
+    # loses its data while the API serves traffic normally.
+    #
+    # bearer_token_file, never a literal bearer_token: this file is committed,
+    # and a token written here would be a published secret. The path resolves
+    # inside the container to the `./secrets` directory that compose mounts
+    # read-only, the same directory alertmanager.production.yml reads its SMTP
+    # password and Slack webhook from.
+    #
+    # The file must contain EXACTLY the value of METRICS_TOKEN, with no trailing
+    # newline -- `printf`, not `echo`. scripts/check_production_env.py compares
+    # the two and fails the deploy if they differ.
+    bearer_token_file: /etc/prometheus/secrets/metrics_token
+
+  - job_name: "celery"
+    static_configs:
+      - targets: ["celery_worker:9100"]
+    metrics_path: /metrics
+
+  # The worker exporters are reached only over the compose network and are not
+  # published to the host, so they are not token-protected and need no
+  # credential here.
+  - job_name: "outbox_worker"
+    static_configs:
+      - targets: ["outbox_worker:9103"]
+    metrics_path: /metrics
+
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]

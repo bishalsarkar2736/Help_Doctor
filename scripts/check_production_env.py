@@ -19,6 +19,13 @@ import sys
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
+REPO = Path(__file__).resolve().parent.parent
+
+# prom/prometheus runs as nobody. Measured: `docker run --rm --entrypoint id
+# prom/prometheus` -> uid=65534(nobody). A secret it cannot read is a scrape
+# that fails with a permission error rather than a wrong token.
+PROMETHEUS_UID = 65534
+
 ERRORS: list[str] = []
 WARNINGS: list[str] = []
 OK: list[str] = []
@@ -144,6 +151,96 @@ def check_allowed_hosts(env: dict[str, str]) -> None:
     ok(f"ALLOWED_HOSTS names {len(hosts - loopback)} routable hostname(s)")
 
 
+def check_metrics_scrape_credential(env: dict[str, str]) -> None:
+    """The other half of METRICS_TOKEN: whether Prometheus can actually send it.
+
+    Setting METRICS_TOKEN protects /metrics and simultaneously locks Prometheus
+    out, because the scraper has to be given the same value. That half is
+    invisible from the env file -- the API is healthy, the token is set, the
+    checklist is ticked, and the fastapi target sits DOWN with 401 while every
+    alert built on API metrics quietly has no data.
+
+    So this reads the scraper's side too: the token file must exist, hold
+    EXACTLY the same value, and the production Prometheus config must be the one
+    that reads it.
+    """
+    token = env.get("METRICS_TOKEN", "")
+
+    if not token:
+        # Already reported as an error by check(); nothing further to compare.
+        return
+
+    secret = REPO / "secrets" / "metrics_token"
+
+    if not secret.is_file():
+        # Deliberately not an early return: a deployer in this state needs the
+        # PROMETHEUS_CONFIG guidance below more than anyone, not less.
+        fail(
+            f"METRICS_TOKEN is set but {secret.relative_to(REPO)} does not exist "
+            "— Prometheus has no credential to send and every scrape 401s. "
+            "Create it: printf '%s' \"$METRICS_TOKEN\" > secrets/metrics_token"
+        )
+    else:
+        content = secret.read_text()
+
+        if not content.strip():
+            fail(f"{secret.relative_to(REPO)} is empty — scrapes will 401")
+        elif content != token:
+            hint = (
+                " (it has a trailing newline — use printf, not echo)"
+                if content.rstrip("\n") == token
+                else ""
+            )
+            fail(
+                f"{secret.relative_to(REPO)} does not match METRICS_TOKEN{hint} "
+                "— Prometheus will authenticate with the wrong value and every "
+                "scrape 401s"
+            )
+        else:
+            ok("secrets/metrics_token matches METRICS_TOKEN")
+
+        # Counter-intuitive, and measured: Prometheus runs as nobody (65534),
+        # so a 0600 file owned by the deploying user is UNREADABLE to it and
+        # every scrape fails with "unable to read authorization credentials".
+        # 0640 fails too. The file has to be readable by that uid.
+        info = secret.stat()
+
+        readable = (
+            info.st_mode & 0o004
+            or (info.st_uid == PROMETHEUS_UID and info.st_mode & 0o400)
+            or (info.st_gid == PROMETHEUS_UID and info.st_mode & 0o040)
+        )
+
+        if not readable:
+            fail(
+                f"{secret.relative_to(REPO)} is mode "
+                f"{oct(info.st_mode & 0o777)} owned by {info.st_uid}:{info.st_gid} "
+                f"— Prometheus runs as {PROMETHEUS_UID} and cannot read it, so "
+                "every scrape fails. Either `chmod 644` it, or "
+                f"`chown {PROMETHEUS_UID} {secret.relative_to(REPO)}` and keep 600."
+            )
+
+    production_config = REPO / "prometheus.production.yml"
+
+    if not production_config.is_file():
+        fail(f"{production_config.name} is missing — production has no authenticated scrape config")
+        return
+
+    if "bearer_token_file" not in production_config.read_text():
+        fail(
+            f"{production_config.name} does not set bearer_token_file — "
+            "Prometheus would scrape production /metrics unauthenticated and "
+            "receive 401"
+        )
+    else:
+        ok("prometheus.production.yml sends the bearer token")
+
+    warn(
+        "deploy with PROMETHEUS_CONFIG=./prometheus.production.yml, or compose "
+        "mounts the unauthenticated dev config and the fastapi target stays DOWN"
+    )
+
+
 def check(env: dict[str, str]) -> None:
     # --- the app refuses to start on these, but say so clearly here ---------
     if env.get("ENV") != "production":
@@ -161,6 +258,7 @@ def check(env: dict[str, str]) -> None:
 
     check_database_target(env)
     check_allowed_hosts(env)
+    check_metrics_scrape_credential(env)
 
     # --- loads fine, still wrong -------------------------------------------
     for key, example in EXAMPLE_VALUES.items():
