@@ -139,10 +139,14 @@ async def transition_appointment_locked(
                 # 2️⃣ LOG
                 logger.info(
                     "appointment_transition",
+                    # from_status/to_status rather than from/to: `to` is also
+                    # how email.py names a recipient address, so the logging
+                    # allowlist cannot approve that spelling. Renamed here so
+                    # the transition stays legible in logs.
                     extra={
                         "appointment_id": appointment.id,
-                        "from": str(old_status),
-                        "to": str(new_status),
+                        "from_status": str(old_status),
+                        "to_status": str(new_status),
                         "changed_by": changed_by,
                     }
                 )
