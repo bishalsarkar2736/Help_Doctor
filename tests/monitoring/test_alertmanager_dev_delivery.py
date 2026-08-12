@@ -39,6 +39,11 @@ import subprocess
 
 import pytest
 
+# Derived from docker-compose.yml: amtool is a schema validator, so it must
+# be the version the server runs. Measured before this -- a check-config on
+# v0.28.1 while 0.33.1 was deployed, five minors apart.
+from tests.monitoring.monitoring_images import ALERTMANAGER_IMAGE
+
 yaml = pytest.importorskip("yaml")
 
 REPO = pathlib.Path(__file__).parent.parent.parent
@@ -265,7 +270,7 @@ def test_amtool_accepts_the_config(config):
         [
             "docker", "run", "--rm",
             "-v", f"{config}:/c.yml:ro",
-            "--entrypoint", "amtool", "prom/alertmanager",
+            "--entrypoint", "amtool", ALERTMANAGER_IMAGE,
             "check-config", "/c.yml",
         ],
         capture_output=True, text=True, timeout=300,

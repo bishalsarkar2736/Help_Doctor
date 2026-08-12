@@ -455,7 +455,11 @@ services:
   # evaluate and fire into the void — visible only on Prometheus's own page,
   # which nobody is watching at 3am.
   alertmanager:
-    image: prom/alertmanager
+    # PINNED for the same reason as prometheus, and with the same payoff:
+    # tests derive the amtool image from this tag. Measured before pinning --
+    # a check-config run against v0.28.1 while the server ran 0.33.1, five
+    # minor versions apart, validating a schema nobody was running.
+    image: prom/alertmanager:v0.33.1
     container_name: helpdoctor_alertmanager
     ports:
       - "127.0.0.1:9093:9093"
@@ -473,7 +477,17 @@ services:
     logging: *default-logging
 
   prometheus:
-    image: prom/prometheus
+    # PINNED, not `prom/prometheus` (= :latest). An unpinned tag means the
+    # version is whatever Docker Hub last published: a `compose pull`, or a
+    # fresh `up -d` on a host without the image cached, silently upgrades
+    # the server under a config written for a different major. Prometheus
+    # went 2.x -> 3.x with PromQL and config changes; that is exactly the
+    # kind of jump this prevents.
+    #
+    # It also gives the validation tooling a version to derive: the tests
+    # read this tag and run promtool from the SAME image the server runs,
+    # so a rule file cannot pass a check on one version and fail on another.
+    image: prom/prometheus:v3.13.1
     container_name: helpdoctor_prometheus
     ports:
       # Published on 9091, not 9090: a distro-packaged prometheus commonly runs
@@ -499,6 +513,20 @@ services:
       # gitignored directory alertmanager reads its SMTP password from, mounted
       # read-only for the same reason.
       - ./secrets:/etc/prometheus/secrets:ro
+      # The TSDB, named rather than left to the image's anonymous VOLUME.
+      #
+      # prom/prometheus declares VOLUME /prometheus, so without this line Docker
+      # mints an ANONYMOUS volume bound to one container. It survives `restart`
+      # and dies on recreate: the next `docker compose up -d` that touches this
+      # service silently starts with an empty TSDB and orphans the old data as
+      # an unnamed entry nobody will ever identify. Measured before this line
+      # existed: 22 blocks, 27.8M samples, 14.3 days of history, one `up -d`
+      # away from being lost without a warning.
+      #
+      # Named, it survives recreation, appears in `docker volume ls` as
+      # help_doctor_prometheus_data, and is removable deliberately rather than
+      # by accident.
+      - prometheus_data:/prometheus
     restart: unless-stopped
     logging: *default-logging
 
@@ -514,6 +542,7 @@ services:
 volumes:
   postgres_data:
   alertmanager_data:
+  prometheus_data:
   minio_data:
   uploads_data:
   media_data:
