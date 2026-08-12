@@ -443,7 +443,17 @@ services:
     logging: *default-logging
 
   jaeger:
-    image: jaegertracing/all-in-one:latest
+    # PINNED. `:latest` for a tracing backend is a live hazard here, not a
+    # theoretical one: this is Jaeger v1, which reached end-of-life on
+    # 2025-12-31 and receives no further fixes or security patches. The day
+    # the registry retargets `latest` to v2, an unpinned pull would swap in a
+    # different binary with a different config model and different ports,
+    # mid-deploy, with nothing in this repository to explain it.
+    #
+    # Pinning does not fix the EOL -- it turns a future ambush into a
+    # scheduled migration. Verified byte-identical to the `:latest` this host
+    # is running: both resolve to sha256:5748b1967aa8...
+    image: jaegertracing/all-in-one:1.76.0
     container_name: helpdoctor_jaeger
     ports:
       - "16686:16686"
@@ -531,7 +541,24 @@ services:
     logging: *default-logging
 
   grafana:
-    image: grafana/grafana
+    # PINNED BY DIGEST, and deliberately not by tag.
+    #
+    # This is Grafana 13.0.2 -- the digest is what makes it reproducible, the
+    # version is here so the line stays readable.
+    #
+    # Why the digest rather than `:13.0.2`: measured against the registry,
+    # the `13.0.2` tag has been rebuilt since this host pulled its image, so
+    # tag and running image are different builds of the same version. The
+    # digest below is exactly what is running, and was confirmed to still
+    # exist in the registry as a 3-platform manifest list -- so a fresh
+    # deploy gets this image and not a newer rebuild.
+    #
+    # It also caught the drift it exists to prevent: registry `:latest` had
+    # already moved past what this host runs.
+    #
+    # To upgrade, replace the digest deliberately; do not swap it for a
+    # floating tag.
+    image: grafana/grafana@sha256:5dad0df181cb644a14e13617b913b261a54f7d4fd4510721dba420929f35bea2
     container_name: helpdoctor_grafana
     ports:
       - "3000:3000"

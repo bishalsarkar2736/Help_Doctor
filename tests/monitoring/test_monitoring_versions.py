@@ -41,8 +41,35 @@ REPO = pathlib.Path(__file__).parent.parent.parent
 
 COMPOSE = REPO / "docker-compose.yml"
 
-# Services whose config is validated by a version-sensitive tool.
-VALIDATED = ["prometheus", "alertmanager"]
+# Every service in the monitoring stack whose version must be reproducible.
+#
+# prometheus and alertmanager are here because their CONFIG is validated by a
+# version-sensitive tool -- promtool and amtool answer for the version running
+# them. grafana and jaeger have no such validator; they are here for the other
+# half of the same problem: an unpinned tag means a `compose pull` can change
+# the deployed software with nothing in this repository to explain it.
+#
+# Measured when they were pinned: registry `:latest` for grafana had ALREADY
+# moved past the image this host was running, and jaeger `:latest` was serving a
+# v1 release that reached end-of-life on 2025-12-31.
+VALIDATED = ["prometheus", "alertmanager", "grafana", "jaeger"]
+
+# The two whose config a version-sensitive tool validates. Kept separate so the
+# "validators derive their image" rules stay scoped to the services that have
+# validators.
+TOOL_VALIDATED = ["prometheus", "alertmanager"]
+
+# Exact references, asserted literally on purpose. For these two the point is
+# not "some pin" but "this specific verified image": the grafana digest was
+# confirmed present in the registry as a 3-platform manifest list, and the
+# jaeger tag was confirmed byte-identical to the `:latest` this host runs.
+EXPECTED_REFERENCES = {
+    "grafana": (
+        "grafana/grafana@sha256:"
+        "5dad0df181cb644a14e13617b913b261a54f7d4fd4510721dba420929f35bea2"
+    ),
+    "jaeger": "jaegertracing/all-in-one:1.76.0",
+}
 
 # Every test file except this one. The literals below are parametrize DATA --
 # the counter-examples the pinning rule is defined against -- not invocations,
@@ -233,3 +260,91 @@ def test_staging_does_not_override_the_monitoring_images():
         assert "image" not in staging.get(service, {}), (
             f"staging pins a different {service} image than production"
         )
+
+
+# ---------------------------------------------------------------------------
+# Grafana and Jaeger: pinned to specific verified images
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("service", sorted(EXPECTED_REFERENCES))
+def test_the_reference_is_exactly_the_verified_one(service):
+    """Not merely "pinned" -- pinned to the image that was actually checked.
+
+    A pin to some other build would still satisfy is_pinned() while deploying
+    software nobody verified. These two strings were established by inspecting
+    the running containers and querying the registry, and changing either should
+    be a deliberate act that updates this test alongside it.
+    """
+    assert monitoring_images.service_image(service) == EXPECTED_REFERENCES[service]
+
+
+def test_grafana_is_pinned_by_digest():
+    """A digest, not a tag, because the `13.0.2` tag has been rebuilt since this
+    host pulled its image -- tag and running image are different builds of the
+    same version. Only the digest reproduces what is actually running."""
+    image = monitoring_images.service_image("grafana")
+
+    assert "@sha256:" in image, image
+
+    _, _, digest = image.partition("@sha256:")
+
+    assert re.fullmatch(r"[0-9a-f]{64}", digest), (
+        f"not a full 64-character digest: {digest!r}"
+    )
+
+
+def test_jaeger_is_pinned_to_a_release_tag():
+    """Byte-identical to the `:latest` this host runs, so pinning changed
+    nothing except who decides when it moves."""
+    image = monitoring_images.service_image("jaeger")
+
+    assert image.endswith(":1.76.0"), image
+    assert "@sha256:" not in image, (
+        "a digest here would be less readable than the tag, and the tag was "
+        "verified to resolve to the same image"
+    )
+
+
+@pytest.mark.parametrize("service", sorted(EXPECTED_REFERENCES))
+def test_no_fallback_to_latest(service):
+    """The specific regression: reverting either of these to a floating
+    reference. `grafana/grafana` with no tag means :latest just as surely as
+    writing it out."""
+    image = monitoring_images.service_image(service)
+
+    assert not image.endswith(":latest"), image
+    assert image != image.split(":")[0] or "@sha256:" in image, (
+        f"{service} has no tag and no digest, which resolves to :latest"
+    )
+    assert monitoring_images.is_pinned(image)
+
+
+@pytest.mark.parametrize("service", VALIDATED)
+def test_the_reference_is_syntactically_valid(service):
+    """Cheap parse of the reference grammar: repository[:tag][@digest]. A
+    malformed reference fails at `compose up`, long after review."""
+    image = monitoring_images.service_image(service)
+
+    repository, _, digest = image.partition("@")
+
+    if digest:
+        assert digest.startswith("sha256:")
+        assert re.fullmatch(r"sha256:[0-9a-f]{64}", digest), digest
+
+    name, separator, tag = repository.rpartition(":")
+
+    if separator and "/" not in tag:
+        assert re.fullmatch(r"[\w][\w.-]{0,127}", tag), f"invalid tag: {tag!r}"
+        repository = name
+
+    assert re.fullmatch(r"[a-z0-9]+([._-][a-z0-9]+)*(/[a-z0-9]+([._-][a-z0-9]+)*)*",
+                        repository), f"invalid repository: {repository!r}"
+
+
+def test_the_tool_validated_services_are_still_covered():
+    """Extending the list must not have quietly dropped the two whose config is
+    validated by a version-sensitive binary."""
+    for service in TOOL_VALIDATED:
+        assert service in VALIDATED
+        assert monitoring_images.is_pinned(monitoring_images.service_image(service))
