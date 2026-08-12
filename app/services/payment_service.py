@@ -14,6 +14,8 @@ from app.services.appointment_transition_service import (
 from app.models.user import UserRole
 from app.schemas.event import (
     PaymentSuccessEvent,
+    PaymentPendingEvent,
+    PaymentFailedEvent,
 )
 from decimal import Decimal
 from app.services.domain_event_service import (
@@ -163,6 +165,46 @@ async def create_payment(
                 "payment.id",
                 payment.id,
             )
+
+            # PENDING is not a transition, so there is no mark_payment_pending to
+            # publish from. It is the state a Payment is BORN in, and this is the
+            # only place in the application that constructs one -- so creation is
+            # the authoritative point, and covering it covers every legitimate
+            # path by construction.
+            #
+            # No duplicate is possible for a payment that is already PENDING: the
+            # guard above raises BadRequestError before reaching this line, and
+            # idx_unique_pending_payment (a partial unique index on
+            # appointment_id WHERE status = 'PENDING') closes the race, surfacing
+            # as the IntegrityError already handled below. Both fire before the
+            # publish rather than after.
+            #
+            # After flush and refresh because the event needs payment.id, and
+            # inside the caller's transaction so the payment row and its outbox
+            # event are written atomically.
+            await publish_domain_event(
+                db=db,
+                event=PaymentPendingEvent(
+                    event_type="PAYMENT_PENDING",
+
+                    schema_version=1,
+                    occurred_at=datetime.now(UTC).isoformat(),
+
+                    aggregate_type="payment",
+                    aggregate_id=payment.id,
+
+                    actor={
+                        "id": payment.patient_id,
+                        "role": UserRole.PATIENT.name,
+                    },
+
+                    causation_id=None,
+
+                    user_id=payment.patient_id,
+                    appointment_id=appointment_id,
+                ),
+            )
+
             logger.info(
                 "payment_created",
                 extra={
@@ -564,5 +606,48 @@ async def mark_payment_failed(
     }
 
     await db.flush()
+
+    # Published HERE rather than at either call site, because there are two:
+    # the bKash webhook (_handle_failed_bkash_payment) and the scheduled
+    # reconciliation job. Publishing at one would leave a payment that failed
+    # the other way notifying nobody, and the patient cannot tell which route
+    # marked their payment.
+    #
+    # It sits after the PENDING guard above, so the event fires on the
+    # PENDING -> FAILED transition only. A re-delivered webhook returns early
+    # and publishes nothing the second time -- the idempotency the outbox
+    # already provides per event_id is reinforced by never creating the
+    # duplicate in the first place.
+    #
+    # `reason` is deliberately NOT carried on the event. It is unbounded gateway
+    # text and every consumer is a patient-facing channel; it stays in
+    # payment_metadata, where it is available to staff in the application.
+    #
+    # No commit: this joins the caller's transaction, so the payment row and its
+    # outbox event are written atomically. A failure to publish rolls back the
+    # status change too, which is the correct pairing -- a payment silently
+    # marked failed with nobody told is the outcome to avoid.
+    await publish_domain_event(
+        db=db,
+        event=PaymentFailedEvent(
+            event_type="PAYMENT_FAILED",
+
+            schema_version=1,
+            occurred_at=datetime.now(UTC).isoformat(),
+
+            aggregate_type="payment",
+            aggregate_id=payment.id,
+
+            actor={
+                "id": payment.patient_id,
+                "role": UserRole.PATIENT.name,
+            },
+
+            causation_id=None,
+
+            user_id=payment.patient_id,
+            appointment_id=payment.appointment_id,
+        ),
+    )
 
     return payment

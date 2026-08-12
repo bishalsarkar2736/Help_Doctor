@@ -13,13 +13,17 @@ payment outcomes. One table, one code path — an event is added by naming its
 template setting and its parameters, never by writing another handler.
 
 WHAT IS NOT HERE, AND WHY
-The requested set also included APPOINTMENT_REMINDER, DOCTOR_RUNNING_LATE,
-APPOINTMENT_COMPLETED, APPOINTMENT_NO_SHOW, PAYMENT_FAILED and PAYMENT_PENDING.
-None of them is a domain event this platform publishes: none appears in
-EVENT_SCHEMAS, and APPOINTMENT_REMINDER is published under the unregistered type
-"appointment.reminder", which the outbox worker drops as unsupported. Adding them
-here would be an allowlist entry that can never match a dispatched event, so the
-channel would read as covering them while delivering nothing.
+The requested set also included DOCTOR_RUNNING_LATE, APPOINTMENT_COMPLETED and
+APPOINTMENT_NO_SHOW. None of them is a domain event this platform publishes:
+none appears in EVENT_SCHEMAS. Adding them here would be an allowlist entry that
+can never match a dispatched event, so the channel would read as covering them
+while delivering nothing.
+
+APPOINTMENT_REMINDER, PAYMENT_FAILED and PAYMENT_PENDING were on that list and
+are now here. Each was added the same way and in this order: the domain event
+first -- schema, registry entry, and a publisher in the code that owns the
+state -- and only then the entry below. An allowlist entry is the LAST step,
+never the first.
 
 BODY PARAMETERS ARE POSITIONAL
 Meta interpolates {{1}}, {{2}} by position, so each entry's parameter list must
@@ -217,6 +221,27 @@ WHATSAPP_EVENTS: dict[str, dict] = {
         # off the Payment table would be this channel inventing a field the event
         # does not have. The approved template must therefore say that a payment
         # was received without stating how much.
+        "parameters": _PARAMETERLESS,
+    },
+
+    # The payment has been created and is waiting on the gateway. Parameterless,
+    # like PAYMENT_SUCCESS: PaymentPendingEvent carries user_id and
+    # appointment_id and no amount, so the approved template must say a payment
+    # is awaiting confirmation without stating a figure.
+    "PAYMENT_PENDING": {
+        "template_setting": "WHATSAPP_TEMPLATE_PAYMENT_PENDING",
+        "parameters": _PARAMETERLESS,
+    },
+
+    # The third payment outcome. Parameterless for the same reason as
+    # PAYMENT_SUCCESS: PaymentFailedEvent carries user_id and appointment_id and
+    # nothing else. The failure REASON is deliberately absent from the event --
+    # it is unbounded gateway text sitting in payment_metadata, and this is the
+    # least private channel the platform has. The approved template must say
+    # that a payment did not go through and send the patient to the app, without
+    # stating an amount or a reason.
+    "PAYMENT_FAILED": {
+        "template_setting": "WHATSAPP_TEMPLATE_PAYMENT_FAILED",
         "parameters": _PARAMETERLESS,
     },
 

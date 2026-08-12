@@ -102,6 +102,19 @@ EVENT_HANDLERS = {
     "PAYMENT_REFUNDED":
         _with_patient_channels,
 
+    # The payment has been created and is awaiting the gateway. Same composite,
+    # same reason: WhatsApp needs to see it and email's own allowlist keeps it
+    # out of inboxes.
+    "PAYMENT_PENDING":
+        _with_patient_channels,
+
+    # Same composite as the other two payment outcomes. Email is unaffected:
+    # EMAIL_EVENTS does not list PAYMENT_FAILED, so the email handler returns
+    # immediately and only WhatsApp acts -- each channel owning its own
+    # allowlist is what lets a route be opened for one without the others.
+    "PAYMENT_FAILED":
+        _with_patient_channels,
+
     "CONSULTATION_STARTED":
         handle_notification_event,
 

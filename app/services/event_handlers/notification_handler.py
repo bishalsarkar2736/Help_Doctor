@@ -81,6 +81,42 @@ EVENT_NOTIFICATION_CONFIG = {
         "appointment_field": "appointment_id",
     },
 
+    # Same requirement as PAYMENT_FAILED below: without an entry here
+    # _with_patient_channels returns before any channel runs, and there is no
+    # Notification row for the WhatsApp receipt to be written on.
+    #
+    # No amount, matching PaymentPendingEvent and the PAYMENT_SUCCESS message
+    # above -- the figure is in the application.
+    "PAYMENT_PENDING": {
+        "title": "Payment Pending",
+        "message": (
+            "Your payment is awaiting confirmation. "
+            "Open the app to check its status."
+        ),
+        "category": NotificationCategory.PAYMENT,
+        "user_field": "user_id",
+        "appointment_field": "appointment_id",
+    },
+
+    # Required for WhatsApp to reach this event at all, not merely alongside it:
+    # _with_patient_channels returns early when an event is absent from this map,
+    # and the Notification row created here is the row the WhatsApp receipt is
+    # written on. No entry, no channel and nowhere to record delivery.
+    #
+    # No amount and no failure reason, matching PaymentFailedEvent, which carries
+    # neither. The reason is unbounded gateway text; it stays in payment_metadata
+    # where staff can see it in the application.
+    "PAYMENT_FAILED": {
+        "title": "Payment Failed",
+        "message": (
+            "Your payment could not be processed. "
+            "Open the app to try again."
+        ),
+        "category": NotificationCategory.PAYMENT,
+        "user_field": "user_id",
+        "appointment_field": "appointment_id",
+    },
+
     "PAYMENT_REFUNDED": {
         "title": "Payment Refunded",
         "message_template": (

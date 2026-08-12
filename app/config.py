@@ -235,6 +235,16 @@ class Settings(BaseSettings):
     # must not contain an {{amount}} placeholder. See _PARAMETERLESS below.
     WHATSAPP_TEMPLATE_PAYMENT_SUCCESS: str = ""
 
+    # No body parameters. PENDING is the state a payment is created in, and the
+    # event carries no amount -- so the approved template says a payment is
+    # awaiting confirmation and sends the patient to the application.
+    WHATSAPP_TEMPLATE_PAYMENT_PENDING: str = ""
+
+    # No body parameters, like PAYMENT_SUCCESS. PaymentFailedEvent carries no
+    # amount and no failure reason -- the reason is unbounded gateway text and
+    # stays in payment_metadata -- so the approved template must state neither.
+    WHATSAPP_TEMPLATE_PAYMENT_FAILED: str = ""
+
     # One body parameter: the refunded amount, which this event does carry.
     WHATSAPP_TEMPLATE_PAYMENT_REFUNDED: str = ""
 

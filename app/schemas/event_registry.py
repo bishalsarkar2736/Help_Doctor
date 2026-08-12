@@ -7,6 +7,8 @@ from app.schemas.event import (
     AppointmentRescheduledEvent,
     AppointmentStatusChangedEvent,
     PaymentSuccessEvent,
+    PaymentPendingEvent,
+    PaymentFailedEvent,
     PrescriptionCreatedEvent,
     PrescriptionIssuedEvent,
     ConsultationStartedEvent,
@@ -74,5 +76,11 @@ EVENT_SCHEMAS = {
     
     "PAYMENT_REFUNDED" :
         PaymentRefundedEvent,
+
+    "PAYMENT_PENDING":
+        PaymentPendingEvent,
+
+    "PAYMENT_FAILED":
+        PaymentFailedEvent,
 
 }

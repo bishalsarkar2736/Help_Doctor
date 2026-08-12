@@ -460,10 +460,17 @@ async def test_the_same_patient_is_messaged_by_two_clinics(
 def test_the_allowlist_is_exactly_the_approved_events():
     """Pinned, so an event cannot join the channel without this test saying so.
 
-    Seven: the prescription event the channel started with, the three appointment
-    changes, the reminder, and the two payment outcomes. Still ABSENT are
-    running-late, completed, no-show, payment-failed and payment-pending — none of
-    them is published by this platform, so an entry for them could never match a
+    Nine: the prescription event the channel started with, the three appointment
+    changes, the reminder, and the four payment states. PAYMENT_PENDING is the
+    newest and, like PAYMENT_FAILED before it, arrived the right way round --
+    PaymentPendingEvent, its registry entry and a publisher came first, and the
+    allowlist entry last. This test failing is the intended gate on that order.
+
+    PENDING is the odd one: it is not a transition but the state a payment is
+    created in, so its publisher is create_payment rather than a mark_* function.
+
+    Still ABSENT are running-late, completed and no-show -- none of them is
+    published by this platform, so an entry for them could never match a
     dispatched event.
     """
     assert set(WHATSAPP_EVENTS) == {
@@ -472,7 +479,9 @@ def test_the_allowlist_is_exactly_the_approved_events():
         "APPOINTMENT_CANCELLED",
         "APPOINTMENT_RESCHEDULED",
         "APPOINTMENT_REMINDER",
+        "PAYMENT_PENDING",
         "PAYMENT_SUCCESS",
+        "PAYMENT_FAILED",
         "PAYMENT_REFUNDED",
     }
 
@@ -1308,3 +1317,435 @@ async def test_a_whatsapp_failure_does_not_lose_the_in_app_notification(
 
     assert stored is not None
     assert stored.title
+
+
+# ---------------------------------------------------------------------------
+# PAYMENT_FAILED — the third payment outcome
+#
+# Added last in its chain, deliberately: PaymentFailedEvent, its registry entry
+# and a publisher in mark_payment_failed came first, so this allowlist entry
+# matches an event the platform genuinely dispatches. The schema, the routing and
+# the publisher are covered in test_payment_failed_whatsapp.py; what follows is
+# this channel's behaviour, on the same fixtures as every other event here.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_payment_failed_sends_whatsapp(db, clinic_a, channel_on, sent):
+    """THE MILESTONE: a patient whose payment fails is told out of band."""
+    await _deliver(
+        db,
+        _payload(
+            clinic_a,
+            recipient_id=clinic_a["patient"].id,
+            event_type="PAYMENT_FAILED",
+        ),
+        event_type="PAYMENT_FAILED",
+    )
+
+    assert len(sent) == 1
+    assert sent[0]["template_name"] == template_name_for("PAYMENT_FAILED")
+
+
+@pytest.mark.asyncio
+async def test_payment_failed_uses_its_own_template(db, clinic_a, channel_on, sent):
+    """Not the success or refund template. Meta approves each separately, and a
+    failure message is not a success message -- sharing one would deliver the
+    wrong text while every other assertion still passed."""
+    await _deliver(
+        db,
+        _payload(
+            clinic_a,
+            recipient_id=clinic_a["patient"].id,
+            event_type="PAYMENT_FAILED",
+        ),
+        event_type="PAYMENT_FAILED",
+    )
+
+    assert sent[0]["template_name"] != template_name_for("PAYMENT_SUCCESS")
+    assert sent[0]["template_name"] != template_name_for("PAYMENT_REFUNDED")
+
+
+@pytest.mark.asyncio
+async def test_payment_failed_sends_no_amount_or_reason(db, clinic_a, channel_on, sent):
+    """PaymentFailedEvent carries neither, so the template is parameterless. The
+    reason in particular is unbounded gateway text and this is the least private
+    channel the platform has."""
+    await _deliver(
+        db,
+        _payload(
+            clinic_a,
+            recipient_id=clinic_a["patient"].id,
+            event_type="PAYMENT_FAILED",
+        ),
+        event_type="PAYMENT_FAILED",
+    )
+
+    assert not sent[0].get("body_parameters")
+
+
+@pytest.mark.asyncio
+async def test_payment_failed_respects_the_patient_preference(
+    db, clinic_a, channel_on, sent
+):
+    """Same gate as every other event: opting out of WhatsApp opts out of this."""
+    from app.services.notification_preference_service import (
+        get_or_create_preferences,
+    )
+
+    prefs = await get_or_create_preferences(db, clinic_a["patient"].id)
+    prefs.whatsapp_enabled = False
+    await db.flush()
+
+    await _deliver(
+        db,
+        _payload(
+            clinic_a,
+            recipient_id=clinic_a["patient"].id,
+            event_type="PAYMENT_FAILED",
+        ),
+        event_type="PAYMENT_FAILED",
+    )
+
+    assert sent == []
+
+
+@pytest.mark.asyncio
+async def test_payment_failed_sends_nothing_when_the_channel_is_off(
+    db, clinic_a, sent, monkeypatch
+):
+    """WHATSAPP_NOTIFICATIONS_ENABLED is the master switch. Note `channel_on` is
+    deliberately NOT requested here."""
+    monkeypatch.setattr(get_settings(), "WHATSAPP_NOTIFICATIONS_ENABLED", False)
+
+    await _deliver(
+        db,
+        _payload(
+            clinic_a,
+            recipient_id=clinic_a["patient"].id,
+            event_type="PAYMENT_FAILED",
+        ),
+        event_type="PAYMENT_FAILED",
+    )
+
+    assert sent == []
+
+
+@pytest.mark.asyncio
+async def test_payment_failed_sends_nothing_without_an_approved_template(
+    db, clinic_a, channel_on, sent, monkeypatch
+):
+    """An unapproved name is a 400 from Meta, so the channel declines rather than
+    guessing. Only THIS event's template is cleared -- the others stay
+    configured, so a pass here cannot come from the channel being off."""
+    monkeypatch.setattr(channel_on, "WHATSAPP_TEMPLATE_PAYMENT_FAILED", "")
+
+    await _deliver(
+        db,
+        _payload(
+            clinic_a,
+            recipient_id=clinic_a["patient"].id,
+            event_type="PAYMENT_FAILED",
+        ),
+        event_type="PAYMENT_FAILED",
+    )
+
+    assert sent == []
+
+
+@pytest.mark.asyncio
+async def test_payment_failed_is_sent_once_for_a_redelivered_event(
+    db, clinic_a, channel_on, sent
+):
+    """The outbox is at-least-once, so redelivery is the normal case. The receipt
+    written per (event_id, user_id) is what makes the second attempt a no-op --
+    unchanged by this milestone, asserted for this event."""
+    payload = _payload(
+        clinic_a,
+        recipient_id=clinic_a["patient"].id,
+        event_type="PAYMENT_FAILED",
+    )
+
+    event = OutboxEvent(
+        id=uuid.uuid4(),
+        event_type="PAYMENT_FAILED",
+        payload=payload,
+        status=OutboxStatus.PENDING,
+    )
+    db.add(event)
+    await db.flush()
+
+    await handle_event(db, event)
+    await handle_event(db, event)
+
+    assert len(sent) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_failed_payment_failed_send_is_re_raised(
+    db, clinic_a, channel_on, monkeypatch
+):
+    """Same contract as the rest of the channel: record the failure, then
+    re-raise so the outbox retries instead of silently dropping the message."""
+
+    async def _boom(**kwargs):
+        raise RuntimeError("meta is down")
+
+    monkeypatch.setattr(
+        notification_whatsapp_handler.WhatsAppService, "send_template", _boom
+    )
+
+    with pytest.raises(RuntimeError):
+        await _deliver(
+            db,
+            _payload(
+                clinic_a,
+                recipient_id=clinic_a["patient"].id,
+                event_type="PAYMENT_FAILED",
+            ),
+            event_type="PAYMENT_FAILED",
+        )
+
+
+@pytest.mark.asyncio
+async def test_payment_failed_logs_nothing_sensitive(
+    db, clinic_a, channel_on, sent, caplog
+):
+    """Rendered through the production JsonFormatter, because that is what ships.
+
+    The handler reads the patient's phone in order to send; it must not appear in
+    a log line. Nor may a gateway reason or an amount -- the event carries
+    neither, and this asserts the handler does not go looking for them.
+    """
+    import logging
+
+    from app.try_except.logging import JsonFormatter
+
+    with caplog.at_level(logging.INFO):
+        await _deliver(
+            db,
+            _payload(
+                clinic_a,
+                recipient_id=clinic_a["patient"].id,
+                event_type="PAYMENT_FAILED",
+            ),
+            event_type="PAYMENT_FAILED",
+        )
+
+    rendered = "\n".join(JsonFormatter().format(record) for record in caplog.records)
+
+    assert sent, "nothing was sent, so this proves nothing about logging"
+
+    for forbidden in ("+8801944000111", "failure_reason", "gateway_payment_id", "৳"):
+        assert forbidden not in rendered, f"{forbidden!r} reached the log"
+
+
+# ---------------------------------------------------------------------------
+# PAYMENT_PENDING — the payment has been created and awaits the gateway
+#
+# The odd one among the four payment states: PENDING is not a transition but the
+# state a Payment is constructed in, so its publisher is create_payment rather
+# than a mark_* function. That distinction lives in
+# test_payment_pending_whatsapp.py; what follows is this channel's behaviour, on
+# the same fixtures as every other event here.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_payment_pending_sends_whatsapp(db, clinic_a, channel_on, sent):
+    await _deliver(
+        db,
+        _payload(
+            clinic_a,
+            recipient_id=clinic_a["patient"].id,
+            event_type="PAYMENT_PENDING",
+        ),
+        event_type="PAYMENT_PENDING",
+    )
+
+    assert len(sent) == 1
+    assert sent[0]["template_name"] == template_name_for("PAYMENT_PENDING")
+
+
+@pytest.mark.asyncio
+async def test_payment_pending_uses_its_own_template(db, clinic_a, channel_on, sent):
+    """Not the success, failed or refund template. "Awaiting confirmation" and
+    "payment received" are opposite messages; a shared name would deliver the
+    wrong one while every other assertion still passed."""
+    await _deliver(
+        db,
+        _payload(
+            clinic_a,
+            recipient_id=clinic_a["patient"].id,
+            event_type="PAYMENT_PENDING",
+        ),
+        event_type="PAYMENT_PENDING",
+    )
+
+    for other in ("PAYMENT_SUCCESS", "PAYMENT_FAILED", "PAYMENT_REFUNDED"):
+        assert sent[0]["template_name"] != template_name_for(other)
+
+
+@pytest.mark.asyncio
+async def test_payment_pending_sends_no_amount(db, clinic_a, channel_on, sent):
+    """PaymentPendingEvent carries no amount, matching PAYMENT_SUCCESS, so the
+    template is parameterless."""
+    await _deliver(
+        db,
+        _payload(
+            clinic_a,
+            recipient_id=clinic_a["patient"].id,
+            event_type="PAYMENT_PENDING",
+        ),
+        event_type="PAYMENT_PENDING",
+    )
+
+    assert not sent[0].get("body_parameters")
+
+
+@pytest.mark.asyncio
+async def test_payment_pending_respects_the_patient_preference(
+    db, clinic_a, channel_on, sent
+):
+    from app.services.notification_preference_service import (
+        get_or_create_preferences,
+    )
+
+    prefs = await get_or_create_preferences(db, clinic_a["patient"].id)
+    prefs.whatsapp_enabled = False
+    await db.flush()
+
+    await _deliver(
+        db,
+        _payload(
+            clinic_a,
+            recipient_id=clinic_a["patient"].id,
+            event_type="PAYMENT_PENDING",
+        ),
+        event_type="PAYMENT_PENDING",
+    )
+
+    assert sent == []
+
+
+@pytest.mark.asyncio
+async def test_payment_pending_sends_nothing_when_the_channel_is_off(
+    db, clinic_a, sent, monkeypatch
+):
+    """`channel_on` deliberately not requested: this is the master switch."""
+    monkeypatch.setattr(get_settings(), "WHATSAPP_NOTIFICATIONS_ENABLED", False)
+
+    await _deliver(
+        db,
+        _payload(
+            clinic_a,
+            recipient_id=clinic_a["patient"].id,
+            event_type="PAYMENT_PENDING",
+        ),
+        event_type="PAYMENT_PENDING",
+    )
+
+    assert sent == []
+
+
+@pytest.mark.asyncio
+async def test_payment_pending_sends_nothing_without_an_approved_template(
+    db, clinic_a, channel_on, sent, monkeypatch
+):
+    """Only THIS event's template is cleared, so a pass cannot come from the
+    channel being off."""
+    monkeypatch.setattr(channel_on, "WHATSAPP_TEMPLATE_PAYMENT_PENDING", "")
+
+    await _deliver(
+        db,
+        _payload(
+            clinic_a,
+            recipient_id=clinic_a["patient"].id,
+            event_type="PAYMENT_PENDING",
+        ),
+        event_type="PAYMENT_PENDING",
+    )
+
+    assert sent == []
+
+
+@pytest.mark.asyncio
+async def test_payment_pending_is_sent_once_for_a_redelivered_event(
+    db, clinic_a, channel_on, sent
+):
+    """The outbox is at-least-once. The receipt per (event_id, user_id) makes the
+    second attempt a no-op -- unchanged by this milestone, asserted for this
+    event."""
+    event = OutboxEvent(
+        id=uuid.uuid4(),
+        event_type="PAYMENT_PENDING",
+        payload=_payload(
+            clinic_a,
+            recipient_id=clinic_a["patient"].id,
+            event_type="PAYMENT_PENDING",
+        ),
+        status=OutboxStatus.PENDING,
+    )
+    db.add(event)
+    await db.flush()
+
+    await handle_event(db, event)
+    await handle_event(db, event)
+
+    assert len(sent) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_failed_payment_pending_send_is_re_raised(
+    db, clinic_a, channel_on, monkeypatch
+):
+    async def _boom(**kwargs):
+        raise RuntimeError("meta is down")
+
+    monkeypatch.setattr(
+        notification_whatsapp_handler.WhatsAppService, "send_template", _boom
+    )
+
+    with pytest.raises(RuntimeError):
+        await _deliver(
+            db,
+            _payload(
+                clinic_a,
+                recipient_id=clinic_a["patient"].id,
+                event_type="PAYMENT_PENDING",
+            ),
+            event_type="PAYMENT_PENDING",
+        )
+
+
+@pytest.mark.asyncio
+async def test_payment_pending_logs_nothing_sensitive(
+    db, clinic_a, channel_on, sent, caplog
+):
+    """Rendered through the production JsonFormatter, because that is what ships.
+
+    The handler reads the patient's phone to send; it must not reach a log line.
+    Nor may an amount or a payment method -- the event carries neither, and this
+    asserts the handler does not go looking for them.
+    """
+    import logging
+
+    from app.try_except.logging import JsonFormatter
+
+    with caplog.at_level(logging.INFO):
+        await _deliver(
+            db,
+            _payload(
+                clinic_a,
+                recipient_id=clinic_a["patient"].id,
+                event_type="PAYMENT_PENDING",
+            ),
+            event_type="PAYMENT_PENDING",
+        )
+
+    rendered = "\n".join(JsonFormatter().format(record) for record in caplog.records)
+
+    assert sent, "nothing was sent, so this proves nothing about logging"
+
+    for forbidden in ("+8801944000111", "bkash", "public_invoice_id", "৳"):
+        assert forbidden not in rendered, f"{forbidden!r} reached the log"
