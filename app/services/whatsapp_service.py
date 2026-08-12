@@ -11,6 +11,54 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 
+def _error_fingerprint(response: httpx.Response) -> dict:
+    """What went wrong, without what it went wrong about.
+
+    These logs used to carry `response.text` verbatim. Meta's 4xx bodies echo
+    request context, and the request body is `{"to": <patient phone>, ...}` --
+    so the raw text could reproduce the recipient's number even in a log
+    statement whose own fields were chosen carefully. JsonFormatter copies every
+    `extra` value into the output with no redaction, so whatever lands here is
+    what ships.
+
+    Only identifiers are kept. `code`, `error_subcode` and `type` classify the
+    failure; `fbtrace_id` is the opaque handle Meta support asks for. The free
+    text -- `message`, `error_user_msg`, `error_data` -- is dropped, because
+    that is where an echoed phone number or message body would appear.
+
+    Never raises: a diagnostic must not be able to fail the send path it is
+    diagnosing.
+    """
+    fingerprint: dict = {"status": response.status_code}
+
+    try:
+        body = response.json()
+    except Exception:
+        # Not JSON (a gateway HTML error page, say). The status is all that can
+        # be said safely -- the body is unstructured and could contain anything.
+        fingerprint["error_body"] = "unparseable"
+        return fingerprint
+
+    error = body.get("error") if isinstance(body, dict) else None
+
+    if not isinstance(error, dict):
+        return fingerprint
+
+    for field in ("code", "error_subcode", "type", "fbtrace_id"):
+        value = error.get(field)
+
+        if value is None:
+            continue
+
+        # Meta already prefixes some of its own field names, so prefixing
+        # unconditionally would produce `error_error_subcode`.
+        key = field if field.startswith("error") else f"error_{field}"
+
+        fingerprint[key] = value
+
+    return fingerprint
+
+
 class WhatsAppService:
     """Meta WhatsApp Cloud API.
 
@@ -83,25 +131,26 @@ class WhatsAppService:
 
         if response.status_code >= 400:
 
+            # No `phone`, and no raw body. A phone number tied to a
+            # prescription delivery says "this person is a patient here and was
+            # sent a prescription" -- identifiable health information, written
+            # unredacted to container logs. The correlation_id JsonFormatter
+            # injects already links this line to the event that caused it, which
+            # is what an operator actually needs to trace a failure.
             logger.error(
                 "whatsapp_send_document_failed",
-                extra={
-                    "phone": phone,
-                    "status": response.status_code,
-                    "response": response.text,
-                },
+                extra=_error_fingerprint(response),
             )
 
             raise ExternalServiceError(
                 "WhatsApp document send failed"
             )
 
-        logger.info(
-            "whatsapp_document_sent",
-            extra={
-                "phone": phone,
-            },
-        )
+        # This fires on EVERY successful send, so it was the highest-volume
+        # leak of the four: one patient phone number per prescription delivered.
+        # Nothing identifying is needed here -- the caller logs prescription_id
+        # and the formatter supplies correlation_id.
+        logger.info("whatsapp_document_sent")
 
         return response.json()
 
@@ -158,10 +207,7 @@ class WhatsAppService:
 
             logger.error(
                 "whatsapp_media_upload_failed",
-                extra={
-                    "status": response.status_code,
-                    "response": response.text,
-                },
+                extra=_error_fingerprint(response),
             )
 
             raise ExternalServiceError(
@@ -238,13 +284,13 @@ class WhatsAppService:
             response = await client.post(url, json=payload, headers=headers)
 
         if response.status_code >= 400:
+            # template_name is a configured identifier, not patient data, so
+            # it stays -- it is the field that says WHICH template Meta rejected.
+            # The raw body goes: this statement's own fields were already safe,
+            # and the leak arrived through response.text echoing `{"to": phone}`.
             logger.error(
                 "whatsapp_send_template_failed",
-                extra={
-                    "template_name": template_name,
-                    "status": response.status_code,
-                    "response": response.text,
-                },
+                extra={"template_name": template_name, **_error_fingerprint(response)},
             )
 
             raise ExternalServiceError("WhatsApp template send failed")
