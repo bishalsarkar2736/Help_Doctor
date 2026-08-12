@@ -91,9 +91,19 @@ def _configs(parsed: dict, kind: str) -> list:
 # ---------------------------------------------------------------------------
 
 
+# The dead-man's switch terminates in a receiver with no delivery configured at
+# all (see alertmanager.yml). It is not a human receiver and these rules about
+# SMTP delivery do not apply to it.
+WATCHDOG_RECEIVER = "watchdog"
+
+
+def _human_receivers(parsed: dict) -> list:
+    return [r for r in parsed["receivers"] if r["name"] != WATCHDOG_RECEIVER]
+
+
 def test_the_dev_receivers_use_email_not_webhook(dev):
     """THE REGRESSION. A webhook receiver against MailHog can only ever 404."""
-    for receiver in dev["receivers"]:
+    for receiver in _human_receivers(dev):
         assert "email_configs" in receiver, (
             f"receiver {receiver['name']!r} does not deliver by SMTP"
         )
@@ -186,7 +196,9 @@ def test_routing_and_inhibition_are_unchanged(dev):
     assert route["repeat_interval"] == "4h"
     assert route["receiver"] == "default"
 
-    critical = route["routes"][0]
+    # By receiver, not by index -- the watchdog route is deliberately first so
+    # nothing else can claim the heartbeat.
+    critical = next(r for r in route["routes"] if r["receiver"] == "critical")
 
     assert critical["receiver"] == "critical"
     assert critical["group_wait"] == "10s"
@@ -199,13 +211,19 @@ def test_routing_and_inhibition_are_unchanged(dev):
     assert inhibit["equal"] == ["job"]
 
 
-def test_both_receivers_still_exist(dev):
-    assert [r["name"] for r in dev["receivers"]] == ["default", "critical"]
+def test_both_human_receivers_still_exist(dev):
+    """The watchdog receiver was added alongside them, not instead of them."""
+    assert [r["name"] for r in _human_receivers(dev)] == ["default", "critical"]
+    assert WATCHDOG_RECEIVER in [r["name"] for r in dev["receivers"]]
 
 
 def test_resolved_notifications_are_still_sent(dev):
     """Losing this would leave a resolved incident looking open forever."""
-    configs = _configs(dev, "email_configs")
+    configs = [
+        config
+        for receiver in _human_receivers(dev)
+        for config in receiver.get("email_configs", [])
+    ]
 
     assert configs, "no email receivers"
     assert all(config["send_resolved"] is True for config in configs)
@@ -243,19 +261,34 @@ def test_production_keeps_its_second_channel(prod):
     assert slack[0]["api_url_file"].startswith("/etc/alertmanager/secrets/")
 
 
-def test_this_milestone_did_not_modify_the_production_config():
-    """Structural proof rather than trust: compare against the committed file."""
-    committed = subprocess.run(
-        ["git", "show", "HEAD:alertmanager.production.yml"],
-        capture_output=True, text=True, cwd=REPO, timeout=60,
-    )
+def test_the_dev_settings_never_reach_production(prod):
+    """The property this replaces a git-diff check with.
 
-    if committed.returncode != 0:
-        pytest.skip("cannot read the committed production config")
+    This started as "production is byte-identical to HEAD", which was true for
+    the milestone that wrote it and is now wrong twice over: the dead-man's
+    switch legitimately adds a receiver to production, and once committed the
+    comparison passes trivially against itself. What actually matters is that
+    development's two deliberate relaxations never appear in the config that
+    talks to a real mail server.
+    """
+    settings = prod["global"]
 
-    assert yaml.safe_load(committed.stdout) == yaml.safe_load(PROD.read_text()), (
-        "alertmanager.production.yml changed in a development-only milestone"
+    assert settings["smtp_require_tls"] is True, (
+        "production inherited development's TLS relaxation"
     )
+    assert settings["smtp_smarthost"] != MAILHOG_SMTP
+    assert "mailhog" not in settings["smtp_smarthost"]
+
+    # Development has no credentials on purpose; production must have them, and
+    # from a mounted file rather than inline.
+    assert settings["smtp_auth_password_file"].startswith("/etc/alertmanager/secrets/")
+    assert "smtp_auth_password" not in settings
+
+    for receiver in _human_receivers(prod):
+        for config in receiver.get("email_configs", []):
+            assert "helpdoctor.local" not in config["to"], (
+                f"{receiver['name']} still points at the development address"
+            )
 
 
 # ---------------------------------------------------------------------------

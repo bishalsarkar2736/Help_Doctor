@@ -53,6 +53,31 @@ GITIGNORE = REPO / ".gitignore"
 
 MOUNT = "/etc/alertmanager/secrets"
 
+
+def _required_secret_names() -> list[str]:
+    """The secret files alertmanager.production.yml actually declares.
+
+    Derived, not listed. When the watchdog receiver was added these fixtures
+    hard-coded {slack_webhook, smtp_password} and three of them failed -- which
+    is the derivation working, but it also meant the fixtures asserted the very
+    thing they warn the implementation against. Reading the config keeps them
+    correct for whatever receiver comes next.
+    """
+    import yaml as _yaml
+
+    config = _yaml.safe_load((REPO / "alertmanager.production.yml").read_text())
+
+    return sorted(
+        reference.split(MOUNT + "/", 1)[1]
+        for reference in _gate().alertmanager_secret_references(config)
+    )
+
+
+def _gate():
+    import importlib
+
+    return importlib.import_module("scripts.check_production_env")
+
 # Documentation that must never tell an operator to lock a mounted secret to a
 # uid the container does not run as.
 DOCS = ["docs/DEPLOYMENT.md", "docs/MONITORING.md", "docs/CONFIGURATION.md",
@@ -148,9 +173,12 @@ def test_the_references_are_the_ones_the_config_actually_declares(gate):
     references = set(gate.alertmanager_secret_references(config))
 
     assert references == {
-        f"{MOUNT}/slack_webhook",
-        f"{MOUNT}/smtp_password",
+        f"{MOUNT}/{name}" for name in _required_secret_names()
     }, references
+
+    # The set is derived, but it must not be EMPTY -- a config that declares no
+    # secrets would make every check below vacuous.
+    assert len(references) >= 3, references
 
 
 def test_secret_references_are_found_however_deeply_nested(gate):
@@ -212,7 +240,7 @@ def test_a_missing_secret_is_rejected(clean_gate, secrets_dir):
 
 def test_a_secret_unreadable_by_the_container_is_rejected(clean_gate, secrets_dir):
     """0600 owned by the deploying user — the reproduced production failure."""
-    for name in ("slack_webhook", "smtp_password"):
+    for name in _required_secret_names():
         secret = secrets_dir / name
         secret.write_text("placeholder")
         secret.chmod(0o600)
@@ -221,14 +249,14 @@ def test_a_secret_unreadable_by_the_container_is_rejected(clean_gate, secrets_di
 
     failures = [e for e in clean_gate.ERRORS if "cannot read it" in e]
 
-    assert len(failures) == 2, clean_gate.ERRORS
+    assert len(failures) == len(_required_secret_names()), clean_gate.ERRORS
     assert all("alerts fire and reach nobody" in e for e in failures)
 
 
 def test_a_secret_at_0640_is_still_rejected(clean_gate, secrets_dir):
     """Measured: 0640 fails too. Group access does not help when the container's
     gid is not the file's gid."""
-    for name in ("slack_webhook", "smtp_password"):
+    for name in _required_secret_names():
         secret = secrets_dir / name
         secret.write_text("placeholder")
         secret.chmod(0o640)
@@ -240,7 +268,7 @@ def test_a_secret_at_0640_is_still_rejected(clean_gate, secrets_dir):
 
 def test_a_readable_644_secret_is_accepted(clean_gate, secrets_dir):
     """The documented simple convention."""
-    for name in ("slack_webhook", "smtp_password"):
+    for name in _required_secret_names():
         secret = secrets_dir / name
         secret.write_text("placeholder")
         secret.chmod(0o644)
@@ -248,7 +276,9 @@ def test_a_readable_644_secret_is_accepted(clean_gate, secrets_dir):
     clean_gate.check_alertmanager_secrets({})
 
     assert clean_gate.ERRORS == []
-    assert len([o for o in clean_gate.OK if "readable by Alertmanager" in o]) == 2
+    assert len([o for o in clean_gate.OK if "readable by Alertmanager" in o]) == len(
+        _required_secret_names()
+    )
 
 
 def test_a_600_secret_owned_by_the_container_uid_is_accepted(
@@ -256,14 +286,14 @@ def test_a_600_secret_owned_by_the_container_uid_is_accepted(
 ):
     """The documented alternative for hosts with untrusted local users:
     chown 65534 + chmod 600. It must not be reported as a failure."""
-    for name in ("slack_webhook", "smtp_password"):
+    for name in _required_secret_names():
         secret = secrets_dir / name
         secret.write_text("placeholder")
         secret.chmod(0o600)
 
     # Both files, presented as owned by nobody.
     original = Path.stat
-    targets = {secrets_dir / "slack_webhook", secrets_dir / "smtp_password"}
+    targets = {secrets_dir / name for name in _required_secret_names()}
 
     def fake(self, *args, **kwargs):
         real = original(self, *args, **kwargs)
@@ -289,11 +319,16 @@ def test_a_600_secret_owned_by_the_container_uid_is_accepted(
 def test_a_group_readable_secret_owned_by_the_container_gid_is_accepted(
     clean_gate, secrets_dir, monkeypatch
 ):
-    secret = secrets_dir / "slack_webhook"
-    secret.write_text("placeholder")
-    secret.chmod(0o640)
-    (secrets_dir / "smtp_password").write_text("placeholder")
-    (secrets_dir / "smtp_password").chmod(0o644)
+    names = _required_secret_names()
+
+    # The first is presented as group-readable and owned by the container's gid;
+    # the rest are plainly readable, so only the doctored one is under test.
+    secret = secrets_dir / names[0]
+
+    for name in names:
+        path = secrets_dir / name
+        path.write_text("placeholder")
+        path.chmod(0o640 if name == names[0] else 0o644)
 
     _stat_as(monkeypatch, secret, mode=0o640, uid=0, gid=clean_gate.SECRET_READER_UID)
 
@@ -406,7 +441,7 @@ def test_the_check_is_actually_wired_into_the_gate(clean_gate, tmp_path, monkeyp
     secrets = tmp_path / "secrets"
     secrets.mkdir()
 
-    for name in ("slack_webhook", "smtp_password"):
+    for name in _required_secret_names():
         secret = secrets / name
         secret.write_text("placeholder")
         secret.chmod(0o600)

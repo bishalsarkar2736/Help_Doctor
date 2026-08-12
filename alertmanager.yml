@@ -50,6 +50,25 @@ route:
   receiver: default
 
   routes:
+    # THE DEAD-MAN'S SWITCH, and it must come first.
+    #
+    # Watchdog fires permanently by design (alerts.yml, group `watchdog`), so
+    # the one thing that must never happen is for it to reach a human receiver:
+    # a page that arrives every minute forever is how people learn to ignore
+    # pages. This route matches it and stops -- `continue` defaults to false, so
+    # no later route and not the default receiver ever sees it.
+    #
+    # It repeats every minute against an external monitor whose timeout is
+    # measured in minutes, so the heartbeat is several times faster than the
+    # window it has to beat. group_wait: 0s because batching a heartbeat only
+    # delays it.
+    - matchers:
+        - severity = "watchdog"
+      receiver: watchdog
+      group_wait: 0s
+      group_interval: 1m
+      repeat_interval: 1m
+
     # Critical alerts repeat more often and are not batched as long — these
     # are the "get out of bed" ones: the API is down, or money is being lost.
     - matchers:
@@ -88,6 +107,37 @@ receivers:
     email_configs:
       - to: "oncall@helpdoctor.local"
         send_resolved: true
+
+  # The dead-man's switch terminates here in development, deliberately with no
+  # delivery configured at all.
+  #
+  # A receiver with no configs is valid (verified with amtool against the pinned
+  # v0.33.1) and is the standard shape for a watchdog with no external monitor
+  # attached -- it consumes the alert so nothing else routes it, and sends
+  # nothing.
+  #
+  # WHY NOT url_file HERE, as production uses. Measured: amtool check-config
+  # SUCCEEDS when the referenced file is absent, unlike Prometheus's
+  # bearer_token_file which fails. So a dev config reading a secret would pass
+  # validation on a fresh clone, start cleanly, and then fail every single send
+  # at delivery time -- driving alertmanager_notifications_failed_total up and
+  # firing AlertmanagerNotificationsFailing permanently. Development must work
+  # with an empty ./secrets directory.
+  #
+  # WHY NOT an inline URL. There is no service in this compose file that accepts
+  # a webhook: MailHog answers 404 to POST on every path (that mistake is
+  # documented above), and adding a sink container would be new infrastructure
+  # for a heartbeat that has nowhere real to go in development.
+  #
+  # To exercise the delivery path locally, run a sink on the compose network and
+  # uncomment the block below -- this is what the throwaway Docker test does:
+  #
+  #   webhook_configs:
+  #     - url: "http://sink:8080/ping"
+  #       send_resolved: false
+  #
+  # Production is different and does deliver: see alertmanager.production.yml.
+  - name: watchdog
 
 # PRODUCTION — replace the receivers above with something that reaches a human.
 # Credentials must come from a mounted secret, never inline in this committed

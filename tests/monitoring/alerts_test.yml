@@ -318,3 +318,78 @@ tests:
                 The last reload failed and Alertmanager kept the configuration it
                 had before it. Routing and receivers are not what the config file
                 says. Check `amtool check-config` and the Alertmanager log.
+
+  # ===========================================================================
+  # THE DEAD-MAN'S SWITCH.
+  #
+  # Watchdog must fire with NOTHING to go on: no scrape targets, no series, no
+  # history. That is the state after a restart, after data loss, and on a
+  # brand-new deployment -- and it is exactly when the external monitor needs to
+  # hear from us. `input_series: []` is not an oversight here; it is the test.
+  # ===========================================================================
+
+  - interval: 1m
+    name: the watchdog fires immediately with no input series at all
+    input_series: []
+    alert_rule_test:
+      # t=0. `for: 0m` means the very first evaluation fires -- no pending state
+      # to wait out, because a heartbeat that takes minutes to start is a gap the
+      # external monitor would alarm on during every deploy.
+      - eval_time: 0m
+        alertname: Watchdog
+        exp_alerts:
+          - exp_labels:
+              severity: watchdog
+            exp_annotations:
+              summary: "Monitoring pipeline is alive (dead-man's switch)"
+              description: >-
+                This alert always fires and is delivered to an external heartbeat
+                monitor. Seeing it is normal. If the external monitor stops
+                receiving it, Prometheus or Alertmanager has stopped, the host is
+                down, or the network to the monitor is broken -- and no other
+                alert in this file can tell you, because they all depend on the
+                system that stopped.
+
+      # And it never stops. A watchdog that resolves is a watchdog that pages you
+      # by accident.
+      - eval_time: 60m
+        alertname: Watchdog
+        exp_alerts:
+          - exp_labels:
+              severity: watchdog
+            exp_annotations:
+              summary: "Monitoring pipeline is alive (dead-man's switch)"
+              description: >-
+                This alert always fires and is delivered to an external heartbeat
+                monitor. Seeing it is normal. If the external monitor stops
+                receiving it, Prometheus or Alertmanager has stopped, the host is
+                down, or the network to the monitor is broken -- and no other
+                alert in this file can tell you, because they all depend on the
+                system that stopped.
+
+  - interval: 1m
+    name: the watchdog is unaffected by application metrics
+    # It must not be possible for an application problem to silence the
+    # heartbeat: that would make the switch report the wrong failure.
+    input_series:
+      - series: 'up{job="fastapi"}'
+        values: "0x60"
+      - series: 'up{job="celery"}'
+        values: "0x60"
+      - series: 'up{job="alertmanager"}'
+        values: "0x60"
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: Watchdog
+        exp_alerts:
+          - exp_labels:
+              severity: watchdog
+            exp_annotations:
+              summary: "Monitoring pipeline is alive (dead-man's switch)"
+              description: >-
+                This alert always fires and is delivered to an external heartbeat
+                monitor. Seeing it is normal. If the external monitor stops
+                receiving it, Prometheus or Alertmanager has stopped, the host is
+                down, or the network to the monitor is broken -- and no other
+                alert in this file can tell you, because they all depend on the
+                system that stopped.

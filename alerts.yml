@@ -457,3 +457,47 @@ groups:
             The last reload failed and Alertmanager kept the configuration it had
             before it. Routing and receivers are not what the config file says.
             Check `amtool check-config` and the Alertmanager log.
+
+  # ---------------------------------------------------------------------------
+  # THE DEAD-MAN'S SWITCH.
+  #
+  # Every other rule in this file is evaluated BY Prometheus, so every other rule
+  # shares one blind spot: if Prometheus stops -- crashed, OOM-killed, host down,
+  # network partitioned, container never restarted after a reboot -- all 23 of
+  # them stop evaluating at the same instant and the system goes perfectly
+  # silent. Silence is indistinguishable from health. That is the failure this
+  # rule exists for, and nothing inside this stack can detect it, because
+  # anything inside the stack dies with it.
+  #
+  # The signal is therefore INVERTED. Watchdog fires permanently and is delivered
+  # continuously to an external heartbeat monitor; that monitor alerts when the
+  # stream STOPS. Absence becomes the alarm, and the alarm lives on infrastructure
+  # that does not share fate with this host.
+  #
+  # `vector(1)` depends on no metric, no scrape target and no series -- it is true
+  # even against a completely empty TSDB, which is exactly the state after a
+  # restart or a data loss. Verified by promtool at eval_time 0m with
+  # `input_series: []`.
+  #
+  # It is ROUTED, not silenced: alertmanager.yml sends severity=watchdog to a
+  # dedicated receiver and nowhere else. It must never reach a human receiver --
+  # a permanently-firing page trains people to ignore the ones that matter, which
+  # is the failure the top of this file warns about.
+  # ---------------------------------------------------------------------------
+  - name: watchdog
+    rules:
+      - alert: Watchdog
+        # Always firing, on purpose. An alert that is quiet when healthy cannot
+        # distinguish "healthy" from "dead".
+        expr: vector(1)
+        for: 0m
+        labels:
+          severity: watchdog
+        annotations:
+          summary: "Monitoring pipeline is alive (dead-man's switch)"
+          description: >-
+            This alert always fires and is delivered to an external heartbeat
+            monitor. Seeing it is normal. If the external monitor stops receiving
+            it, Prometheus or Alertmanager has stopped, the host is down, or the
+            network to the monitor is broken -- and no other alert in this file
+            can tell you, because they all depend on the system that stopped.

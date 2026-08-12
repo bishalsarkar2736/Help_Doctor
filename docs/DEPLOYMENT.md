@@ -208,6 +208,75 @@ receiver added later with a new credential is covered automatically. On a host
 with untrusted local users, `chown 65534 secrets/* && chmod 600 secrets/*` is
 accepted too.
 
+### 4.2.3 The dead-man's switch (external heartbeat)
+
+Every alert rule in `alerts.yml` is evaluated **by Prometheus**. If Prometheus
+stops — crashed, OOM-killed, host rebooted and the container never came back,
+network partitioned — all of them stop evaluating at the same instant and the
+system goes completely silent. Silence looks exactly like health. Nothing inside
+this Docker host can detect that, because anything inside it dies with it.
+
+The `Watchdog` alert inverts the signal: it fires permanently and is delivered
+every minute to an external monitor, which raises the alarm when the heartbeat
+**stops arriving**.
+
+**The receiving service must live outside this Docker host — outside this
+machine.** A monitor running here would die in exactly the scenarios it exists to
+report. This project uses [Healthchecks.io](https://healthchecks.io); any
+heartbeat/cron-monitoring service works, provided it alerts on *absence*.
+
+**Production provisioning happens at deployment time, not now.** The repository
+carries the rule, the routing and the tests; it deliberately contains no account,
+no check and no URL.
+
+When you are ready to deploy:
+
+```bash
+# 1. Create a check on the external service. Set its period to 1 minute and its
+#    grace period to ~5 minutes — the routing pings every minute, so ~5 minutes
+#    tolerates a few missed pings without a false alarm.
+
+# 2. Put the ping URL on the deploy host. It is a CREDENTIAL: anyone holding it
+#    can ping the monitor and silence your alarm.
+printf '%s' 'https://hc-ping.com/<your-uuid>' > secrets/watchdog_url
+
+# 3. 644, not 600 — Alertmanager runs as uid 65534 (see §4.2.2).
+chmod 644 secrets/watchdog_url
+
+# 4. The deploy gate refuses to proceed without it.
+python scripts/check_production_env.py .env.production
+```
+
+`secrets/` is gitignored and `scripts/check_production_env.py` derives this file
+from `alertmanager.production.yml` automatically — it requires the file to exist,
+to be a regular file, and to be readable by Alertmanager, the same as the SMTP
+password and Slack webhook.
+
+**Verify after deploying.** The switch is only real once the external service has
+seen a ping:
+
+```bash
+# Alertmanager should show the watchdog delivering, with no failures
+curl -s localhost:9093/metrics | grep '^alertmanager_notifications_total{integration="webhook"}'
+curl -s localhost:9093/metrics | grep '^alertmanager_notifications_failed_total' | awk '$2 != 0'
+```
+
+Then confirm the check has turned green on the external dashboard, and — the
+part people skip — **stop Alertmanager and confirm the external monitor alarms.**
+An untested dead-man's switch is indistinguishable from a working one right up
+until the day it matters.
+
+Two properties worth keeping in mind:
+
+* The `Watchdog` alert fires forever and appears permanently in the Alertmanager
+  UI. That is intended. It is routed to its own receiver with no email or chat
+  integration, so it never pages a human; a page arriving every minute is how
+  people learn to ignore pages.
+* It detects "Prometheus/Alertmanager stopped, or the host or its network is
+  gone". It does **not** detect a Prometheus that runs but evaluates wrongly, and
+  the heartbeat can keep flowing while one specific receiver is broken —
+  `AlertmanagerNotificationsFailing` covers that case.
+
 ### 4.3 Database
 
 - Provision managed Postgres (or a hardened self-managed instance).

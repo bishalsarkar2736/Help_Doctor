@@ -54,6 +54,23 @@ route:
   receiver: oncall-email
 
   routes:
+    # THE DEAD-MAN'S SWITCH, first and terminal.
+    #
+    # Watchdog fires permanently (alerts.yml, group `watchdog`) and must reach
+    # the external heartbeat monitor and nobody else. `continue` defaults to
+    # false, so matching here stops evaluation: it never reaches
+    # oncall-critical, never reaches oncall-email, never wakes anyone.
+    #
+    # One minute between pings against a monitor configured to alarm after
+    # several -- the heartbeat has to be comfortably faster than the window it
+    # is beating, or an ordinary delay pages you.
+    - matchers:
+        - severity = "watchdog"
+      receiver: watchdog
+      group_wait: 0s
+      group_interval: 1m
+      repeat_interval: 1m
+
     # Critical = get out of bed. The API is down, payments are failing, or no
     # Celery worker is running. Notified faster and repeated more often.
     - matchers:
@@ -93,3 +110,26 @@ receivers:
           {{ range .alerts }}{{ .annotations.summary }}
           {{ .annotations.description }}
           {{ end }}
+
+  # The dead-man's switch. The only receiver whose job is to be pinged when
+  # everything is FINE.
+  #
+  # The URL is the credential: anyone holding it can ping the monitor and
+  # suppress the alarm, so it is read from the mounted secret directory exactly
+  # like the SMTP password and the Slack webhook above -- never inline, because
+  # this file is committed.
+  #
+  # scripts/check_production_env.py derives this path from THIS file (it collects
+  # every *_file value it finds, at any nesting depth), so the deploy gate
+  # already requires secrets/watchdog_url to exist, to be a regular file, and to
+  # be readable by uid 65534. No extra validation was needed.
+  #
+  # send_resolved is false: a heartbeat has no resolved state, and a "resolved"
+  # ping would tell the monitor the opposite of what it means.
+  #
+  # Create the file at deployment time -- see docs/DEPLOYMENT.md. It is NOT in
+  # this repository and must never be.
+  - name: watchdog
+    webhook_configs:
+      - url_file: /etc/alertmanager/secrets/watchdog_url
+        send_resolved: false

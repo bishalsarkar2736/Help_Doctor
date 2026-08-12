@@ -62,7 +62,7 @@ curl -s localhost:9093/metrics | grep '^alertmanager_notifications_failed_total'
 
 ## The alert rules
 
-23 rules in 8 groups, in [`alerts.yml`](../alerts.yml). Every rule should be
+24 rules in 9 groups, in [`alerts.yml`](../alerts.yml). Every rule should be
 something a human would act on; alerts that fire on noise train people to ignore
 the ones that matter.
 
@@ -132,8 +132,14 @@ the ones that matter.
 > **The limit of the last group.** An alert about broken delivery is delivered by
 > the thing it reports broken. These rules make the failure visible in the
 > Prometheus UI, in Grafana and in the firing history — where it was invisible —
-> but they cannot page through a path that is down. Closing that needs a
-> dead-man's-switch routed to an external service, which does not exist yet.
+> but they cannot page through a path that is down. That is what the `watchdog`
+> group below is for.
+
+**watchdog** — the dead-man's switch
+
+| alert | severity | why |
+|---|---|---|
+| `Watchdog` | watchdog | always firing, on purpose. Delivered continuously to an external monitor that alarms when the stream **stops** |
 
 Rule behaviour is unit-tested with `promtool` in
 [`tests/monitoring/alerts_test.yml`](../tests/monitoring/alerts_test.yml) — these
@@ -181,10 +187,12 @@ no status-code metric and no Celery scraping — are closed.
   `status`, so error rates are attributable per route even though latency is not.
 * **No Postgres or Redis exporter**, so connection saturation, replication lag
   and eviction rates are invisible.
-* **No dead-man's switch.** Nothing detects Prometheus itself being down, or the
-  whole monitoring stack being stopped — by definition, a system that has
-  stopped cannot alert on its own absence. See the note under
-  `alerting_pipeline` above.
+* **The dead-man's switch needs an external endpoint before it protects
+  anything.** The `Watchdog` rule and its routing are in the repository; the
+  Healthchecks.io check that receives it is provisioned at deployment time (see
+  below). Until `secrets/watchdog_url` exists on the deploy host, the switch is
+  wired but not armed — production deploys are blocked on it by
+  `scripts/check_production_env.py`.
 * **`login_attempts_total` and `db_retry_total` have no series until first use.**
   They are labelled counters, so their children only exist after a login attempt
   or a retry. An empty query result means "has not happened yet", not "not
