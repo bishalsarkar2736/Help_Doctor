@@ -14,6 +14,9 @@ from app.services.notification_receipt_service import (
     mark_notifications_seen,
 )
 
+from app.services.realtime_dashboard_service import (
+    dashboard_channel,
+)
 from app.services.presence_broadcast_service import (
     broadcast_presence,
 )
@@ -65,10 +68,26 @@ async def websocket_endpoint(
 
     if user.role == UserRole.ADMIN:
 
-        await manager.subscribe(
-            "admin_dashboard",
-            websocket,
-        )
+        # Their own clinic's dashboard, not everyone's. This was the shared
+        # name "admin_dashboard", so every clinic's admins sat in one channel
+        # and each clinic's dashboard update was delivered to all of them.
+        #
+        # An admin with no clinic subscribes to no dashboard rather than to a
+        # shared one: resolve_clinic_id and _searcher_clinic_id both refuse
+        # such an account, and a socket is not the place to invent an exception.
+        if user.clinic_id:
+
+            await manager.subscribe(
+                dashboard_channel(user.clinic_id),
+                websocket,
+            )
+
+        else:
+
+            logger.warning(
+                "admin_without_clinic_not_subscribed_to_dashboard",
+                extra={"user_id": user.id},
+            )
 
         await manager.subscribe(
             "presence_updates",
@@ -340,7 +359,11 @@ async def websocket_endpoint(
         try:
             if user.role == UserRole.ADMIN:
                 try:
-                    await manager.unsubscribe("admin_dashboard", websocket)
+                    if user.clinic_id:
+                        await manager.unsubscribe(
+                            dashboard_channel(user.clinic_id),
+                            websocket,
+                        )
                 except Exception:
                     logger.exception("unsubscribe_admin_failed", extra={"user_id": user_id})
 

@@ -3,14 +3,19 @@ from unittest.mock import AsyncMock, patch
 from app.models.user import UserRole
 
 
-def build_user(role=UserRole.PATIENT):
+def build_user(role=UserRole.PATIENT, clinic_id=1):
 
+    # clinic_id is a real column on User, and the connect handler reads it to
+    # pick which clinic's dashboard channel an admin joins. The stub carried
+    # only id and role, so it described a user that cannot exist and the
+    # handler raised AttributeError rather than failing on anything real.
     return type(
         "User",
         (),
         {
             "id": 1,
             "role": role,
+            "clinic_id": clinic_id,
         },
     )()
 
