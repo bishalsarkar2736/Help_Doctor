@@ -13,11 +13,15 @@ Every test here pairs a denial with the corresponding allowed case, so a
 regression that breaks the feature outright cannot masquerade as good security.
 """
 
+from datetime import datetime, timedelta
+
 import pytest
 from sqlalchemy import select
 
+from app.core.time import UTC
 from app.models.appointment import AppointmentStatus
 from app.models.phi_access_log import PHIAccessLog, PHIResourceType
+from tests.conftest import valid_slot
 
 
 # ---------------------------------------------------------------------------
@@ -344,6 +348,120 @@ async def test_a_cross_tenant_read_is_not_logged_against_the_readers_clinic(
     assert rows == [], (
         "clinic B's patient was written into clinic A's PHI access log"
     )
+
+
+# ---------------------------------------------------------------------------
+# 4. Selecting a patient is not reading their record
+#
+# The two halves of this are each well covered — 29 tests for the search
+# scoping and its first-booking exception, and the record-read tests above —
+# but nothing asserted them TOGETHER, and together is where the product rule
+# lives:
+#
+#     Rahim calls clinic A. Reception verifies who he is, finds him by the
+#     phone number he just gave them, and books him with Doctor A. Reception
+#     must be able to do all of that WITHOUT his medical record.
+#
+# search_patients lets a caller holding a full email or phone reach a patient
+# outside their clinic — the identifier is the authorisation, and without it
+# reception deadlocks, since a patient becomes findable by being booked and is
+# booked by first being found. The risk that opens is the assumption that
+# "I can see them in search" means "I may open their chart".
+#
+# These two tests pin the composition, so the rule survives someone widening
+# PatientSearchOut for a booking screen, or relaxing the record read because
+# reception can already see the patient in the list.
+# ---------------------------------------------------------------------------
+
+
+#: Every clinical field on PatientRead, plus the value other_clinic_patient is
+#: actually created with. Checked against the raw response bytes rather than
+#: parsed keys, since a nested or renamed field would still be a disclosure.
+CLINICAL_FIELDS = (
+    "allergies",
+    "current_medications",
+    "chronic_conditions",
+    "blood_type",
+    "emergency_contact_name",
+    "emergency_contact_phone",
+    "date_of_birth",
+    "Penicillin",
+)
+
+
+@pytest.mark.asyncio
+async def test_finding_a_patient_by_identifier_does_not_expose_their_record(
+    client, auth_receptionist, other_clinic_patient
+):
+    """Reception may confirm the person on the phone. That is all."""
+
+    # The exact phone Rahim just read out. He has never been to this clinic.
+    search = await client.get(
+        "/patients/search",
+        params={"q": "01900000000"},
+        headers=auth_receptionist["headers"],
+    )
+    assert search.status_code == 200, search.text
+
+    results = search.json()
+
+    assert any(row["user_id"] == other_clinic_patient.id for row in results), (
+        "the first-booking exception did not surface the patient, so reception "
+        "cannot book someone who has never attended — the deadlock this "
+        "exception exists to break"
+    )
+
+    # Enough to identify and book: who they are, and how to reach them.
+    row = next(r for r in results if r["user_id"] == other_clinic_patient.id)
+    assert {"id", "user_id", "full_name", "email", "phone"} >= set(row)
+
+    for field in CLINICAL_FIELDS:
+        assert field not in search.text, (
+            f"{field!r} appeared in a patient SELECTION response"
+        )
+
+    # And the record itself stays shut: findable is not readable.
+    record = await client.get(
+        f"/patients/{other_clinic_patient.id}",
+        headers=auth_receptionist["headers"],
+    )
+    assert record.status_code in (403, 404), record.text
+
+    for field in CLINICAL_FIELDS:
+        assert field not in record.text
+
+
+@pytest.mark.asyncio
+async def test_booking_the_patient_is_what_opens_their_record(
+    client, auth_receptionist, other_clinic_patient, doctor, doctor_availability
+):
+    """The paired allow-case, and the rest of Rahim's call.
+
+    Once reception books him at their clinic he is their patient, and the desk
+    that will receive him can see the chart. This is what stops the test above
+    from being satisfied by refusing reception everything — the boundary is the
+    relationship, not the role.
+    """
+
+    slot = valid_slot(datetime.now(UTC) + timedelta(days=1))
+
+    booking = await client.post(
+        "/appointments/",
+        json={
+            "doctor_id": doctor.id,
+            "scheduled_at": slot.isoformat(),
+            "patient_id": other_clinic_patient.id,
+        },
+        headers=auth_receptionist["headers"],
+    )
+    assert booking.status_code == 200, booking.text
+
+    record = await client.get(
+        f"/patients/{other_clinic_patient.id}",
+        headers=auth_receptionist["headers"],
+    )
+    assert record.status_code == 200, record.text
+    assert record.json()["user_id"] == other_clinic_patient.id
 
 
 @pytest.mark.asyncio
