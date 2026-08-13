@@ -204,6 +204,148 @@ async def test_filtering_by_another_clinics_patient_returns_nothing(
     assert res.json()["total_count"] == 0
 
 
+# ---------------------------------------------------------------------------
+# 3. The same read, by the two roles that were never tested on it
+#
+# test_doctor_cannot_read_a_patient_from_another_clinic at the top of this file
+# covers GET /patients/{id} for a DOCTOR, and the handler guards that branch by
+# requiring an appointment with that doctor. ADMIN and RECEPTIONIST reach the
+# same handler through the same require_roles, and there is no branch for them
+# at all: `clinic_id = current_user.clinic_id` is assigned for the log and the
+# record is returned.
+#
+# Counting the whole suite, GET /patients/{id} is called 8 times as auth_doctor,
+# 5 as other_clinic_doctor, once as auth_patient, and never as either of the two
+# roles that are unguarded.
+#
+# The response is PatientRead: allergies, current medications, chronic
+# conditions, blood type. Patient ids are sequential user ids.
+#
+# WHAT "OWN CLINIC" MEANS HERE
+# Patients are global identities — they carry no clinic_id, and
+# test_a_patient_is_not_bound_to_a_clinic pins that. A clinic's relationship to
+# a patient is derived from appointments, which is the rule search_patients
+# already states: "restricted to patients with at least one appointment at
+# clinic_id". The allow-cases below therefore give clinic A's patient a real
+# appointment at clinic A, so they keep passing under that rule rather than
+# only under today's absent one.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_admin_cannot_read_another_clinics_patient_record(
+    client, other_clinic_patient, auth_admin
+):
+    """The admin twin of the doctor test at the top of this file."""
+
+    res = await client.get(
+        f"/patients/{other_clinic_patient.id}", headers=auth_admin["headers"]
+    )
+
+    assert res.status_code in (403, 404), res.text
+
+
+@pytest.mark.asyncio
+async def test_receptionist_cannot_read_another_clinics_patient_record(
+    client, other_clinic_patient, auth_receptionist
+):
+    """Same handler, same gap, and typically the least-trusted staff account."""
+
+    res = await client.get(
+        f"/patients/{other_clinic_patient.id}",
+        headers=auth_receptionist["headers"],
+    )
+
+    assert res.status_code in (403, 404), res.text
+
+
+@pytest.mark.asyncio
+async def test_no_clinical_detail_leaks_in_the_refused_response(
+    client, other_clinic_patient, auth_admin
+):
+    """Asserted on the body, not only the status code.
+
+    other_clinic_patient is created with allergies="Penicillin". A status code
+    can be corrected while the payload still ships, so this checks the bytes.
+    """
+
+    res = await client.get(
+        f"/patients/{other_clinic_patient.id}", headers=auth_admin["headers"]
+    )
+
+    assert "Penicillin" not in res.text
+    assert "allergies" not in res.text
+
+
+@pytest.mark.asyncio
+async def test_an_admin_can_read_a_patient_of_their_own_clinic(
+    client, auth_admin, auth_doctor, patient_user, appointment_factory
+):
+    """The paired allow-case. Without it, denying every admin would pass."""
+
+    await appointment_factory(
+        patient_id=patient_user.id,
+        doctor_id=auth_doctor["doctor"].id,
+        status=AppointmentStatus.CONFIRMED,
+    )
+
+    res = await client.get(
+        f"/patients/{patient_user.id}", headers=auth_admin["headers"]
+    )
+
+    assert res.status_code == 200, res.text
+    assert res.json()["user_id"] == patient_user.id
+
+
+@pytest.mark.asyncio
+async def test_a_receptionist_can_read_a_patient_of_their_own_clinic(
+    client, auth_receptionist, auth_doctor, patient_user, appointment_factory
+):
+    await appointment_factory(
+        patient_id=patient_user.id,
+        doctor_id=auth_doctor["doctor"].id,
+        status=AppointmentStatus.CONFIRMED,
+    )
+
+    res = await client.get(
+        f"/patients/{patient_user.id}", headers=auth_receptionist["headers"]
+    )
+
+    assert res.status_code == 200, res.text
+    assert res.json()["user_id"] == patient_user.id
+
+
+@pytest.mark.asyncio
+async def test_a_cross_tenant_read_is_not_logged_against_the_readers_clinic(
+    client, db, other_clinic_patient, auth_admin, default_clinic
+):
+    """The audit trail must not record clinic B's patient under clinic A.
+
+    log_phi_access is called with clinic_id=current_user.clinic_id, so today
+    this read is attributed to the READER's clinic. That is the inverse of what
+    test_access_is_recorded_against_the_clinic_it_happened_in guarantees for the
+    doctor path, and it means the owning clinic cannot see the access in their
+    own log while another clinic's log gains a patient id belonging to them.
+    """
+
+    await client.get(
+        f"/patients/{other_clinic_patient.id}", headers=auth_admin["headers"]
+    )
+
+    rows = (
+        await db.scalars(
+            select(PHIAccessLog).where(
+                PHIAccessLog.patient_id == other_clinic_patient.id,
+                PHIAccessLog.clinic_id == default_clinic.id,
+            )
+        )
+    ).all()
+
+    assert rows == [], (
+        "clinic B's patient was written into clinic A's PHI access log"
+    )
+
+
 @pytest.mark.asyncio
 async def test_non_admin_roles_cannot_read_the_access_log(
     client, auth_doctor, auth_patient, default_clinic

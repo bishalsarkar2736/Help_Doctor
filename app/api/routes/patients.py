@@ -184,10 +184,22 @@ async def get_patient_record(
     if patient is None:
         raise NotFoundError("Patient not found")
 
-    # A doctor may only view patients they have a treatment relationship with
-    # (an appointment). Admin/receptionist manage the clinic more broadly.
-    clinic_id = current_user.clinic_id
+    # The clinic comes from the authenticated principal, never from the
+    # request — the same resolution /patients/search uses, and for the same
+    # reason its docstring gives.
+    #
+    # This previously read `current_user.clinic_id` and was only ever narrowed
+    # inside the DOCTOR branch, so ADMIN and RECEPTIONIST reached the return
+    # with no check of any kind: any clinic's admin or receptionist could read
+    # any patient's record — allergies, medications, chronic conditions, blood
+    # type — by walking sequential user ids. The read was then logged under the
+    # READER's clinic, so the clinic the patient actually belongs to could not
+    # see it in their own access log.
+    clinic_id = await _searcher_clinic_id(db, current_user)
+
     if current_user.role == UserRole.DOCTOR:
+        # Stricter than the clinic rule below, and deliberately kept: a doctor
+        # sees the patients they treat, not every patient of their clinic.
         doctor = await db.scalar(
             select(Doctor).where(Doctor.user_id == current_user.id)
         )
@@ -201,7 +213,24 @@ async def get_patient_record(
         )
         if not has_relationship:
             raise ForbiddenError("No treatment relationship with this patient")
-        clinic_id = doctor.clinic_id
+    else:
+        # ADMIN and RECEPTIONIST manage the clinic more broadly — but "the
+        # clinic", not every clinic. Patients carry no clinic_id (they are
+        # global identities, and may attend several), so a clinic's claim on a
+        # patient is derived from appointments. That is the rule
+        # search_patients already states: "at least one appointment at
+        # clinic_id". Using the same rule here keeps one definition of whose
+        # patient this is, rather than a second, laxer one on this route.
+        treated_at_this_clinic = await db.scalar(
+            select(Appointment.id)
+            .where(
+                Appointment.patient_id == patient_user_id,
+                Appointment.clinic_id == clinic_id,
+            )
+            .limit(1)
+        )
+        if not treated_at_this_clinic:
+            raise ForbiddenError("No treatment relationship with this clinic")
 
     # PatientRead exposes allergies, current medications, chronic conditions and
     # blood type — this read is a PHI disclosure and must leave a trace.
