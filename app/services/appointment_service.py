@@ -193,6 +193,36 @@ async def get_appointment_by_id(
         if appointment.doctor_id != doctor.id:
             raise ForbiddenError("Not your appointment")
 
+    elif user.role in (UserRole.ADMIN, UserRole.RECEPTIONIST):
+
+        # Clinic staff manage their own clinic's schedule. This branch did not
+        # exist: PATIENT and DOCTOR were checked and everyone else fell through
+        # to the return, so another clinic's admin or receptionist could load
+        # any appointment — and this function is what check-in and
+        # move-to-waiting load through, making it a cross-clinic write.
+        #
+        # Fails closed on a staff account with no clinic, which is a user that
+        # should not exist: `_searcher_clinic_id` and `resolve_clinic_id` both
+        # refuse one.
+        if (
+            not user.clinic_id
+            or appointment.clinic_id != user.clinic_id
+        ):
+            raise ForbiddenError(
+                "Cross-clinic access denied"
+            )
+
+    else:
+
+        # SUPER_ADMIN reaches here. It operates on the platform plane and is
+        # not a superset of a clinic admin — the same rule user_deletion_service
+        # states — so it has no clinic to compare an appointment against.
+        #
+        # An explicit refusal rather than a fall-through: an unenumerated role
+        # silently returning the row is exactly how this defect existed, and
+        # the next role added to UserRole would inherit it.
+        raise ForbiddenError("Not allowed")
+
     return appointment
 
 
@@ -791,8 +821,9 @@ async def _book_appointment_internal(
     patient: User,
     doctor_id: int,
     scheduled_at: datetime,
+    booked_by: User | None = None,
 ) -> tuple [Appointment, Doctor]:
-    
+
     doctor_result = await db.execute(
         select(Doctor)
         .where(Doctor.id == doctor_id)
@@ -802,6 +833,33 @@ async def _book_appointment_internal(
 
     if not doctor:
         raise BadRequestError("Invalid doctor")
+
+    # BOOKING ON SOMEONE ELSE'S BEHALF IS BOUNDED BY THE ACTOR'S OWN CLINIC.
+    #
+    # The appointment's tenant comes from the doctor (clinic_id=doctor.clinic_id
+    # below), and this function previously never saw the actor at all — so a
+    # receptionist at clinic A naming clinic B's doctor wrote an appointment
+    # into clinic B's schedule and its live queue.
+    #
+    # It is also how a treatment relationship comes into existence: patient
+    # search and the patient record read both scope to "has an appointment at
+    # this clinic", so an unbounded booking endpoint can manufacture the
+    # relationship those checks rely on.
+    #
+    # Checked before doctor status, clinic acceptance and slot availability, so
+    # a refusal never depends on the slot happening to be taken.
+    #
+    # Self-booking is deliberately untouched: patients are global identities and
+    # the public directory exists for them to book a clinic they have never
+    # visited.
+    if booked_by is not None and booked_by.id != patient.id:
+        if (
+            not booked_by.clinic_id
+            or doctor.clinic_id != booked_by.clinic_id
+        ):
+            raise ForbiddenError(
+                "Cannot book with another clinic's doctor"
+            )
 
     if doctor.status != DoctorStatus.APPROVED:
         raise ForbiddenError("Doctor not verified")
@@ -886,6 +944,8 @@ async def book_appointment(
     doctor_id: int,
     scheduled_at: datetime,
     correlation_id: str | None = None,
+    *,
+    booked_by: User | None = None,
 ) -> Appointment:
     
     with tracer.start_as_current_span(
@@ -930,6 +990,7 @@ async def book_appointment(
                     patient=patient,
                     doctor_id=doctor_id,
                     scheduled_at=scheduled_at,
+                    booked_by=booked_by,
                 )
 
             #return await with_retry(_run, db)

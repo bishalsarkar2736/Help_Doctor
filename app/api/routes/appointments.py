@@ -103,7 +103,7 @@ async def create_appointment(
     if not idempotency_key:
         # fallback (optional)
         appointment = await book_appointment(
-            db, booking_patient, doctor_id, scheduled_at
+            db, booking_patient, doctor_id, scheduled_at, booked_by=user
         )
 
         return {
@@ -114,9 +114,18 @@ async def create_appointment(
         }
 
     # 🔥 2. CREATE REQUEST HASH
+    #
+    # patient_id is part of the request's identity, not decoration: reception
+    # books for different people from one desk. Without it, two bookings that
+    # differ only in WHO they are for hash the same, and the second is answered
+    # from the first's stored response — no appointment created, and the first
+    # patient's appointment id returned for the second. The mismatch guard
+    # below exists to catch exactly that and cannot fire on a field the hash
+    # does not include.
     request_body = {
         "doctor_id": doctor_id,
         "scheduled_at": scheduled_at.isoformat(),
+        "patient_id": booking_patient.id,
     }
 
     request_hash = create_request_hash(request_body)
@@ -158,6 +167,7 @@ async def create_appointment(
         booking_patient,
         doctor_id,
         scheduled_at,
+        booked_by=user,
     )
 
     # 🔥 4. SAFE RESPONSE (IMPORTANT)

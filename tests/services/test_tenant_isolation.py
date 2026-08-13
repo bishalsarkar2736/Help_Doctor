@@ -8,7 +8,7 @@ from app.core.time import UTC
 from app.models.clinic import Clinic
 from app.models.user import User, UserRole
 from app.models.doctor import Doctor, DoctorStatus
-from app.models.appointment import Appointment
+from app.models.appointment import Appointment, AppointmentStatus
 from app.models.prescription import Prescription
 from app.services.appointment_service import (
     get_appointment_by_id,
@@ -354,3 +354,120 @@ async def test_the_other_clinics_own_admin_can_read_it_by_appointment(
     )
 
     assert prescription.id == other_clinic_prescription.id
+
+
+# ---------------------------------------------------------------------------
+# get_appointment_by_id: the same gap, in the appointment domain
+#
+# The first test in this file proves the boundary for a DOCTOR. The function
+# has exactly two authorization branches -- PATIENT (own appointment) and
+# DOCTOR (clinic + ownership) -- and then returns. ADMIN, RECEPTIONIST and
+# SUPER_ADMIN reach that return with no check.
+#
+# It is the loader for six endpoints, four of them reachable by those roles:
+#
+#   GET  /appointments/{id}                  any authenticated user
+#   GET  /appointments/{id}/queue-position   any authenticated user
+#   POST /appointments/{id}/check-in         DOCTOR, RECEPTIONIST, ADMIN
+#   POST /appointments/{id}/move-to-waiting  DOCTOR, RECEPTIONIST, ADMIN
+#
+# so the last two are cross-tenant WRITES into another clinic's live queue.
+# ---------------------------------------------------------------------------
+
+
+@pytest_asyncio.fixture
+async def other_clinic_appointment(db, second_clinic, other_clinic_patient):
+    """The appointment clinic B's own patient fixture already creates."""
+
+    appointment = await db.scalar(
+        select(Appointment).where(
+            Appointment.patient_id == other_clinic_patient.id,
+            Appointment.clinic_id == second_clinic.id,
+        )
+    )
+
+    assert appointment is not None, "fixture setup: clinic B has no appointment"
+
+    return appointment
+
+
+@pytest.mark.asyncio
+async def test_admin_cannot_access_other_clinic_appointment(
+    db, auth_admin, other_clinic_appointment
+):
+    with pytest.raises((ForbiddenError, NotFoundError)):
+        await get_appointment_by_id(
+            db=db,
+            appointment_id=other_clinic_appointment.id,
+            user=auth_admin["user"],
+        )
+
+
+@pytest.mark.asyncio
+async def test_receptionist_cannot_access_other_clinic_appointment(
+    db, auth_receptionist, other_clinic_appointment
+):
+    with pytest.raises((ForbiddenError, NotFoundError)):
+        await get_appointment_by_id(
+            db=db,
+            appointment_id=other_clinic_appointment.id,
+            user=auth_receptionist["user"],
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_platform_super_admin_does_not_reach_clinic_appointments(
+    db, auth_super_admin, other_clinic_appointment
+):
+    """SUPER_ADMIN operates on the platform plane and is not a superset of a
+    clinic admin — the same rule user_deletion_service already states. It has
+    no clinic to compare against, so the only safe answer is no.
+
+    Recorded as its own test because it is a decision, not a consequence: if
+    the platform role should read clinic appointments, this is the assertion to
+    change, and the branch it pins is one line.
+    """
+
+    with pytest.raises((ForbiddenError, NotFoundError)):
+        await get_appointment_by_id(
+            db=db,
+            appointment_id=other_clinic_appointment.id,
+            user=auth_super_admin["user"],
+        )
+
+
+@pytest.mark.asyncio
+async def test_the_other_clinics_own_admin_can_access_it(
+    db, other_clinic_admin, other_clinic_appointment
+):
+    """The paired allow-case."""
+
+    appointment = await get_appointment_by_id(
+        db=db,
+        appointment_id=other_clinic_appointment.id,
+        user=other_clinic_admin["user"],
+    )
+
+    assert appointment.id == other_clinic_appointment.id
+
+
+@pytest.mark.asyncio
+async def test_a_receptionist_can_access_their_own_clinics_appointment(
+    db, auth_receptionist, auth_doctor, patient_user, appointment_factory
+):
+    """Reception must keep the job they actually do: the front desk checks in
+    the patients of their own clinic."""
+
+    appointment = await appointment_factory(
+        patient_id=patient_user.id,
+        doctor_id=auth_doctor["doctor"].id,
+        status=AppointmentStatus.CONFIRMED,
+    )
+
+    loaded = await get_appointment_by_id(
+        db=db,
+        appointment_id=appointment.id,
+        user=auth_receptionist["user"],
+    )
+
+    assert loaded.id == appointment.id
