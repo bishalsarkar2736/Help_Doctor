@@ -296,6 +296,8 @@ async def validate_refund_access(
     # Admin can refund any payment
     # ---------------------------------
     if refunded_by.role == UserRole.ADMIN:
+        if payment.clinic_id != refunded_by.clinic_id:
+            raise ForbiddenError("Payment does not belong to your clinic")
         return
 
     # ---------------------------------

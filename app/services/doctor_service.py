@@ -55,27 +55,15 @@ async def create_doctor_profile(
     return doctor
 
 
-async def verify_doctor(
-    db: AsyncSession,
-    doctor_id: int,
-    current_user : User
-):
-    
-    DoctorPolicy.can_verify(current_user)
-
-    result = await db.execute(
-        select(Doctor).where(Doctor.id == doctor_id)
-    )
-    doctor = result.scalar_one_or_none()
-
-    if not doctor:
-        raise NotFoundError("Doctor not found")
-
-    doctor.status = DoctorStatus.APPROVED
-    await db.flush()
-    await db.refresh(doctor)
-
-    return doctor
+# verify_doctor was removed here. It approved a doctor selected by primary key
+# alone, behind a role-only check, so any clinic's admin could have approved
+# any clinic's doctor. Nothing called it: no route, no service, no test.
+#
+# It was also a second implementation of work that already exists.
+# admin_doctor_service.approve_doctor resolves the acting admin's clinic,
+# assigns the doctor to it, and is the function POST /admin/doctors/{id}/approve
+# actually reaches. Scoping this one would have left two approval paths, one of
+# them the wrong one to pick up.
 
 
 async def update_doctor_profile(

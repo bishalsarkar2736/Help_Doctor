@@ -576,3 +576,83 @@ async def test_refund_publishes_event(
     )
 
     assert payload["occurred_at"] is not None
+
+
+# ---------------------------------------------------------------------------
+# ADMIN, across clinics
+#
+# test_refund_requires_same_clinic above proves the boundary for a DOCTOR, by
+# reassigning one to another clinic. validate_refund_access checks the doctor's
+# clinic against the payment's — but returns unconditionally for ADMIN, before
+# any comparison, under the comment "Admin can refund any payment".
+#
+# ADMIN is clinic-bound in this system (resolve_clinic_id raises "Admin not
+# assigned to clinic"; the platform role is SUPER_ADMIN), so "any payment"
+# spans tenants. This is a write, and it moves money through the live gateway.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_admin_cannot_refund_another_clinics_payment(
+    db,
+    default_clinic,
+    other_clinic_admin,
+):
+    """Clinic B's admin, against a payment that belongs to clinic A.
+
+    The gateway is mocked so that a failure here reports the real defect —
+    the refund being permitted — rather than a network error from the refund
+    proceeding to call bKash for real.
+    """
+
+    payment, _ = await create_success_payment(
+        db,
+        default_clinic,
+    )
+
+    with mock_bkash_refund() as gateway:
+
+        with pytest.raises(ForbiddenError):
+            await refund_payment(
+                db=db,
+                payment_id=payment.id,
+                refunded_by=other_clinic_admin["user"],
+                amount=Decimal("100"),
+                reason="Patient requested refund",
+            )
+
+        # Authorization must fail before any money moves.
+        gateway.assert_not_awaited()
+
+    await db.refresh(payment)
+
+    assert payment.status == PaymentStatus.SUCCESS
+
+
+@pytest.mark.asyncio
+async def test_the_payments_own_clinic_admin_can_still_refund(
+    db,
+    default_clinic,
+    auth_admin,
+):
+    """The paired allow-case: admins must keep the ability to refund inside
+    their own clinic, so the denial above cannot be satisfied by breaking
+    admin refunds altogether."""
+
+    payment, _ = await create_success_payment(
+        db,
+        default_clinic,
+    )
+
+    with mock_bkash_refund():
+        refunded_payment = await refund_payment(
+            db=db,
+            payment_id=payment.id,
+            refunded_by=auth_admin["user"],
+            amount=Decimal("100"),
+            reason="Patient requested refund",
+        )
+
+    await db.refresh(refunded_payment)
+
+    assert refunded_payment.status == PaymentStatus.REFUNDED

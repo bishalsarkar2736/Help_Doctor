@@ -1,9 +1,21 @@
 from app.try_except.exceptions import ForbiddenError
 from app.models.user import UserRole
-from app.models.doctor import DoctorStatus
 
 
 class DoctorPolicy:
+    """Role checks for doctor profiles.
+
+    `can_verify` and `can_be_viewed_by` were removed here. Both answered
+    "is this user an ADMIN?" and stopped, with no notion of which clinic the
+    doctor belonged to, so either would have approved or exposed another
+    tenant's doctor had anything called them. `can_be_viewed_by` had no
+    callers at all; `can_verify` was reached only from verify_doctor, which
+    was itself unreachable and is deleted with it.
+
+    Doctor approval lives in admin_doctor_service.approve_doctor, which
+    resolves the admin's clinic before assigning the doctor to it, and is the
+    function actually wired to POST /admin/doctors/{id}/approve.
+    """
 
     @staticmethod
     def can_create_profile(user):
@@ -11,26 +23,3 @@ class DoctorPolicy:
             return True
 
         raise ForbiddenError("Only doctors can create doctor profile")
-
-    @staticmethod
-    def can_verify(user):
-        if user.role == UserRole.ADMIN:
-            return True
-
-        raise ForbiddenError("Only admin can verify doctor")
-
-    @staticmethod
-    def can_be_viewed_by(user, doctor):
-        # Admin can view all
-        if user.role == UserRole.ADMIN:
-            return True
-
-        # Doctor can view own profile
-        if user.role == UserRole.DOCTOR and user.id == doctor.user_id:
-            return True
-
-        # Patient can view only verified doctors
-        if user.role == UserRole.PATIENT and doctor.status == DoctorStatus.APPROVED:
-            return True
-
-        raise ForbiddenError("You are not allowed to view this doctor")

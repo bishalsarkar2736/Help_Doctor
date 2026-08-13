@@ -202,8 +202,11 @@ async def toggle_user_active(
         payload=event,
     )
 
-    # ✅ 2. notify all admins (REAL-TIME ADMIN PANEL)
-    await notify_admins(db, event)
+    # ✅ 2. notify this clinic's admins (REAL-TIME ADMIN PANEL)
+    #
+    # The admin's own clinic, which the guard above has already established is
+    # also the toggled user's clinic.
+    await notify_admins(db, event, clinic_id=admin.clinic_id)
 
     return {
         "message": "User status updated",

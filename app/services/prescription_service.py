@@ -548,7 +548,8 @@ async def get_prescription_by_id(
             )
 
     elif user.role == UserRole.ADMIN:
-        pass
+        if prescription.clinic_id != user.clinic_id:
+            raise ForbiddenError("Cross-clinic access denied")
 
     else:
         raise ForbiddenError(
@@ -677,6 +678,7 @@ async def get_appointment_prescription(
         prescription = await db.scalar(
             query.where(
                 Prescription.appointment_id == appointment_id,
+                Prescription.clinic_id == user.clinic_id,
             )
         )
 
