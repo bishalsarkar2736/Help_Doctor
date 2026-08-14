@@ -94,6 +94,48 @@ def test_the_composed_url_is_still_available():
             "postgresql+asyncpg://app:secret%24pass@db:6543/helpdoctor",
             "port",
         ),
+    ],
+)
+def test_a_contradiction_refuses_to_start(url, expected):
+    """Host, port and database still have to agree.
+
+    These are the values whose disagreement sends migrations to one database
+    and queries to another, which is the failure this validator exists for.
+    Privilege separation did not relax any of them.
+    """
+    with pytest.raises(ValidationError) as exc:
+        _settings(DATABASE_URL=url)
+
+    assert expected in str(exc.value)
+
+
+# ---------------------------------------------------------------------------
+# Credentials, which privilege separation deliberately allows to differ
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "postgresql+asyncpg://helpdoctor_app:secret%24pass@db:5432/helpdoctor",
+        "postgresql+asyncpg://helpdoctor_app:apppw@db:5432/helpdoctor",
+    ],
+)
+def test_the_runtime_url_may_carry_a_different_role(url):
+    """THE POINT OF PRIVILEGE SEPARATION.
+
+    DATABASE_URL names the restricted runtime role while the POSTGRES_* parts
+    describe the owner, so a different user and password there is the intended
+    configuration rather than a contradiction. Same database, different rights.
+    """
+    settings = _settings(DATABASE_URL=url)
+
+    assert settings.database_url == url
+
+
+@pytest.mark.parametrize(
+    "url, expected",
+    [
         (
             "postgresql+asyncpg://other_user:secret%24pass@db:5432/helpdoctor",
             "user",
@@ -104,11 +146,26 @@ def test_the_composed_url_is_still_available():
         ),
     ],
 )
-def test_a_contradiction_refuses_to_start(url, expected):
+def test_the_migration_url_is_still_held_to_the_credentials(url, expected):
+    """MIGRATION_DATABASE_URL and the POSTGRES_* parts describe the SAME
+    privileged role, so a half-done rotation there is still a contradiction —
+    the protection that was relaxed for the runtime URL is kept here."""
+
     with pytest.raises(ValidationError) as exc:
-        _settings(DATABASE_URL=url)
+        _settings(MIGRATION_DATABASE_URL=url)
 
     assert expected in str(exc.value)
+
+
+def test_the_migration_url_must_name_the_same_database():
+    with pytest.raises(ValidationError) as exc:
+        _settings(
+            MIGRATION_DATABASE_URL=(
+                "postgresql+asyncpg://app:secret%24pass@db:5432/other_db"
+            )
+        )
+
+    assert "database" in str(exc.value)
 
 
 def test_the_message_names_what_disagrees():
@@ -124,10 +181,16 @@ def test_the_message_names_what_disagrees():
 
 
 def test_the_password_value_is_not_echoed():
-    """This is raised at startup and lands in logs."""
+    """This is raised at startup and lands in logs.
+
+    Asserted on MIGRATION_DATABASE_URL, since that is where a password
+    mismatch is still a contradiction.
+    """
     with pytest.raises(ValidationError) as exc:
         _settings(
-            DATABASE_URL="postgresql+asyncpg://app:rotated%24pass@db:5432/helpdoctor"
+            MIGRATION_DATABASE_URL=(
+                "postgresql+asyncpg://app:rotated%24pass@db:5432/helpdoctor"
+            )
         )
 
     assert "rotated" not in str(exc.value)

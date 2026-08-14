@@ -50,6 +50,20 @@ class Settings(BaseSettings):
     # scripts. Where both exist they must agree — enforced below.
     DATABASE_URL: str | None = None
 
+    # The same database, reached as the role that may change its schema.
+    #
+    # PRIVILEGE SEPARATION. The application performs no DDL — no create_all, no
+    # DDL(), and the only raw statement it runs is SELECT 1 in the health check
+    # — so the runtime has no need of a role that can drop a table. DATABASE_URL
+    # carries the restricted role; this carries the owner, and only Alembic and
+    # scripts/verify_schema read it.
+    #
+    # Optional, and it falls back to the POSTGRES_* parts. An environment that
+    # has not created the restricted role keeps exactly its previous behaviour:
+    # one credential, doing both jobs. Adopting separation is setting two
+    # variables, and rolling it back is unsetting one.
+    MIGRATION_DATABASE_URL: str | None = None
+
     # Connection pool, applied PER PROCESS. The ceiling is
     #   (api procs + celery children + beat) x (POOL_SIZE + MAX_OVERFLOW)
     # and it must stay under the server's max_connections, or Postgres starts
@@ -581,16 +595,28 @@ class Settings(BaseSettings):
 
     @property
     def database_url(self) -> str:
-        """The database everything talks to.
+        """The database the RUNTIME talks to, as the restricted role.
 
-        DATABASE_URL wins when set, because Alembic already prefers it. Having
-        the app disagree is what let migrations and queries reach two different
-        databases. One value now decides for both.
+        DATABASE_URL wins when set. Under privilege separation this carries the
+        least-privileged credential — DML only, no DDL, no ownership — and it
+        is what the API, the Celery worker and beat, and the outbox worker use.
+        Migrations do not use it; see migration_database_url.
         """
         return self.DATABASE_URL or self.composed_database_url
 
+    @property
+    def migration_database_url(self) -> str:
+        """The same database, as the role allowed to change its schema.
+
+        Alembic and scripts/verify_schema use this. It falls back to the
+        POSTGRES_* parts because those describe the owning role: an environment
+        that has not adopted privilege separation keeps exactly its previous
+        behaviour, with one credential doing both jobs.
+        """
+        return self.MIGRATION_DATABASE_URL or self.composed_database_url
+
     @model_validator(mode="after")
-    def _database_url_must_agree_with_parts(self) -> "Settings":
+    def _database_urls_must_agree_with_parts(self) -> "Settings":
         """Refuse to start on a contradictory database configuration.
 
         Both forms have to exist — the postgres container is configured from
@@ -600,45 +626,80 @@ class Settings(BaseSettings):
         way, the application went the other, and nothing said so until the
         schema and the data were already in two different databases.
 
+        WHAT PRIVILEGE SEPARATION CHANGED, AND WHAT IT DID NOT
+
+        DATABASE_URL now carries a DIFFERENT ROLE from the POSTGRES_* parts on
+        purpose: the runtime connects as the restricted role while the parts
+        describe the owner. So user and password are no longer compared for it.
+        Host, port and database still are, and that is the check that mattered
+        — the failure this validator exists to prevent is two DATABASES, not
+        two usernames.
+
+        MIGRATION_DATABASE_URL is held to the stricter rule, credentials
+        included, because it and the POSTGRES_* parts describe the same
+        privileged role. A half-done password rotation there is still caught.
+
         Compared field by field rather than as strings, so an equivalent URL
         written differently (percent-encoding, an explicit default port) is not
         reported as a conflict.
         """
-        if not self.DATABASE_URL:
-            return self
 
-        parsed = urlsplit(self.DATABASE_URL)
+        def _differences(url: str, *, compare_credentials: bool) -> list[str]:
+            parsed = urlsplit(url)
+            found: list[str] = []
 
-        differences = []
+            def _compare(label: str, from_url, from_parts) -> None:
+                # A part absent from the URL is not a contradiction — the URL
+                # is authoritative and may legitimately omit an optional
+                # component.
+                if from_url in (None, "") or from_url == from_parts:
+                    return
+                found.append(
+                    f"{label}: URL has {from_url!r}, parts have {from_parts!r}"
+                )
 
-        def _compare(label: str, from_url, from_parts) -> None:
-            # A part absent from the URL is not a contradiction — the URL is
-            # authoritative and may legitimately omit an optional component.
-            if from_url in (None, "") or from_url == from_parts:
-                return
-            differences.append(f"{label}: URL has {from_url!r}, parts have {from_parts!r}")
+            _compare("host", parsed.hostname, self.POSTGRES_HOST)
+            _compare("port", parsed.port, self.POSTGRES_PORT)
+            _compare("database", parsed.path.lstrip("/"), self.POSTGRES_DB)
 
-        _compare("host", parsed.hostname, self.POSTGRES_HOST)
-        _compare("port", parsed.port, self.POSTGRES_PORT)
-        _compare("database", parsed.path.lstrip("/"), self.POSTGRES_DB)
-        _compare("user", unquote(parsed.username or ""), self.POSTGRES_USER)
+            if compare_credentials:
+                _compare("user", unquote(parsed.username or ""), self.POSTGRES_USER)
 
-        # Reported without either value: a mismatch here is usually a half-done
-        # credential rotation, and the message goes to logs.
-        url_password = unquote(parsed.password or "")
+                # Reported without either value: a mismatch here is usually a
+                # half-done credential rotation, and the message goes to logs.
+                url_password = unquote(parsed.password or "")
 
-        if url_password and url_password != self.POSTGRES_PASSWORD:
-            differences.append(
-                "password: the URL and POSTGRES_PASSWORD are different"
-            )
+                if url_password and url_password != self.POSTGRES_PASSWORD:
+                    found.append(
+                        "password: the URL and POSTGRES_PASSWORD are different"
+                    )
 
-        if differences:
+            return found
+
+        problems: list[str] = []
+
+        if self.DATABASE_URL:
+            problems += [
+                f"DATABASE_URL {d}"
+                for d in _differences(self.DATABASE_URL, compare_credentials=False)
+            ]
+
+        if self.MIGRATION_DATABASE_URL:
+            problems += [
+                f"MIGRATION_DATABASE_URL {d}"
+                for d in _differences(
+                    self.MIGRATION_DATABASE_URL, compare_credentials=True
+                )
+            ]
+
+        if problems:
             raise ValueError(
-                "DATABASE_URL contradicts the POSTGRES_* settings, so "
-                "migrations and the application would use different "
-                "databases:\n  - "
-                + "\n  - ".join(differences)
-                + "\nMake them agree, or unset DATABASE_URL to use the parts."
+                "The database configuration contradicts the POSTGRES_* "
+                "settings, so migrations and the application would use "
+                "different databases:\n  - "
+                + "\n  - ".join(problems)
+                + "\nMake them agree on host, port and database. Only the "
+                "credentials may differ, and only on DATABASE_URL."
             )
 
         return self

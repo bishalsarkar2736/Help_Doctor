@@ -82,15 +82,30 @@ def run_migrations_online():
     #   1. explicit env vars (tests / deploys)
     #   2. a url already set on the config by the caller (e.g. conftest)
     #   3. the application settings, as a last resort for local runs
+    #
+    # MIGRATION FIRST, IN BOTH PAIRS.
+    #
+    # Under privilege separation the runtime connects as a restricted role that
+    # cannot create a table, so migrations must NOT use DATABASE_URL. The
+    # migration variables therefore win, and the runtime ones remain as the
+    # fallback for environments that have not separated the roles — where both
+    # names resolve to the same credential anyway.
+    #
+    # The test pair is checked before the deploy pair for the same reason it
+    # always was: a test run must not be steered by whatever is in .env.
     existing_url = config.get_main_option("sqlalchemy.url")
 
     database_url = (
-        os.getenv("TEST_DATABASE_URL")
+        os.getenv("TEST_MIGRATION_DATABASE_URL")
+        or os.getenv("TEST_DATABASE_URL")
+        or os.getenv("MIGRATION_DATABASE_URL")
         or os.getenv("DATABASE_URL")
     )
 
     if not database_url and (not existing_url or existing_url == PLACEHOLDER_URL):
-        database_url = get_settings().database_url
+        # settings.migration_database_url, not database_url: the same fallback
+        # to the POSTGRES_* parts, but named for the job it is doing.
+        database_url = get_settings().migration_database_url
 
     if database_url and "+asyncpg" in database_url:
         database_url = database_url.replace("+asyncpg", "+psycopg2")
