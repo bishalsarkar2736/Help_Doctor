@@ -123,16 +123,22 @@ def test_ws_subscribe(ws_client):
 
             websocket.receive_json()
 
+            # An arbitrary name is no longer a channel anyone may join:
+            # subscription is authorized per resource. This admin's own
+            # clinic dashboard is the channel they are entitled to, and it
+            # is decidable without the stub existing in the database.
+            channel = f"admin_dashboard:{user.clinic_id}"
+
             websocket.send_json({
                 "event": "subscribe",
-                "channel": "test_channel",
+                "channel": channel,
             })
 
             response = websocket.receive_json()
 
             assert response["version"] == 1
             assert response["event"] == "subscribed"
-            assert response["channel"] == "test_channel"
+            assert response["channel"] == channel
 
 
 def test_ws_unsubscribe(ws_client):
@@ -250,3 +256,78 @@ def test_ws_notification_seen(ws_client):
                 notification_ids=[1, 2, 3],
                 user_id=1,
             )
+
+def test_ws_subscribe_to_another_clinics_channel_is_refused(ws_client):
+    """The protocol half of the authorization fix.
+
+    The unit tests in test_channel_authorization.py decide the rule; this
+    asserts the handler actually consults it and refuses over the wire rather
+    than joining the channel and reporting success.
+    """
+
+    (
+        auth_patch,
+        online_patch,
+        offline_patch,
+        presence_patch,
+        user,
+    ) = websocket_patches(UserRole.ADMIN)
+
+    with (
+        auth_patch as mock_auth,
+        online_patch,
+        offline_patch,
+        presence_patch,
+    ):
+
+        mock_auth.return_value = user
+
+        with ws_client.websocket_connect("/ws") as websocket:
+
+            websocket.receive_json()
+
+            websocket.send_json({
+                "event": "subscribe",
+                "channel": f"admin_dashboard:{user.clinic_id + 1}",
+            })
+
+            response = websocket.receive_json()
+
+            assert response["version"] == 1
+            assert response["event"] == "error"
+            assert response["message"] == "subscribe_not_allowed"
+
+
+def test_ws_subscribe_to_an_arbitrary_channel_is_refused(ws_client):
+    """A name that corresponds to no resource is not a channel."""
+
+    (
+        auth_patch,
+        online_patch,
+        offline_patch,
+        presence_patch,
+        user,
+    ) = websocket_patches(UserRole.ADMIN)
+
+    with (
+        auth_patch as mock_auth,
+        online_patch,
+        offline_patch,
+        presence_patch,
+    ):
+
+        mock_auth.return_value = user
+
+        with ws_client.websocket_connect("/ws") as websocket:
+
+            websocket.receive_json()
+
+            websocket.send_json({
+                "event": "subscribe",
+                "channel": "test_channel",
+            })
+
+            response = websocket.receive_json()
+
+            assert response["event"] == "error"
+            assert response["message"] == "subscribe_not_allowed"

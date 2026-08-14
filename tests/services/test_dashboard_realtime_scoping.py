@@ -30,6 +30,7 @@ import pytest
 from app.services.realtime_dashboard_service import (
     dashboard_channel,
     publish_dashboard_update,
+    publish_doctor_queue_update,
 )
 from app.websocket.manager import manager
 
@@ -160,3 +161,67 @@ def test_admins_are_subscribed_to_their_own_clinics_channel():
         assert "clinic" in subscription.lower(), (
             f"dashboard subscription is not clinic-scoped: {subscription}"
         )
+
+
+# ---------------------------------------------------------------------------
+# The doctor queue channel — what makes the receptionist's view live
+#
+# publish_doctor_queue_update already fires from
+# handle_appointment_transition_side_effects on every transition into
+# CHECKED_IN, WAITING, IN_CONSULTATION or COMPLETED. Reception reads the queue
+# once from GET /appointments/queue and then subscribes to this channel for
+# everything after, so the dashboard needs no polling and no second API.
+#
+# Who may subscribe is decided in websocket/authorization.py; these assert the
+# delivery is per doctor, which is what makes that rule meaningful.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_queue_update_reaches_that_doctors_subscribers(
+    db, doctor, patient_user, appointment_factory, clean_channels
+):
+    from app.models.appointment import AppointmentStatus
+
+    await appointment_factory(
+        patient_id=patient_user.id,
+        doctor_id=doctor.id,
+        status=AppointmentStatus.WAITING,
+    )
+
+    desk = StubSocket()
+    await manager.subscribe(f"doctor_queue:{doctor.id}", desk)
+
+    await publish_doctor_queue_update(db=db, doctor_id=doctor.id)
+
+    assert len(desk.received) == 1
+    assert desk.received[0]["event"] == "doctor_queue_update"
+
+
+@pytest.mark.asyncio
+async def test_a_queue_update_does_not_reach_another_doctors_subscribers(
+    db, doctor, another_doctor, patient_user, appointment_factory,
+    clean_channels
+):
+    """Two doctors, two channels. A desk watching Doctor B must not be woken
+    by Doctor A's queue, or the multi-doctor view is one shared queue with
+    extra steps."""
+
+    from app.models.appointment import AppointmentStatus
+
+    await appointment_factory(
+        patient_id=patient_user.id,
+        doctor_id=doctor.id,
+        status=AppointmentStatus.WAITING,
+    )
+
+    watching_a = StubSocket()
+    watching_b = StubSocket()
+
+    await manager.subscribe(f"doctor_queue:{doctor.id}", watching_a)
+    await manager.subscribe(f"doctor_queue:{another_doctor.id}", watching_b)
+
+    await publish_doctor_queue_update(db=db, doctor_id=doctor.id)
+
+    assert len(watching_a.received) == 1
+    assert watching_b.received == []

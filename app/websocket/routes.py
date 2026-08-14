@@ -17,6 +17,8 @@ from app.services.notification_receipt_service import (
 from app.services.realtime_dashboard_service import (
     dashboard_channel,
 )
+from app.websocket.authorization import may_subscribe
+from app.db.postgres import AsyncSessionLocal
 from app.services.presence_broadcast_service import (
     broadcast_presence,
 )
@@ -280,6 +282,42 @@ async def websocket_endpoint(
                         "message": (
                             "invalid_subscribe_payload"
                         ),
+                    })
+
+                    continue
+
+                # A channel is a resource, and joining one is an
+                # authorization decision. This handler used to take the name
+                # from the client and subscribe unconditionally, so any
+                # authenticated socket could reach another clinic's dashboard
+                # or another doctor's waiting patients — and that made the
+                # per-clinic channel naming cosmetic, since the default
+                # subscription was only the polite path to a channel anyone
+                # could name.
+                #
+                # Its own session: the socket has no injected one, the same
+                # way decode_token_from_ws opens one to authenticate.
+                async with AsyncSessionLocal() as db:
+                    allowed = await may_subscribe(
+                        db,
+                        user,
+                        payload.channel,
+                    )
+
+                if not allowed:
+
+                    logger.warning(
+                        "ws_subscribe_denied",
+                        extra={
+                            "user_id": user_id,
+                            "channel": payload.channel,
+                        },
+                    )
+
+                    await websocket.send_json({
+                        "version": 1,
+                        "event": "error",
+                        "message": "subscribe_not_allowed",
                     })
 
                     continue
