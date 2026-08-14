@@ -74,19 +74,54 @@ def test_a_different_host_is_an_error(checker):
 
 
 def test_a_rotated_password_in_one_place_is_an_error(checker):
-    """Rotating the credential in the parts and not the URL, or the reverse."""
+    """Rotating the credential in the parts and not the URL, or the reverse.
+
+    Asserted on MIGRATION_DATABASE_URL. Under privilege separation that URL
+    and the POSTGRES_* parts still describe the SAME privileged role, so a
+    half-done rotation there remains a mistake — while DATABASE_URL carries a
+    different role on purpose and is no longer compared on credentials.
+    """
     env = dict(AGREEING)
+    env["MIGRATION_DATABASE_URL"] = env["DATABASE_URL"]
     env["POSTGRES_PASSWORD"] = "new$pass"
 
     checker.check_database_target(env)
 
     assert checker.ERRORS
-    assert "password" in checker.ERRORS[0]
+    assert any("password" in line for line in checker.ERRORS)
+
+
+def test_the_runtime_url_may_carry_the_restricted_role(checker):
+    """THE CONFIGURATION PRIVILEGE SEPARATION EXISTS TO PRODUCE.
+
+    A different user and password on DATABASE_URL is the intended state, not a
+    contradiction: the runtime connects with DML-only rights while the parts
+    describe the owner that runs migrations.
+    """
+    env = dict(AGREEING)
+    env["DATABASE_URL"] = (
+        "postgresql+asyncpg://helpdoctor_app:apppw@db:5432/helpdoctor"
+    )
+
+    checker.check_database_target(env)
+
+    assert not checker.ERRORS
+
+
+def test_sharing_one_credential_is_reported_but_not_fatal(checker):
+    """An environment that has not adopted separation still deploys — it is
+    running as it always did — but the deploy says so."""
+
+    checker.check_database_target(dict(AGREEING))
+
+    assert not checker.ERRORS
+    assert any("share one credential" in line for line in checker.WARNINGS)
 
 
 def test_the_password_value_is_not_printed(checker):
     """This runs in deploy output."""
     env = dict(AGREEING)
+    env["MIGRATION_DATABASE_URL"] = env["DATABASE_URL"]
     env["POSTGRES_PASSWORD"] = "hunter2secret"
 
     checker.check_database_target(env)

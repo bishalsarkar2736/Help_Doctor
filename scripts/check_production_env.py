@@ -131,46 +131,87 @@ def check_database_target(env: dict[str, str]) -> None:
 
     The app refuses to start on this now, but a deploy finds out sooner here.
     """
+    def _mismatches(url: str, name: str, *, credentials: bool) -> list[str]:
+        parsed = urlsplit(url)
+
+        checks = [
+            ("host", parsed.hostname, "POSTGRES_HOST"),
+            ("database", parsed.path.lstrip("/"), "POSTGRES_DB"),
+        ]
+
+        if credentials:
+            checks += [
+                ("user", unquote(parsed.username or ""), "POSTGRES_USER"),
+                ("password", unquote(parsed.password or ""), "POSTGRES_PASSWORD"),
+            ]
+
+        found = []
+
+        for label, from_url, key in checks:
+            from_parts = env.get(key, "")
+
+            if from_url and from_parts and from_url != from_parts:
+                # Values omitted for the password: this runs in deploy logs.
+                found.append(
+                    f"{label}: {name} and {key} differ"
+                    if label == "password"
+                    else f"{label}: {name} has {from_url!r}, {key}={from_parts!r}"
+                )
+
+        parts_port = env.get("POSTGRES_PORT", "")
+
+        if parsed.port and parts_port and str(parsed.port) != parts_port:
+            found.append(
+                f"port: {name} has {parsed.port}, POSTGRES_PORT={parts_port!r}"
+            )
+
+        return found
+
     url = env.get("DATABASE_URL", "").strip()
+    migration_url = env.get("MIGRATION_DATABASE_URL", "").strip()
 
     if not url:
         ok("DATABASE_URL unset — the POSTGRES_* parts are the single source")
-        return
+    else:
+        # Credentials are NOT compared: under privilege separation this names
+        # the restricted runtime role while the parts describe the owner. Host,
+        # port and database still are, because two databases is the failure
+        # this check exists for and separation did not change that.
+        problems = _mismatches(url, "DATABASE_URL", credentials=False)
 
-    parsed = urlsplit(url)
+        if problems:
+            for detail in problems:
+                fail(f"DATABASE_URL contradicts the POSTGRES_* settings — {detail}")
+        else:
+            ok("DATABASE_URL agrees with the POSTGRES_* settings")
 
-    mismatches = []
-
-    for label, from_url, key in (
-        ("host", parsed.hostname, "POSTGRES_HOST"),
-        ("database", parsed.path.lstrip("/"), "POSTGRES_DB"),
-        ("user", unquote(parsed.username or ""), "POSTGRES_USER"),
-        ("password", unquote(parsed.password or ""), "POSTGRES_PASSWORD"),
-    ):
-        from_parts = env.get(key, "")
-
-        if from_url and from_parts and from_url != from_parts:
-            # Values omitted for the password: this runs in deploy logs.
-            detail = (
-                f"{label}: DATABASE_URL and {key} differ"
-                if label == "password"
-                else f"{label}: DATABASE_URL has {from_url!r}, {key}={from_parts!r}"
-            )
-            mismatches.append(detail)
-
-    url_port = parsed.port
-    parts_port = env.get("POSTGRES_PORT", "")
-
-    if url_port and parts_port and str(url_port) != parts_port:
-        mismatches.append(
-            f"port: DATABASE_URL has {url_port}, POSTGRES_PORT={parts_port!r}"
+    if migration_url:
+        # Held to the stricter rule: this and the POSTGRES_* parts describe the
+        # same privileged role, so a half-done rotation is still a mistake.
+        problems = _mismatches(
+            migration_url, "MIGRATION_DATABASE_URL", credentials=True
         )
 
-    if mismatches:
-        for detail in mismatches:
-            fail(f"DATABASE_URL contradicts the POSTGRES_* settings — {detail}")
+        for detail in problems:
+            fail(
+                "MIGRATION_DATABASE_URL contradicts the POSTGRES_* settings "
+                f"— {detail}"
+            )
+
+        if not problems:
+            ok("MIGRATION_DATABASE_URL agrees with the POSTGRES_* settings")
+
+    # Informational, never fatal: an environment that has not adopted privilege
+    # separation is not broken, it is just running as it did before.
+    runtime_role = unquote(urlsplit(url).username or "") if url else ""
+
+    if runtime_role and runtime_role != env.get("POSTGRES_USER", ""):
+        ok(f"runtime connects as {runtime_role!r}, not the owning role")
     else:
-        ok("DATABASE_URL agrees with the POSTGRES_* settings")
+        warn(
+            "runtime and migrations share one credential — the application "
+            "runs with the owner's privileges (see scripts/create_app_role.sh)"
+        )
 
 
 def check_allowed_hosts(env: dict[str, str]) -> None:

@@ -103,7 +103,30 @@ def _test_database_url() -> str:
     )
 
 
+def _test_migration_database_url() -> str:
+    """The same test database, as the role allowed to change its schema.
+
+    PRIVILEGE SEPARATION IN THE HARNESS. reset_database() runs
+    DROP SCHEMA public CASCADE and then alembic upgrade head — DDL that the
+    restricted runtime role cannot perform, and must not be able to. So setup
+    keeps the owning credential while the SESSIONS UNDER TEST use the
+    restricted one.
+
+    That split is what makes the separation verified rather than merely
+    configured: if the suite passes with the application sessions restricted,
+    the application genuinely runs without superuser. A harness that used one
+    privileged credential for both would prove nothing about production.
+
+    Falls back to TEST_DATABASE_URL, so an environment that has not created the
+    restricted role behaves exactly as before.
+    """
+    return os.getenv("TEST_MIGRATION_DATABASE_URL") or _test_database_url()
+
+
 TEST_DATABASE_URL = _test_database_url()
+
+#: Setup and teardown only. Never used for an application session.
+TEST_MIGRATION_DATABASE_URL = _test_migration_database_url()
 
 
 
@@ -121,8 +144,10 @@ def async_session_factory(engine):
 
 
 async def reset_database():
+    # The privileged URL: dropping and recreating the schema, and running
+    # migrations, is DDL the runtime role deliberately cannot do.
     engine = create_async_engine(
-        TEST_DATABASE_URL,
+        TEST_MIGRATION_DATABASE_URL,
         echo=False,
         poolclass=NullPool,
     )
@@ -140,7 +165,7 @@ async def reset_database():
     # the same thing for the same reason.
     alembic_cfg.set_main_option(
         "sqlalchemy.url",
-        TEST_DATABASE_URL.replace("+asyncpg", "").replace("%", "%%"),
+        TEST_MIGRATION_DATABASE_URL.replace("+asyncpg", "").replace("%", "%%"),
     )
 
     command.upgrade(
@@ -148,7 +173,65 @@ async def reset_database():
         "head",
     )
 
+    await _grant_runtime_role(engine)
+
     await engine.dispose()
+
+
+async def _grant_runtime_role(engine) -> None:
+    """Re-grant the restricted role after the schema has been rebuilt.
+
+    DROP SCHEMA public CASCADE takes the grants with it — and the default
+    privileges too, since those are recorded against the schema's OID. Every
+    table alembic then creates is owned by the migration role and reachable by
+    nobody else, so without this the whole suite fails on the first query with
+    "permission denied".
+
+    Mirrors scripts/create_app_role.sql, minus the role creation: the role is a
+    property of the cluster and outlives any one test database.
+
+    A no-op when the harness is not split, which keeps a developer who has not
+    created the role working exactly as before.
+    """
+
+    from urllib.parse import urlsplit, unquote
+
+    runtime_role = unquote(urlsplit(TEST_DATABASE_URL).username or "")
+    migration_role = unquote(urlsplit(TEST_MIGRATION_DATABASE_URL).username or "")
+
+    if not runtime_role or runtime_role == migration_role:
+        return
+
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(f'GRANT USAGE ON SCHEMA public TO "{runtime_role}"')
+        )
+        await conn.execute(
+            text(
+                "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES "
+                f'IN SCHEMA public TO "{runtime_role}"'
+            )
+        )
+        await conn.execute(
+            text(
+                f'GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO "{runtime_role}"'
+            )
+        )
+        # Restored so the default-privilege test describes the same thing here
+        # as in a deployed environment.
+        await conn.execute(
+            text(
+                f'ALTER DEFAULT PRIVILEGES FOR ROLE "{migration_role}" '
+                "IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE "
+                f'ON TABLES TO "{runtime_role}"'
+            )
+        )
+        await conn.execute(
+            text(
+                f'ALTER DEFAULT PRIVILEGES FOR ROLE "{migration_role}" '
+                f'IN SCHEMA public GRANT USAGE ON SEQUENCES TO "{runtime_role}"'
+            )
+        )
 
 
 # @pytest_asyncio.fixture(scope="session")
