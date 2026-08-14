@@ -7,6 +7,9 @@ from app.security.rbac import require_roles
 
 from app.models.user import User, UserRole
 from app.models.appointment import AppointmentStatus
+from sqlalchemy import select
+
+from app.models.doctor import Doctor
 from app.schemas.waiting_queue import QueuePositionOut
 from app.schemas.appointment import (
     AppointmentOut, 
@@ -298,6 +301,87 @@ async def search_appointments_endpoint(
         end_date=end_date,
         limit=limit,
         offset=offset,
+    )
+
+
+async def _caller_clinic_id(
+    db: AsyncSession,
+    user: User,
+) -> int:
+    """The clinic this caller acts inside, taken from the principal.
+
+    Mirrors patients._searcher_clinic_id, and for the same reason: a doctor's
+    clinic lives on their Doctor row, while admins and receptionists carry it
+    on the user. Reading user.clinic_id for everyone would deny every doctor,
+    since the doctor user row does not have it set.
+
+    (The duplication with patients.py is deliberate for now — sharing it means
+    moving a private helper into a common module, which is a refactor with a
+    wider blast radius than this endpoint.)
+    """
+
+    if user.role == UserRole.DOCTOR:
+
+        clinic_id = await db.scalar(
+            select(Doctor.clinic_id).where(Doctor.user_id == user.id)
+        )
+
+        if clinic_id is None:
+            raise ForbiddenError("Doctor is not assigned to a clinic")
+
+        return clinic_id
+
+    if not user.clinic_id:
+        raise ForbiddenError("User is not assigned to a clinic")
+
+    return user.clinic_id
+
+
+@router.get(
+    "/queue",
+    response_model=WaitingQueueSummary,
+)
+async def clinic_doctor_queue(
+    doctor_id: int = Query(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(
+        require_roles(
+            UserRole.DOCTOR,
+            UserRole.RECEPTIONIST,
+            UserRole.ADMIN,
+        )
+    ),
+):
+    """One doctor's live queue, for the staff of that doctor's clinic.
+
+    THE TENANT CHECK BELONGS HERE, NOT IN THE SERVICE.
+
+    waiting_queue_service takes a doctor_id and trusts it — every function in
+    it filters on doctor_id and status and has no clinic predicate. That was
+    safe only while no endpoint let a caller name a doctor. This one does, so
+    the relationship is established before delegating:
+
+        caller's clinic -> doctor_id -> Doctor.clinic_id == caller's clinic
+                                     -> get_doctor_queue_summary(doctor_id=...)
+
+    A doctor who does not exist and a doctor in another clinic are answered
+    identically. Distinguishing them would confirm that a given id is a real
+    doctor somewhere else, which is not something a caller outside that clinic
+    should learn from a queue lookup.
+    """
+
+    caller_clinic_id = await _caller_clinic_id(db, current_user)
+
+    doctor = await db.scalar(
+        select(Doctor).where(Doctor.id == doctor_id)
+    )
+
+    if doctor is None or doctor.clinic_id != caller_clinic_id:
+        raise NotFoundError("Doctor not found")
+
+    return await get_doctor_queue_summary(
+        db=db,
+        doctor_id=doctor.id,
     )
 
 
