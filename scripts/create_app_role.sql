@@ -21,10 +21,28 @@
 
 \set ON_ERROR_STOP on
 
--- psql interpolates :'var' into SQL text, but NOT inside a DO $$ … $$ body —
--- that body is a string literal to the parser. So the password is carried in a
--- session GUC, which current_setting() can read from inside the block.
+-- THE PASSWORD MUST NOT REACH stdout, stderr OR A DEPLOY LOG.
+--
+-- It arrives as a psql variable and is used in exactly two places, each of
+-- which prints it unless stopped. Both routes are closed here, because a
+-- credential printed once by a deploy step is a credential that has to be
+-- rotated:
+--
+--   1. set_config() RETURNS the value it sets, and psql prints result sets.
+--      \o /dev/null discards that row.
+--
+--   2. CREATE ROLE cannot take a parameter, so the password is embedded in a
+--      dynamic statement. When such a statement FAILS, postgres echoes it —
+--      measured on 16.14, a bad role option printed the password twice, in the
+--      "LINE 1:" excerpt and again in "QUERY:". VERBOSITY terse suppresses
+--      those, and the EXCEPTION handler below re-raises without the statement
+--      so the protection does not depend on a psql setting a caller could
+--      override with -v VERBOSITY=verbose.
+\set VERBOSITY terse
+
+\o /dev/null
 SELECT set_config('helpdoctor.app_password', :'app_password', false);
+\o
 
 -- ---------------------------------------------------------------------------
 -- The role
@@ -34,20 +52,33 @@ SELECT set_config('helpdoctor.app_password', :'app_password', false);
 -- it is the default: if row-level security is adopted later, a role that
 -- silently bypasses it would make the policies decorative.
 DO $$
+DECLARE
+    verb text;
 BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'helpdoctor_app') THEN
-        EXECUTE format(
-            'CREATE ROLE helpdoctor_app LOGIN PASSWORD %L '
-            'NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS',
-            current_setting('helpdoctor.app_password')
-        );
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'helpdoctor_app') THEN
+        verb := 'ALTER';
     ELSE
+        verb := 'CREATE';
+    END IF;
+
+    -- The statement carries the password, so a failure must not echo it. The
+    -- handler reports the verb and the SQLSTATE, which is enough to diagnose
+    -- (42601 syntax, 42501 insufficient privilege, 23505 duplicate) without
+    -- reproducing the credential.
+    BEGIN
         EXECUTE format(
-            'ALTER ROLE helpdoctor_app LOGIN PASSWORD %L '
+            '%s ROLE helpdoctor_app LOGIN PASSWORD %L '
             'NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS',
+            verb,
             current_setting('helpdoctor.app_password')
         );
-    END IF;
+    EXCEPTION WHEN others THEN
+        RAISE EXCEPTION
+            'could not % role helpdoctor_app (SQLSTATE %)', lower(verb), SQLSTATE
+            USING HINT =
+                'the failing statement is withheld because it contains the '
+                'role password';
+    END;
 END
 $$;
 
