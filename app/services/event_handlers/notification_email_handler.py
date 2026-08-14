@@ -64,6 +64,7 @@ from app.services.notification_preference_service import (
 from app.services.notification_receipt_service import (
     mark_email_delivered,
     mark_email_failed,
+    record_delivery_failure,
 )
 
 logger = logging.getLogger(__name__)
@@ -233,11 +234,16 @@ async def handle_notification_email(
         await db.commit()
 
     except Exception as exc:
-        await mark_email_failed(
-            db=db, event_id=event_id, user_id=recipient_id, error=str(exc)
+        # Through the helper, not directly: when exc is a database error the
+        # transaction is already aborted and this write would raise
+        # PendingRollbackError from inside the except block, replacing exc.
+        await record_delivery_failure(
+            db,
+            mark=mark_email_failed,
+            event_id=event_id,
+            user_id=recipient_id,
+            error=str(exc),
         )
-
-        await db.commit()
 
         logger.exception(
             "notification_email_failed",

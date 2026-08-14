@@ -12,6 +12,7 @@ from app.schemas.event import PrescriptionIssuedEvent
 from app.services.notification_receipt_service import (
     mark_whatsapp_delivered,
     mark_whatsapp_failed,
+    record_delivery_failure,
 )
 
 from app.services.prescription_pdf_service import (
@@ -130,8 +131,9 @@ async def handle_prescription_issued_whatsapp(
 
     except Exception as exc:
 
-        await mark_whatsapp_failed(
-            db=db,
+        await record_delivery_failure(
+            db,
+            mark=mark_whatsapp_failed,
             event_id=event_id,
             user_id=prescription.patient.id,
             error=str(exc),

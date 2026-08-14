@@ -384,6 +384,18 @@ async def handle_notification_event(
     else:
         message = config["message"]
 
+    # PREFERENCES ARE RESOLVED ONLY WHEN SOMETHING IS BEING SENT.
+    #
+    # get_or_create_preferences CREATES a row when none exists, and it ran
+    # unconditionally — including for SYSTEM events, which notify nobody. For a
+    # recipient who has since been deleted that insert violates
+    # notification_preferences_user_id_fkey and aborts the transaction, and the
+    # event ends up dead-lettered reporting the secondary error rather than the
+    # real one. 96 events in this database failed exactly that way.
+    #
+    # The row was only ever read to decide on realtime delivery, which is
+    # itself skipped for SYSTEM events: the write that broke the event answered
+    # a question nobody asked.
     if not system_initiated:
         await notify_user(
             db=db,
@@ -395,12 +407,14 @@ async def handle_notification_event(
             event_id=event_id,
         )
 
-    prefs = await get_or_create_preferences(
-        db,
-        user_id,
-    )
+        prefs = await get_or_create_preferences(
+            db,
+            user_id,
+        )
+    else:
+        prefs = None
 
-    if prefs.realtime_enabled and not system_initiated:
+    if prefs is not None and prefs.realtime_enabled:
         await send_realtime_notification(
             db=db,
             user_id=user_id,

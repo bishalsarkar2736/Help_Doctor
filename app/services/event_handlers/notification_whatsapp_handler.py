@@ -68,6 +68,7 @@ from app.services.notification_preference_service import (
 from app.services.notification_receipt_service import (
     mark_whatsapp_delivered,
     mark_whatsapp_failed,
+    record_delivery_failure,
 )
 from app.services.whatsapp_service import WhatsAppService
 
@@ -391,11 +392,16 @@ async def handle_notification_whatsapp(
         await db.commit()
 
     except Exception as exc:
-        await mark_whatsapp_failed(
-            db=db, event_id=event_id, user_id=recipient_id, error=str(exc)
+        # See record_delivery_failure: a database error has already aborted the
+        # transaction, and writing the receipt onto it would raise in place of
+        # the original failure.
+        await record_delivery_failure(
+            db,
+            mark=mark_whatsapp_failed,
+            event_id=event_id,
+            user_id=recipient_id,
+            error=str(exc),
         )
-
-        await db.commit()
 
         logger.exception(
             "whatsapp_send_failed",

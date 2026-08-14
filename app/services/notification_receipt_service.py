@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import func, update
@@ -9,6 +10,74 @@ from app.core.metrics import (
     notification_sent_total,
     notification_failed_total,
 )
+
+logger = logging.getLogger(__name__)
+
+
+async def record_delivery_failure(
+    db: AsyncSession,
+    *,
+    mark,
+    event_id,
+    user_id: int,
+    error: str,
+) -> None:
+    """Write a channel's failure receipt without ever replacing the failure.
+
+    WHY THIS EXISTS
+    Every channel handler ended its except block with a receipt write:
+
+        except Exception as exc:
+            await mark_whatsapp_failed(db=db, ...)
+            await db.commit()
+            raise
+
+    When the original exception is a DATABASE error, Postgres has already
+    aborted the transaction, so that write is the second statement on a dead
+    one and raises PendingRollbackError — from inside the except block, which
+    means it propagates INSTEAD of the error being handled. The outbox worker
+    then records the wrong cause: 96 dead-lettered events in this database say
+    "This Session's transaction has been rolled back" and name no constraint.
+
+    BEST EFFORT, ALWAYS. A receipt is bookkeeping about a failure; the failure
+    itself is the thing that matters. If the receipt cannot be written, that is
+    logged and swallowed so the ORIGINAL exception continues to propagate to
+    the worker, which dead-letters it with the real diagnosis.
+
+    ATTEMPTED FIRST, REPAIRED ONLY IF IT FAILS
+    Deliberately not a pre-emptive rollback. Most channel failures are not
+    database failures — a gateway returning 500, a rejected phone number — and
+    there the transaction is healthy and still holds the notification row this
+    receipt is written onto. Rolling back first would discard that row and lose
+    the very receipt being recorded. So the ordinary path is unchanged, and the
+    rollback happens only once the write has actually failed.
+
+    The rollback also leaves the session usable, which matters because the
+    caller re-raises into a worker that has more bookkeeping of its own to do.
+    """
+    try:
+        await mark(db=db, event_id=event_id, user_id=user_id, error=error)
+        await db.commit()
+
+    except Exception:
+        # Never re-raised: this runs inside an except block, and raising here
+        # is exactly the bug this function exists to remove.
+        logger.exception(
+            "delivery_receipt_not_recorded",
+            extra={
+                "event_id": str(event_id),
+                "user_id": user_id,
+                "channel": getattr(mark, "__name__", "unknown"),
+            },
+        )
+
+        try:
+            await db.rollback()
+        except Exception:
+            logger.exception(
+                "delivery_receipt_rollback_failed",
+                extra={"event_id": str(event_id), "user_id": user_id},
+            )
 
 
 
