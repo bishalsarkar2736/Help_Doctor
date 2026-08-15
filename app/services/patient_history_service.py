@@ -4,6 +4,9 @@ from sqlalchemy import select,exists
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.patient import Patient
 from app.models.appointment import Appointment
+from app.domain.policies.patient_access_policy import (
+    clinical_relationship_exists,
+)
 from app.models.prescription import Prescription
 from app.models.payment import Payment
 from app.try_except.exceptions import (
@@ -21,14 +24,16 @@ async def get_patient_history(
     offset: int = 0,
 ):
     
+    # The visibility gate for a timeline of appointments, prescriptions and
+    # payments — PHI, and the same question the record read asks. It used the
+    # bare "an appointment exists here" rule, which a receptionist could
+    # satisfy by booking the patient, so it carried the same escalation and is
+    # fixed with the same shared predicate.
     patient = await db.scalar(
         select(Patient)
         .where(
             Patient.user_id == patient_id,
-            exists().where(
-                Appointment.patient_id == Patient.user_id,
-                Appointment.clinic_id == clinic_id,
-            ),
+            clinical_relationship_exists(Patient.user_id, clinic_id),
         )
     )
 

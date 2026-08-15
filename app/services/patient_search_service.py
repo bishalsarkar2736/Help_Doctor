@@ -44,7 +44,9 @@ from sqlalchemy import exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.appointment import Appointment
+from app.domain.policies.patient_access_policy import (
+    clinical_relationship_exists,
+)
 from app.models.patient import Patient
 from app.models.user import User
 from app.schemas.patient_search import PatientSearchOut
@@ -72,11 +74,14 @@ async def search_patients(
     # one patient, and a join would return them six times. DISTINCT would also
     # work, but then the ORDER BY column has to appear in the select list and
     # the query stops saying what it means. This reads as the rule does —
-    # "has at least one appointment at this clinic".
-    belongs_to_clinic = exists().where(
-        Appointment.patient_id == Patient.user_id,
-        Appointment.clinic_id == clinic_id,
-    )
+    # "has been treated at this clinic".
+    #
+    # Not "has an appointment here": a receptionist can create one of those for
+    # anybody by booking them, which would let the desk page through every
+    # patient it had ever booked. The shared predicate requires a state only a
+    # doctor's confirmation (or the patient's payment) reaches, and is the same
+    # rule the record read and the history timeline apply.
+    belongs_to_clinic = clinical_relationship_exists(Patient.user_id, clinic_id)
 
     q = q.strip()
 

@@ -5,7 +5,10 @@ from app.db.postgres import get_db
 from app.models.user import UserRole,User
 from app.models.patient import Patient
 from app.models.doctor import Doctor
-from app.models.appointment import Appointment
+from app.domain.policies.patient_access_policy import (
+    clinical_relationship_exists,
+    doctor_relationship_exists,
+)
 from app.security.rbac import require_roles
 from app.schemas.patient import PatientCreate,PatientRead,PatientUpdate
 from app.services.patient_service import (
@@ -200,16 +203,20 @@ async def get_patient_record(
     if current_user.role == UserRole.DOCTOR:
         # Stricter than the clinic rule below, and deliberately kept: a doctor
         # sees the patients they treat, not every patient of their clinic.
+        #
+        # A LOOSER STATUS RULE THAN THE DESK GETS, on purpose. PENDING counts
+        # here: reviewing a chart before deciding whether to confirm is the
+        # normal order of work, and a doctor cannot manufacture their own
+        # access anyway — booking on behalf is RECEPTIONIST/ADMIN only.
+        #
+        # CANCELLED does not count, which is the part that changed. It
+        # previously matched ANY status, so one cancelled appointment left a
+        # doctor able to read that patient's record forever.
         doctor = await db.scalar(
             select(Doctor).where(Doctor.user_id == current_user.id)
         )
         has_relationship = doctor is not None and await db.scalar(
-            select(Appointment.id)
-            .where(
-                Appointment.doctor_id == doctor.id,
-                Appointment.patient_id == patient_user_id,
-            )
-            .limit(1)
+            select(doctor_relationship_exists(doctor.id, patient_user_id))
         )
         if not has_relationship:
             raise ForbiddenError("No treatment relationship with this patient")
@@ -217,17 +224,17 @@ async def get_patient_record(
         # ADMIN and RECEPTIONIST manage the clinic more broadly — but "the
         # clinic", not every clinic. Patients carry no clinic_id (they are
         # global identities, and may attend several), so a clinic's claim on a
-        # patient is derived from appointments. That is the rule
-        # search_patients already states: "at least one appointment at
-        # clinic_id". Using the same rule here keeps one definition of whose
-        # patient this is, rather than a second, laxer one on this route.
+        # patient is derived from appointments.
+        #
+        # NOT from the mere existence of one. These two roles may book on
+        # behalf of any existing patient with their own clinic's doctor, so
+        # "an appointment exists" was a fact the caller could create for
+        # themselves: book, then read. clinical_relationship_exists requires a
+        # state the front desk cannot reach alone — a doctor confirmed it, or
+        # the patient paid — and is shared with the search and the history
+        # timeline so there is one definition of whose patient this is.
         treated_at_this_clinic = await db.scalar(
-            select(Appointment.id)
-            .where(
-                Appointment.patient_id == patient_user_id,
-                Appointment.clinic_id == clinic_id,
-            )
-            .limit(1)
+            select(clinical_relationship_exists(patient_user_id, clinic_id))
         )
         if not treated_at_this_clinic:
             raise ForbiddenError("No treatment relationship with this clinic")

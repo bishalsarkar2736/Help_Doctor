@@ -60,6 +60,12 @@ async def _seen_at(db, clinic, doctor, patient_user):
     Each appointment gets its own hour: time_range is exclusion-constrained
     per doctor, so booking two patients into the same slot fails on the
     database rather than in the assertion.
+
+    CONFIRMED, which is what "seen at" now requires. A PENDING appointment is
+    only a booking, and reception can create one of those for any existing
+    patient — so treating it as membership would let the desk search every
+    patient it had ever booked. See
+    tests/security/test_phi_requires_clinical_relationship.py.
     """
     start = utc_now() + timedelta(hours=next(_slot))
 
@@ -69,7 +75,8 @@ async def _seen_at(db, clinic, doctor, patient_user):
             doctor_id=doctor.id,
             clinic_id=clinic.id,
             scheduled_at=start,
-            status=AppointmentStatus.PENDING,
+            status=AppointmentStatus.CONFIRMED,
+            confirmed_at=utc_now(),
             time_range=Range(start, start + Appointment.APPOINTMENT_DURATION),
         )
     )

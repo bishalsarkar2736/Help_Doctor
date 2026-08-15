@@ -19,7 +19,7 @@ import pytest
 from sqlalchemy import select
 
 from app.core.time import UTC
-from app.models.appointment import AppointmentStatus
+from app.models.appointment import Appointment, AppointmentStatus
 from app.models.phi_access_log import PHIAccessLog, PHIResourceType
 from tests.conftest import valid_slot
 
@@ -432,15 +432,31 @@ async def test_finding_a_patient_by_identifier_does_not_expose_their_record(
 
 
 @pytest.mark.asyncio
-async def test_booking_the_patient_is_what_opens_their_record(
-    client, auth_receptionist, other_clinic_patient, doctor, doctor_availability
+async def test_confirming_the_booking_is_what_opens_their_record(
+    client, db, auth_receptionist, other_clinic_patient, doctor, doctor_availability
 ):
     """The paired allow-case, and the rest of Rahim's call.
 
-    Once reception books him at their clinic he is their patient, and the desk
-    that will receive him can see the chart. This is what stops the test above
-    from being satisfied by refusing reception everything — the boundary is the
-    relationship, not the role.
+    THIS TEST CHANGED. It previously asserted that the BOOKING alone opened the
+    chart, which is the same act as the escalation: reception may book any
+    existing patient with their own clinic's doctor, so "an appointment exists"
+    was a fact the reader could create for themselves, and user ids are
+    sequential. The desk could walk the id space and read every chart on the
+    platform.
+
+    The relationship is still what decides — that part was always right — but
+    it now begins when someone other than the booking clerk has acted on the
+    appointment. Reception books Rahim, the doctor confirms him, and then the
+    desk that will receive him can see the chart.
+
+    Nothing is lost from the workflow: an appointment cannot progress at all
+    without confirmation (the FSM reaches CHECKED_IN only from CONFIRMED, and
+    confirm is doctor-only), so the step this now waits for is one that has to
+    happen anyway.
+
+    The confirmation is applied directly rather than through the doctor's
+    endpoint to keep this test about the authorisation boundary, not about the
+    confirm route's own preconditions, which have their own tests.
     """
 
     slot = valid_slot(datetime.now(UTC) + timedelta(days=1))
@@ -455,6 +471,26 @@ async def test_booking_the_patient_is_what_opens_their_record(
         headers=auth_receptionist["headers"],
     )
     assert booking.status_code == 200, booking.text
+
+    # Booking alone is not yet a clinical relationship.
+    too_early = await client.get(
+        f"/patients/{other_clinic_patient.id}",
+        headers=auth_receptionist["headers"],
+    )
+    assert too_early.status_code in (403, 404), too_early.text
+
+    for field in CLINICAL_FIELDS:
+        assert field not in too_early.text
+
+    appointment = await db.get(
+        Appointment, booking.json()["appointment_id"]
+    )
+    appointment.status = AppointmentStatus.CONFIRMED
+    # chk_confirmed_requires_timestamp: the database refuses a CONFIRMED row
+    # with no confirmed_at, and the auto-stamping listener runs on insert, not
+    # on this update. A real confirmation sets both.
+    appointment.confirmed_at = datetime.now(UTC)
+    await db.flush()
 
     record = await client.get(
         f"/patients/{other_clinic_patient.id}",

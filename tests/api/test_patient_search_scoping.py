@@ -105,7 +105,25 @@ async def _staff(db, clinic: Clinic, role: UserRole, email: str) -> dict:
     return {"user": user, "headers": {"Authorization": f"Bearer {token}"}}
 
 
-async def _appointment(db, clinic: Clinic, doctor: Doctor, patient: User, *, hours=2):
+async def _appointment(
+    db,
+    clinic: Clinic,
+    doctor: Doctor,
+    patient: User,
+    *,
+    hours=2,
+    status: AppointmentStatus = AppointmentStatus.CONFIRMED,
+):
+    """A patient of this clinic, for the purposes of these tests.
+
+    CONFIRMED rather than PENDING: search surfaces patients the clinic has a
+    clinical relationship with, and a booking alone is not one — reception can
+    create a PENDING appointment for any existing patient, so treating that as
+    membership would let the desk page through everyone it had ever booked.
+    These tests are about the CLINIC dimension of that rule, so they use a
+    status that satisfies the status dimension; the status dimension itself is
+    covered in tests/security/test_phi_requires_clinical_relationship.py.
+    """
     start = utc_now() + timedelta(hours=hours)
 
     db.add(
@@ -114,7 +132,7 @@ async def _appointment(db, clinic: Clinic, doctor: Doctor, patient: User, *, hou
             doctor_id=doctor.id,
             clinic_id=clinic.id,
             scheduled_at=start,
-            status=AppointmentStatus.PENDING,
+            status=status,
             time_range=Range(start, start + Appointment.APPOINTMENT_DURATION),
         )
     )
