@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from app.db.postgres import get_db
 from app.security.rbac import require_roles
@@ -17,7 +17,7 @@ from app.services.storage import get_storage
 from app.schemas.admin_doctor import AdminDoctorListItem, DoctorRejectRequest
 from app.schemas.doctor_document import DoctorDocumentResponse
 from app.services.doctor_document_service import list_documents_for_admin
-from app.try_except.exceptions import NotFoundError
+from app.try_except.exceptions import ForbiddenError, NotFoundError
 from app.services.tenant_resolver import resolve_clinic_id
 from app.services.admin_doctor_service import (
     approve_doctor,
@@ -40,6 +40,23 @@ async def admin_list_doctors(
     limit: int = Query(20, le=100),
     offset: int = Query(0),
 ):
+    # Their own clinic's doctors, plus applicants nobody has accepted yet.
+    #
+    # This query had no WHERE clause at all, so any clinic admin could page
+    # through every doctor on the platform — including other clinics' staff
+    # emails and the rejection_reason a rival admin had written. It was also
+    # the enumeration aid for the approval-capture defect.
+    #
+    # clinic_id IS NULL stays visible on purpose: a doctor applies before any
+    # clinic has accepted them, and this list is how an admin finds someone to
+    # approve. It is the same rule list_documents_for_admin and approve_doctor
+    # apply — mine, or nobody's yet.
+    #
+    # Fails closed on an admin with no clinic rather than degrading to the
+    # platform-wide listing this is removing.
+    if not admin.clinic_id:
+        raise ForbiddenError("Admin not assigned to clinic")
+
     # Columns, not entities — Doctor and User both declare lazy="selectin"
     # relationships that cascade across the clinic on every row fetched.
     result = await db.execute(
@@ -57,6 +74,12 @@ async def admin_list_doctors(
             User.is_active,
         )
         .join(User, Doctor.user_id == User.id)
+        .where(
+            or_(
+                Doctor.clinic_id.is_(None),
+                Doctor.clinic_id == admin.clinic_id,
+            )
+        )
         .limit(limit)
         .offset(offset)
     )

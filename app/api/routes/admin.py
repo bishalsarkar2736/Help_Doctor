@@ -11,6 +11,8 @@ from app.services.user_deletion_service import soft_delete_user
 
 from app.security.rbac import require_roles
 from app.schemas.admin_user import AdminUserItem
+from app.schemas.admin_audit import AdminCancelledAppointmentItem
+from app.try_except.exceptions import ForbiddenError
 from app.services.realtime_service import notify_admins
 from app.services.realtime_sync_service import (
     send_realtime_sync,
@@ -22,15 +24,41 @@ router = APIRouter(prefix="/admin", tags=["Admin"])
 
 
 # 🔹 Audit logs (admin only)
-@router.get("/audit")
+@router.get("/audit", response_model=list[AdminCancelledAppointmentItem])
 async def appointment_audit(
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(require_roles(UserRole.ADMIN)),  # ✅ FIXED
+    admin: User = Depends(require_roles(UserRole.ADMIN)),
+    limit: int = Query(50, le=100),
+    offset: int = Query(0),
 ):
+    """Cancelled appointments at the admin's own clinic.
+
+    The only filter used to be `cancelled_by IS NOT NULL`, so being an admin
+    of ANY clinic returned every cancelled appointment on the platform —
+    patient_id, doctor_id, cancel_reason and all — in one unbounded call.
+    Appointment existence tied to a patient is health information, so this was
+    the widest of the tenant gaps.
+
+    Fails closed on an admin with no clinic. Such an account should not exist —
+    resolve_clinic_id and _searcher_clinic_id both refuse one — and defaulting
+    it to the unscoped query is exactly the defect being removed.
+
+    The response model is an allowlist: the endpoint returned raw ORM rows, so
+    `notes`, `consultation_fee` and the queue timestamps were disclosed only
+    because they happen to sit on the table.
+    """
+    if not admin.clinic_id:
+        raise ForbiddenError("Admin not assigned to clinic")
+
     result = await db.execute(
         select(Appointment)
-        .where(Appointment.cancelled_by.isnot(None))
+        .where(
+            Appointment.cancelled_by.isnot(None),
+            Appointment.clinic_id == admin.clinic_id,
+        )
         .order_by(Appointment.cancelled_at.desc())
+        .limit(limit)
+        .offset(offset)
     )
 
     return result.scalars().all()
