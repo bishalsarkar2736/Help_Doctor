@@ -130,3 +130,129 @@ async def test_approve_requires_admin(client, db, default_clinic, auth_doctor):
         headers=auth_doctor["headers"],
     )
     assert res.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# Approval must not capture another clinic's doctor
+# ---------------------------------------------------------------------------
+#
+# THE DEFECT
+# approve_doctor looked its subject up by primary key alone and then wrote
+#
+#     doctor.clinic_id = clinic.id
+#
+# with no check on the clinic the doctor already belonged to. resolve_clinic_id
+# correctly pins the TARGET clinic to the admin's own, so this is not a way to
+# write into someone else's tenant — it is the opposite. A clinic admin could
+# name any doctor_id and pull that doctor INTO their clinic, and doctor ids are
+# sequential, so the whole platform was enumerable.
+#
+# Its three siblings in the same service all guard this boundary already:
+# reject_doctor checks it explicitly, and suspend_doctor and reinstate_doctor
+# filter Doctor.clinic_id == admin.clinic_id in the query. The one function that
+# WRITES clinic_id was the one that did not.
+#
+# WHY IT MATTERS BEYOND THE ROW
+# Doctor.clinic_id is an authorization input, not a label. may_subscribe gates
+# doctor_queue:{id} on it, GET /appointments/queue?doctor_id= authorizes with
+# it, _searcher_clinic_id resolves a doctor's PHI scope from it, and
+# book_appointment stamps new appointments with it. Capturing the row
+# manufactures all of those at once.
+
+
+@pytest.mark.asyncio
+async def test_cannot_approve_another_clinics_doctor(
+    client, db, default_clinic, second_clinic, auth_admin
+):
+    """THE CORE PROPERTY. Clinic A's admin may not pull clinic B's doctor in."""
+
+    doctor = await _make_doctor(
+        db, clinic_id=second_clinic.id, status=DoctorStatus.APPROVED
+    )
+
+    res = await client.post(
+        f"/admin/doctors/{doctor.id}/approve",
+        params={"clinic_id": default_clinic.id},
+        headers=auth_admin["headers"],
+    )
+
+    assert res.status_code == 403, res.text
+
+    await db.refresh(doctor)
+    assert doctor.clinic_id == second_clinic.id, (
+        "the doctor was moved into the approving admin's clinic"
+    )
+
+
+@pytest.mark.asyncio
+async def test_cannot_capture_another_clinics_pending_doctor(
+    client, db, default_clinic, second_clinic, auth_admin
+):
+    """Still refused when the target is only PENDING at the other clinic — the
+    rule is about whose doctor it is, not what state they are in."""
+
+    doctor = await _make_doctor(
+        db, clinic_id=second_clinic.id, status=DoctorStatus.PENDING
+    )
+
+    res = await client.post(
+        f"/admin/doctors/{doctor.id}/approve",
+        params={"clinic_id": default_clinic.id},
+        headers=auth_admin["headers"],
+    )
+
+    assert res.status_code == 403, res.text
+
+    await db.refresh(doctor)
+    assert doctor.clinic_id == second_clinic.id
+    assert doctor.status == DoctorStatus.PENDING, (
+        "a refused approval must not have changed the doctor's status"
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_unassigned_applicant_can_still_be_approved(
+    client, db, default_clinic, auth_admin
+):
+    """THE WORKFLOW THIS MUST NOT BREAK. A doctor applies with no clinic and is
+    approved into the one that accepts them — the reason the endpoint exists."""
+
+    doctor = await _make_doctor(db, clinic_id=None)
+
+    res = await client.post(
+        f"/admin/doctors/{doctor.id}/approve",
+        params={"clinic_id": default_clinic.id},
+        headers=auth_admin["headers"],
+    )
+
+    assert res.status_code == 200, res.text
+
+    await db.refresh(doctor)
+    assert doctor.clinic_id == default_clinic.id
+    assert doctor.status == DoctorStatus.APPROVED
+
+
+@pytest.mark.asyncio
+async def test_a_doctor_of_this_clinic_can_be_reapproved(
+    client, db, default_clinic, auth_admin
+):
+    """Re-approval within the admin's own clinic stays allowed: it is how a
+    rejected doctor is reinstated, and it clears the rejection fields."""
+
+    doctor = await _make_doctor(
+        db, clinic_id=default_clinic.id, status=DoctorStatus.REJECTED
+    )
+
+    res = await client.post(
+        f"/admin/doctors/{doctor.id}/approve",
+        params={"clinic_id": default_clinic.id},
+        headers=auth_admin["headers"],
+    )
+
+    assert res.status_code == 200, res.text
+
+    await db.refresh(doctor)
+    assert doctor.clinic_id == default_clinic.id
+    assert doctor.status == DoctorStatus.APPROVED
+    assert doctor.rejected_at is None
+    assert doctor.rejection_reason is None

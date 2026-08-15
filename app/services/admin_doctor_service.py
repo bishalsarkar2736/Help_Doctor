@@ -39,6 +39,25 @@ async def approve_doctor(
 
     doctor = await _get_doctor(db, doctor_id)
 
+    # A clinic admin may only approve unassigned applicants or their own
+    # doctors — the same rule reject_doctor states, and the same boundary
+    # suspend_doctor and reinstate_doctor enforce in their queries.
+    #
+    # This function is the only writer of Doctor.clinic_id, and it looked its
+    # subject up by primary key alone, so a clinic admin could name any
+    # doctor_id and pull that doctor INTO their own clinic. resolve_clinic_id
+    # pins the TARGET clinic to the caller's, which bounds where the doctor can
+    # be moved to but not who may be moved; doctor ids are sequential, so every
+    # doctor on the platform was reachable.
+    #
+    # Doctor.clinic_id is an authorization input rather than a label:
+    # may_subscribe gates doctor_queue:{id} on it, GET /appointments/queue
+    # authorizes with it, a doctor's PHI scope resolves from it, and new
+    # appointments are stamped with it. Capturing the row manufactured all of
+    # those at once.
+    if doctor.clinic_id is not None and doctor.clinic_id != admin.clinic_id:
+        raise ForbiddenError("Cannot approve another clinic's doctor")
+
     clinic = await db.scalar(
         select(Clinic).where(Clinic.id == clinic_id)
     )
