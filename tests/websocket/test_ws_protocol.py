@@ -121,7 +121,11 @@ def test_ws_subscribe(ws_client):
 
         with ws_client.websocket_connect("/ws") as websocket:
 
-            websocket.receive_json()
+            # No drain needed here any more. This used to consume the
+            # presence_update the server pushed to the connecting admin —
+            # which only reached them because every admin was auto-joined
+            # to presence_updates. That channel is no longer published, so
+            # the first message on the socket is now the real response.
 
             # An arbitrary name is no longer a channel anyone may join:
             # subscription is authorized per resource. This admin's own
@@ -162,7 +166,11 @@ def test_ws_unsubscribe(ws_client):
 
         with ws_client.websocket_connect("/ws") as websocket:
 
-            websocket.receive_json()
+            # No drain needed here any more. This used to consume the
+            # presence_update the server pushed to the connecting admin —
+            # which only reached them because every admin was auto-joined
+            # to presence_updates. That channel is no longer published, so
+            # the first message on the socket is now the real response.
 
             websocket.send_json({
                 "event": "unsubscribe",
@@ -284,7 +292,11 @@ def test_ws_subscribe_to_another_clinics_channel_is_refused(ws_client):
 
         with ws_client.websocket_connect("/ws") as websocket:
 
-            websocket.receive_json()
+            # No drain needed here any more. This used to consume the
+            # presence_update the server pushed to the connecting admin —
+            # which only reached them because every admin was auto-joined
+            # to presence_updates. That channel is no longer published, so
+            # the first message on the socket is now the real response.
 
             websocket.send_json({
                 "event": "subscribe",
@@ -320,7 +332,11 @@ def test_ws_subscribe_to_an_arbitrary_channel_is_refused(ws_client):
 
         with ws_client.websocket_connect("/ws") as websocket:
 
-            websocket.receive_json()
+            # No drain needed here any more. This used to consume the
+            # presence_update the server pushed to the connecting admin —
+            # which only reached them because every admin was auto-joined
+            # to presence_updates. That channel is no longer published, so
+            # the first message on the socket is now the real response.
 
             websocket.send_json({
                 "event": "subscribe",

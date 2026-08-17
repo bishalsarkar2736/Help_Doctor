@@ -22,7 +22,7 @@ on the same terms as reading the equivalent HTTP resource:
 
     doctor_queue:{doctor_id}     staff of that doctor's clinic
     admin_dashboard:{clinic_id}  that clinic's admin
-    presence_updates             admins, matching who already receives it
+    presence_updates             nobody — no longer published
     anything else                denied
 
 Unknown channels are denied rather than allowed, so a channel added later is
@@ -173,13 +173,21 @@ async def test_an_unknown_channel_is_refused(db, auth_admin):
 
 
 @pytest.mark.asyncio
-async def test_presence_updates_matches_who_already_receives_it(
+async def test_presence_updates_is_refused_to_everyone(
     db, auth_admin, auth_receptionist
 ):
-    """Admins are subscribed to presence on connect; nobody else is. The
-    dynamic path is held to the same line rather than widening it."""
+    """SUPERSEDED. This asserted that any ADMIN could join presence_updates,
+    matching the auto-subscription on connect.
 
-    assert await may_subscribe(db, auth_admin["user"], "presence_updates")
+    Both are gone. The channel carried every user's connect and disconnect with
+    no clinic predicate, so one clinic's admin saw every other tenant's staff
+    and every patient — the data GET /users/{user_id}/presence refuses them.
+    Nothing consumed it, so it is no longer published rather than re-scoped.
+
+    The deny-cases below are unchanged; only the admin allow-case flipped.
+    """
+
+    assert not await may_subscribe(db, auth_admin["user"], "presence_updates")
     assert not await may_subscribe(
         db, auth_receptionist["user"], "presence_updates"
     )

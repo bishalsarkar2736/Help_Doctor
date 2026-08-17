@@ -19,9 +19,6 @@ from app.services.realtime_dashboard_service import (
 )
 from app.websocket.authorization import may_subscribe
 from app.db.postgres import AsyncSessionLocal
-from app.services.presence_broadcast_service import (
-    broadcast_presence,
-)
 
 from app.schemas.websocket import (
     PingMessage,
@@ -91,11 +88,13 @@ async def websocket_endpoint(
                 extra={"user_id": user.id},
             )
 
-        await manager.subscribe(
-            "presence_updates",
-            websocket,
-        )
-    
+        # The presence_updates subscription was removed here. It was joined
+        # directly, without consulting may_subscribe, so every admin received
+        # the connect and disconnect of every user on the platform — across
+        # clinics, and including patients. Nothing consumed it: no client code
+        # handles a presence_update event. GET /users/{user_id}/presence, which
+        # is clinic-scoped, is the supported way to ask.
+
     elif user.role == UserRole.DOCTOR:
 
         await manager.subscribe(
@@ -113,12 +112,9 @@ async def websocket_endpoint(
 
     # PRESENCE ONLINE
 
+    # set_user_online is kept: it maintains the Redis key that the presence
+    # endpoint reads. Only the broadcast of that fact to other users is gone.
     await set_user_online(user_id)
-
-    await broadcast_presence(
-        user_id=user_id,
-        online=True,
-    )
 
     try:
 
@@ -405,10 +401,6 @@ async def websocket_endpoint(
                 except Exception:
                     logger.exception("unsubscribe_admin_failed", extra={"user_id": user_id})
 
-                try:
-                    await manager.unsubscribe("presence_updates", websocket)
-                except Exception:
-                    logger.exception("unsubscribe_presence_failed", extra={"user_id": user_id})
             
             elif user.role == UserRole.DOCTOR:
                 try:
@@ -426,10 +418,6 @@ async def websocket_endpoint(
             except Exception:
                 logger.exception("set_user_offline_failed", extra={"user_id": user_id})
 
-            try:
-                await broadcast_presence(user_id=user_id, online=False)
-            except Exception:
-                logger.exception("broadcast_presence_failed", extra={"user_id": user_id})
 
         finally:
             await manager.disconnect(user_id, websocket)

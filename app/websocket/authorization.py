@@ -12,7 +12,7 @@ the socket and the endpoint cannot disagree about who may see a queue:
     doctor_queue:{doctor_id}     staff of that doctor's clinic
                                  (the rule GET /appointments/queue applies)
     admin_dashboard:{clinic_id}  that clinic's admin
-    presence_updates             admins — who already receive it on connect
+    presence_updates             nobody — the channel is no longer published
     anything else                denied
 
 Unknown channels are denied rather than allowed. A channel added later is
@@ -73,7 +73,20 @@ async def may_subscribe(db: AsyncSession, user, channel: str) -> bool:
     """Whether this principal may join this channel."""
 
     if channel == PRESENCE_CHANNEL:
-        return user.role == UserRole.ADMIN
+        # Denied outright. This granted the channel on role alone, with no
+        # clinic predicate, so one clinic's admin received the connect and
+        # disconnect of every other tenant's staff and of patients — the same
+        # data GET /users/{user_id}/presence refuses them, through another door.
+        #
+        # Removed rather than scoped because nothing consumes it: the frontend's
+        # only sockets handle doctor_queue and notifications, and no client code
+        # references presence in any form. Scoping an unconsumed broadcast would
+        # be building a feature. Nothing publishes here any more, so the honest
+        # answer to "may I join" is no.
+        #
+        # The named constant stays so this decision is visible at the point
+        # anyone would look to re-enable it.
+        return False
 
     if channel.startswith(ADMIN_DASHBOARD_PREFIX):
 
