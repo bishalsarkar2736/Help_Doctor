@@ -9,6 +9,7 @@ from app.models.clinic import Clinic
 from app.security.rbac import require_roles
 from app.models.user import UserRole
 from app.try_except.exceptions import NotFoundError
+from app.security.file_urls import sign_key
 
 from fastapi import UploadFile
 from fastapi import File
@@ -185,8 +186,13 @@ async def upload_signature(
         file=file,
     )
 
+    # Signed, not the bare key: media/signatures/ is no longer public, so the
+    # bare key would render as a broken image. The stored column keeps the key.
     return DoctorSignatureResponse(
-        signature_file_path=doctor.signature_file_path,
+        signature_file_path=sign_key(
+            doctor.signature_file_path,
+            access_version=doctor.signature_access_version,
+        ),
         signature_uploaded_at=doctor.signature_uploaded_at,
     )
 
@@ -255,6 +261,8 @@ async def get_my_doctor_profile(
             Doctor.clinic_id,
             Doctor.signature_file_path,
             Doctor.signature_uploaded_at,
+            # Not exposed in DoctorMe — it exists only to sign the URL below.
+            Doctor.signature_access_version,
             Doctor.created_at,
             Clinic.name.label("clinic_name"),
         )
@@ -280,7 +288,17 @@ async def get_my_doctor_profile(
         clinic_id=row.clinic_id,
         # outerjoin: NULL when the doctor is not attached to a clinic.
         clinic_name=row.clinic_name,
-        signature_file_path=row.signature_file_path,
+        # The doctor's own credentials page renders this in an <img>, which
+        # cannot send an Authorization header — so the capability travels in
+        # the URL. None stays None: there is nothing to sign.
+        signature_file_path=(
+            sign_key(
+                row.signature_file_path,
+                access_version=row.signature_access_version,
+            )
+            if row.signature_file_path
+            else None
+        ),
         signature_uploaded_at=row.signature_uploaded_at,
         created_at=row.created_at,
     )

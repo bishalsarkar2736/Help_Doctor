@@ -144,6 +144,25 @@ class Settings(BaseSettings):
     #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
     MFA_SECRET_ENCRYPTION_KEYS: str = ""
 
+    # --- Signed file URLs ---
+    #
+    # How long a signed URL for a private stored file stays valid. Used for
+    # doctor signatures, which an <img> tag must load with no Authorization
+    # header (see app/security/file_urls.py).
+    #
+    # No row is stored per URL, so the TTL bounds how long a LEAKED url stays
+    # usable. Revocation is separate and immediate: the URL carries the doctor's
+    # signature_access_version and is refused once that column moves past it, so
+    # replacing a signature kills every outstanding link at once. The TTL only
+    # has to cover the case nobody notices — hence 15 minutes rather than the
+    # hour it took before revocation existed.
+    #
+    # Too short is a visible bug rather than a safe default: the frontend mints
+    # the URL when it loads the doctor profile and re-renders the image from
+    # cached profile data, so an expiry shorter than a working session shows the
+    # doctor a broken image on their own credentials page.
+    SIGNED_FILE_URL_TTL_SECONDS: int = Field(default=900, ge=60, le=86400)
+
     # --- PHI access log retention ---
     #
     # How long a record of "who read which patient's data" is kept before it is

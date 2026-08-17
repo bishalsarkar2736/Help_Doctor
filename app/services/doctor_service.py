@@ -184,6 +184,24 @@ async def upload_doctor_signature(
         datetime.now(UTC)
     )
 
+    # Revoke every signed URL minted for the previous signature.
+    #
+    # This is the only operation that replaces a signature, so it is the only
+    # place the version needs to move. Without it, a URL handed out for the old
+    # image keeps working against the new one: the key is unchanged when the
+    # extension matches (doctor_7.png overwritten in place), so an old link
+    # would silently start serving the replacement.
+    #
+    # Incremented unconditionally, including the first upload where there is
+    # nothing to revoke. Branching on "was there a signature before" would add a
+    # way to get this wrong for no gain — a bump with no outstanding URLs costs
+    # nothing.
+    #
+    # Written as a SQL expression, not doctor.signature_access_version + 1, so
+    # two concurrent uploads by the same doctor cannot both read 3 and both
+    # write 4. The refresh below reloads whatever the database settled on.
+    doctor.signature_access_version = Doctor.signature_access_version + 1
+
     await db.flush()
 
     await db.refresh(doctor)

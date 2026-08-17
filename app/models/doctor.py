@@ -98,6 +98,22 @@ class Doctor(Base):
         nullable=True,
     )
 
+    # Bumped every time a signature is uploaded, which is what makes a signed
+    # signature URL revocable. The URL carries the version it was minted at and
+    # is refused once this column moves past it, so replacing a signature
+    # immediately kills every link to the previous one without storing a row per
+    # URL. See app/security/file_urls.py and app/api/routes/files.py.
+    #
+    # NOT NULL with a server default so existing rows land on 1 rather than
+    # NULL: a NULL here would compare unequal to every URL version and lock
+    # every current doctor out of their own signature.
+    signature_access_version: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        server_default=text("1"),
+        default=1,
+    )
+
     clinic_id: Mapped[int | None] = mapped_column(
         ForeignKey(
             "clinics.id",

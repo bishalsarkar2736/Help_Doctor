@@ -4,13 +4,22 @@ These replaced `app.mount("/media", StaticFiles(directory="media"))`, which
 reads the local filesystem directly and would serve nothing once
 STORAGE_BACKEND=s3.
 
-The allowlist is the security-critical part: doctor credential documents —
-BMDC certificates and medical licences — live under uploads/ alongside clinic
-logos, and must NOT be reachable without authentication.
+The allowlist is the security-critical part, and it now has two tiers.
+Signatures need a signed URL carrying the doctor's current access version
+(SIGNED_PREFIXES); clinic logos stay public (PUBLIC_PREFIXES); doctor credential
+documents — BMDC certificates and medical licences — live under uploads/
+alongside clinic logos and are in neither tuple, so they must NOT be reachable
+here at all.
+
+Signature tests use a real Doctor row rather than a hardcoded doctor_1, because
+serving now resolves the doctor from the key to compare access versions. The
+authorization rules themselves live in
+tests/security/test_signature_requires_authorization.py.
 """
 
 import pytest
 
+from app.security.file_urls import sign_key
 from app.services.storage import LocalFilesystemStorage, set_storage
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
@@ -26,11 +35,16 @@ def storage(tmp_path):
         set_storage(None)
 
 
-@pytest.mark.asyncio
-async def test_signature_is_served(client, storage):
-    storage.write("media/signatures/doctor_1.png", PNG)
+def _signed(doctor) -> str:
+    key = f"media/signatures/doctor_{doctor.id}.png"
+    return sign_key(key, access_version=doctor.signature_access_version)
 
-    res = await client.get("/media/signatures/doctor_1.png")
+
+@pytest.mark.asyncio
+async def test_signature_is_served_through_a_signed_url(client, storage, doctor):
+    storage.write(f"media/signatures/doctor_{doctor.id}.png", PNG)
+
+    res = await client.get(f"/{_signed(doctor)}")
 
     assert res.status_code == 200, res.text
     assert res.content == PNG
@@ -38,12 +52,24 @@ async def test_signature_is_served(client, storage):
 
 
 @pytest.mark.asyncio
-async def test_signature_is_public(client, storage):
-    """No Authorization header — <img> tags cannot send one."""
-    storage.write("media/signatures/doctor_2.png", PNG)
+async def test_signature_needs_no_authorization_header(client, storage, doctor):
+    """The capability is in the URL, because <img> tags cannot send one.
 
-    res = await client.get("/media/signatures/doctor_2.png")
-    assert res.status_code == 200
+    This is what the signature mechanism buys: the doctor's own credentials page
+    keeps working with an ordinary <img src=...>, while the key on its own is
+    worthless. It replaces test_signature_is_public, which asserted that the
+    bare key was enough — the behaviour removed in the Finding 8 fix.
+    """
+    key = f"media/signatures/doctor_{doctor.id}.png"
+    storage.write(key, PNG)
+
+    signed = await client.get(f"/{_signed(doctor)}")
+    assert signed.status_code == 200
+    assert "authorization" not in {h.lower() for h in signed.request.headers}
+
+    bare = await client.get(f"/{key}")
+    assert bare.status_code == 403
+    assert bare.content != PNG
 
 
 @pytest.mark.asyncio
@@ -86,23 +112,37 @@ async def test_unknown_prefix_under_media_is_refused(client, storage):
 
 
 @pytest.mark.asyncio
-async def test_missing_file_is_404_not_500(client, storage):
-    res = await client.get("/media/signatures/nope.png")
+async def test_missing_file_is_404_not_500(client, storage, doctor):
+    """A fully authorised URL for a key with no file behind it is a plain 404.
+
+    Authorised, because an unsigned request is refused before storage is ever
+    consulted — that ordering is what stops the 403/404 split from leaking which
+    keys exist.
+    """
+    res = await client.get(f"/{_signed(doctor)}")
+
     assert res.status_code == 404
 
 
 @pytest.mark.asyncio
 async def test_path_traversal_is_refused(client, storage):
-    """A key escaping the storage root must read as not-found, never serve."""
-    res = await client.get("/media/signatures/../../../etc/passwd")
-    assert res.status_code == 404
+    """A key escaping the storage root must never serve.
+
+    Percent-encoded because httpx resolves a literal "../.." before sending, so
+    the plain form never reaches the route and tests nothing. Refused at the
+    signature gate here; the strict key pattern refuses it even when signed, and
+    the storage root guard behind both is covered in test_storage.py.
+    """
+    res = await client.get("/media/signatures/%2e%2e/%2e%2e/etc/passwd")
+
+    assert res.status_code == 403
     assert b"root:" not in res.content
 
 
 @pytest.mark.asyncio
-async def test_served_files_are_not_sniffable(client, storage):
+async def test_served_files_are_not_sniffable(client, storage, doctor):
     """The bytes are user-uploaded; never let a browser guess them executable."""
-    storage.write("media/signatures/doctor_3.png", PNG)
+    storage.write(f"media/signatures/doctor_{doctor.id}.png", PNG)
 
-    res = await client.get("/media/signatures/doctor_3.png")
+    res = await client.get(f"/{_signed(doctor)}")
     assert res.headers.get("x-content-type-options") == "nosniff"
