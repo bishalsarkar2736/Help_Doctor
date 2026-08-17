@@ -175,11 +175,22 @@ async def system_utilization(
 
 
 
+# PLATFORM TELEMETRY, NOT CLINIC ANALYTICS.
+#
+# Unlike every other route in this module, these two aggregate Notification
+# rows with no tenant predicate, so a clinic admin was reading totals and
+# delivery rates that span every tenant on the platform.
+#
+# They are not scoped to a clinic because they cannot honestly be: notifications
+# carry no clinic_id, and their recipients include patients, who are global
+# identities with clinic_id NULL. Joining through users would silently drop
+# every patient notification from the totals — inventing a number rather than
+# scoping one. So the numbers stay platform-wide and move to the platform role.
 @router.get("/notifications")
 async def notification_analytics(
     db: AsyncSession = Depends(get_db),
     admin : User =Depends(
-        require_roles(UserRole.ADMIN)
+        require_roles(UserRole.SUPER_ADMIN)
     ),
 ):
     return await get_notification_analytics(
@@ -191,7 +202,7 @@ async def notification_analytics(
 async def daily_notification_volume(
     db: AsyncSession = Depends(get_db),
     admin : User =Depends(
-        require_roles(UserRole.ADMIN)
+        require_roles(UserRole.SUPER_ADMIN)
     ),
 ):
     return await get_daily_notification_volume(
