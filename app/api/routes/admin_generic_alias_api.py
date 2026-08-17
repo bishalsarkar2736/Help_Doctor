@@ -39,7 +39,7 @@ def _to_response(alias) -> GenericAliasResponse:
 async def create_generic_alias_endpoint(
     payload: GenericAliasCreate,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(require_roles(UserRole.ADMIN)),
+    admin: User = Depends(require_roles(UserRole.SUPER_ADMIN)),
 ):
     alias = await create_generic_alias(db, payload)
 
@@ -64,7 +64,7 @@ async def list_generic_aliases_endpoint(
 async def delete_generic_alias_endpoint(
     alias_id: int,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(require_roles(UserRole.ADMIN)),
+    admin: User = Depends(require_roles(UserRole.SUPER_ADMIN)),
 ):
     await delete_generic_alias(db, alias_id)
 

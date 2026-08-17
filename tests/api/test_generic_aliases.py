@@ -223,7 +223,7 @@ async def test_autocomplete_finds_brands_by_substance_alias(
 
 
 @pytest.mark.asyncio
-async def test_an_admin_can_register_an_alias(client, db, auth_admin):
+async def test_an_admin_can_register_an_alias(client, db, auth_super_admin):
     generic = Generic(name="Ibuprofen", normalized_name="ibuprofen")
     db.add(generic)
     await db.commit()
@@ -231,7 +231,7 @@ async def test_an_admin_can_register_an_alias(client, db, auth_admin):
     res = await client.post(
         "/admin/generic-aliases",
         json={"generic_id": generic.id, "alias": "Isobutylphenylpropanoic acid"},
-        headers=auth_admin["headers"],
+        headers=auth_super_admin["headers"],
     )
 
     assert res.status_code in (200, 201), res.text
@@ -239,7 +239,7 @@ async def test_an_admin_can_register_an_alias(client, db, auth_admin):
 
 
 @pytest.mark.asyncio
-async def test_the_same_alias_cannot_be_registered_twice(client, db, auth_admin):
+async def test_the_same_alias_cannot_be_registered_twice(client, db, auth_super_admin):
     generic = Generic(name="Ibuprofen", normalized_name="ibuprofen")
     db.add(generic)
     await db.commit()
@@ -247,19 +247,19 @@ async def test_the_same_alias_cannot_be_registered_twice(client, db, auth_admin)
     body = {"generic_id": generic.id, "alias": "Brufen Substance"}
 
     await client.post(
-        "/admin/generic-aliases", json=body, headers=auth_admin["headers"]
+        "/admin/generic-aliases", json=body, headers=auth_super_admin["headers"]
     )
     second = await client.post(
         "/admin/generic-aliases",
         json={"generic_id": generic.id, "alias": "brufen substance"},
-        headers=auth_admin["headers"],
+        headers=auth_super_admin["headers"],
     )
 
     assert second.status_code == 400, second.text
 
 
 @pytest.mark.asyncio
-async def test_one_name_cannot_denote_two_substances(client, db, auth_admin):
+async def test_one_name_cannot_denote_two_substances(client, db, auth_super_admin):
     """Otherwise an allergy to it would flag medicines with no recorded reaction."""
     first = Generic(name="Paracetamol", normalized_name="paracetamol")
     second = Generic(name="Ibuprofen", normalized_name="ibuprofen")
@@ -269,12 +269,12 @@ async def test_one_name_cannot_denote_two_substances(client, db, auth_admin):
     await client.post(
         "/admin/generic-aliases",
         json={"generic_id": first.id, "alias": "Acetaminophen"},
-        headers=auth_admin["headers"],
+        headers=auth_super_admin["headers"],
     )
     clash = await client.post(
         "/admin/generic-aliases",
         json={"generic_id": second.id, "alias": "Acetaminophen"},
-        headers=auth_admin["headers"],
+        headers=auth_super_admin["headers"],
     )
 
     assert clash.status_code == 400, clash.text
@@ -283,7 +283,7 @@ async def test_one_name_cannot_denote_two_substances(client, db, auth_admin):
 
 @pytest.mark.asyncio
 async def test_an_alias_equal_to_the_substance_name_is_refused(
-    client, db, auth_admin
+    client, db, auth_super_admin
 ):
     generic = Generic(name="Ibuprofen", normalized_name="ibuprofen")
     db.add(generic)
@@ -292,18 +292,18 @@ async def test_an_alias_equal_to_the_substance_name_is_refused(
     res = await client.post(
         "/admin/generic-aliases",
         json={"generic_id": generic.id, "alias": "ibuprofen"},
-        headers=auth_admin["headers"],
+        headers=auth_super_admin["headers"],
     )
 
     assert res.status_code == 400, res.text
 
 
 @pytest.mark.asyncio
-async def test_an_unknown_substance_is_refused(client, auth_admin):
+async def test_an_unknown_substance_is_refused(client, auth_super_admin):
     res = await client.post(
         "/admin/generic-aliases",
         json={"generic_id": 999_999, "alias": "Something"},
-        headers=auth_admin["headers"],
+        headers=auth_super_admin["headers"],
     )
     assert res.status_code == 404, res.text
 
@@ -323,14 +323,20 @@ async def test_a_doctor_cannot_register_an_alias(client, db, auth_doctor):
 
 
 @pytest.mark.asyncio
-async def test_an_alias_can_be_removed(client, db, auth_admin, paracetamol):
+async def test_an_alias_can_be_removed(
+    client, db, auth_admin, auth_super_admin, paracetamol
+):
+    # Two principals on purpose. Reading the catalogue is clinic-staff work and
+    # stays with ADMIN; deleting from it is a platform action, because the table
+    # carries no clinic_id and every clinic prescribes from it.
     listed = await client.get(
         "/admin/generic-aliases", headers=auth_admin["headers"]
     )
     alias_id = listed.json()[0]["id"]
 
     res = await client.delete(
-        f"/admin/generic-aliases/{alias_id}", headers=auth_admin["headers"]
+        f"/admin/generic-aliases/{alias_id}",
+        headers=auth_super_admin["headers"],
     )
     assert res.status_code == 200, res.text
 

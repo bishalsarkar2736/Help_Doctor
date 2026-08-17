@@ -17,6 +17,11 @@ from app.models.generic import Generic
 from app.models.medicine import Medicine
 from app.services.generic_service import resolve_or_create_generic
 
+# Catalogue writes are SUPER_ADMIN actions: medicines/generics carry no
+# clinic_id, so one clinic's admin must not edit what every clinic prescribes
+# from. These tests are about generic LINKING, not about who may write; only
+# the acting principal changes.
+
 
 def _payload(**overrides):
     body = {
@@ -30,11 +35,11 @@ def _payload(**overrides):
     return body
 
 
-async def _create(client, auth_admin, **overrides):
+async def _create(client, auth_super_admin, **overrides):
     return await client.post(
         "/admin/medicines",
         json=_payload(**overrides),
-        headers=auth_admin["headers"],
+        headers=auth_super_admin["headers"],
     )
 
 
@@ -45,9 +50,9 @@ async def _create(client, auth_admin, **overrides):
 
 @pytest.mark.asyncio
 async def test_a_new_medicine_is_linked_to_its_substance(
-    client, db, auth_admin
+    client, db, auth_super_admin
 ):
-    res = await _create(client, auth_admin)
+    res = await _create(client, auth_super_admin)
     assert res.status_code in (200, 201), res.text
 
     medicine = await db.scalar(select(Medicine).where(Medicine.name == "Zimax"))
@@ -57,8 +62,8 @@ async def test_a_new_medicine_is_linked_to_its_substance(
 
 
 @pytest.mark.asyncio
-async def test_a_new_substance_creates_one_generic(client, db, auth_admin):
-    await _create(client, auth_admin)
+async def test_a_new_substance_creates_one_generic(client, db, auth_super_admin):
+    await _create(client, auth_super_admin)
 
     generic = await db.scalar(
         select(Generic).where(Generic.normalized_name == "azithromycin")
@@ -69,11 +74,11 @@ async def test_a_new_substance_creates_one_generic(client, db, auth_admin):
 
 @pytest.mark.asyncio
 async def test_two_brands_of_one_substance_share_a_generic(
-    client, db, auth_admin
+    client, db, auth_super_admin
 ):
     """The point of the relation: brands of a substance must be one family."""
-    await _create(client, auth_admin, name="Zimax")
-    await _create(client, auth_admin, name="Azin")
+    await _create(client, auth_super_admin, name="Zimax")
+    await _create(client, auth_super_admin, name="Azin")
 
     rows = (
         await db.execute(
@@ -87,14 +92,14 @@ async def test_two_brands_of_one_substance_share_a_generic(
 
 @pytest.mark.asyncio
 async def test_a_differently_spelled_substance_reuses_the_same_generic(
-    client, db, auth_admin
+    client, db, auth_super_admin
 ):
     """Spacing and punctuation must not split a brand family in two."""
     await _create(
-        client, auth_admin, name="Moxaclav", generic_name="Amoxicillin + Clavulanic Acid"
+        client, auth_super_admin, name="Moxaclav", generic_name="Amoxicillin + Clavulanic Acid"
     )
     await _create(
-        client, auth_admin, name="Fimoxyclav", generic_name="amoxicillin clavulanic acid"
+        client, auth_super_admin, name="Fimoxyclav", generic_name="amoxicillin clavulanic acid"
     )
 
     rows = (
@@ -110,12 +115,12 @@ async def test_a_differently_spelled_substance_reuses_the_same_generic(
 
 @pytest.mark.asyncio
 async def test_an_existing_generic_is_reused_not_duplicated(
-    client, db, auth_admin
+    client, db, auth_super_admin
 ):
     db.add(Generic(name="Azithromycin", normalized_name="azithromycin"))
     await db.commit()
 
-    await _create(client, auth_admin)
+    await _create(client, auth_super_admin)
 
     count = len(
         (
@@ -133,20 +138,20 @@ async def test_an_existing_generic_is_reused_not_duplicated(
 
 
 @pytest.mark.asyncio
-async def test_editing_the_substance_moves_the_link(client, db, auth_admin):
+async def test_editing_the_substance_moves_the_link(client, db, auth_super_admin):
     """The drift case.
 
     Before this, generic_name showed the new substance while generic_id still
     pointed at the old one — so the allergy check tested against a substance
     the catalogue no longer claimed the medicine contained.
     """
-    created = await _create(client, auth_admin)
+    created = await _create(client, auth_super_admin)
     medicine_id = created.json()["id"]
 
     res = await client.put(
         f"/admin/medicines/{medicine_id}",
         json={"generic_name": "Cefixime"},
-        headers=auth_admin["headers"],
+        headers=auth_super_admin["headers"],
     )
     assert res.status_code in (200, 201), res.text
 
@@ -159,9 +164,9 @@ async def test_editing_the_substance_moves_the_link(client, db, auth_admin):
 
 @pytest.mark.asyncio
 async def test_editing_something_else_leaves_the_link_alone(
-    client, db, auth_admin
+    client, db, auth_super_admin
 ):
-    created = await _create(client, auth_admin)
+    created = await _create(client, auth_super_admin)
     medicine_id = created.json()["id"]
 
     before = (await db.get(Medicine, medicine_id)).generic_id
@@ -169,7 +174,7 @@ async def test_editing_something_else_leaves_the_link_alone(
     await client.put(
         f"/admin/medicines/{medicine_id}",
         json={"manufacturer": "Beximco"},
-        headers=auth_admin["headers"],
+        headers=auth_super_admin["headers"],
     )
 
     medicine = await db.get(Medicine, medicine_id)
@@ -179,16 +184,16 @@ async def test_editing_something_else_leaves_the_link_alone(
 
 @pytest.mark.asyncio
 async def test_the_displayed_substance_and_the_link_always_agree(
-    client, db, auth_admin
+    client, db, auth_super_admin
 ):
     """The invariant the whole change exists to hold."""
-    created = await _create(client, auth_admin)
+    created = await _create(client, auth_super_admin)
     medicine_id = created.json()["id"]
 
     await client.put(
         f"/admin/medicines/{medicine_id}",
         json={"generic_name": "Paracetamol"},
-        headers=auth_admin["headers"],
+        headers=auth_super_admin["headers"],
     )
 
     medicine = await db.get(Medicine, medicine_id)

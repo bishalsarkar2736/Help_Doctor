@@ -41,7 +41,7 @@ async def create_alias_endpoint(
     db: AsyncSession = Depends(get_db),
     admin : User=Depends(
         require_roles(
-            UserRole.ADMIN
+            UserRole.SUPER_ADMIN
         )
     ),
 ):
@@ -83,7 +83,7 @@ async def delete_alias_endpoint(
     db: AsyncSession = Depends(get_db),
     admin : User =Depends(
         require_roles(
-            UserRole.ADMIN
+            UserRole.SUPER_ADMIN
         )
     ),
 ):

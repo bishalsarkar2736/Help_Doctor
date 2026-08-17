@@ -16,6 +16,9 @@ from sqlalchemy import select
 
 from app.models.medicine import Medicine
 
+# The catalogue is platform-shared (no clinic_id), so writing it is a
+# SUPER_ADMIN action. What this test verifies is unchanged.
+
 
 @pytest.mark.asyncio
 async def test_medicine_can_be_created_through_the_orm(db):
@@ -35,7 +38,7 @@ async def test_medicine_can_be_created_through_the_orm(db):
 
 
 @pytest.mark.asyncio
-async def test_admin_can_add_a_medicine(client, auth_admin, db):
+async def test_admin_can_add_a_medicine(client, auth_super_admin, db):
     res = await client.post(
         "/admin/medicines",
         json={
@@ -44,7 +47,7 @@ async def test_admin_can_add_a_medicine(client, auth_admin, db):
             "manufacturer": "Test Pharma",
             "is_brand": True,
         },
-        headers=auth_admin["headers"],
+        headers=auth_super_admin["headers"],
     )
 
     assert res.status_code in (200, 201), res.text

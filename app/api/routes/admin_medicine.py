@@ -41,7 +41,7 @@ async def create_medicine_endpoint(
     payload: MedicineCreate,
     db: AsyncSession = Depends(get_db),
     admin : User =Depends(
-        require_roles(UserRole.ADMIN)
+        require_roles(UserRole.SUPER_ADMIN)
     ),
 ):
     return await create_medicine(
@@ -89,7 +89,7 @@ async def update_medicine_endpoint(
     payload: MedicineUpdate,
     db: AsyncSession = Depends(get_db),
     admin : User =Depends(
-        require_roles(UserRole.ADMIN)
+        require_roles(UserRole.SUPER_ADMIN)
     ),
 ):
     return await update_medicine(
@@ -104,7 +104,7 @@ async def delete_medicine_endpoint(
     medicine_id: int,
     db: AsyncSession = Depends(get_db),
     admin : User =Depends(
-        require_roles(UserRole.ADMIN)
+        require_roles(UserRole.SUPER_ADMIN)
     ),
 ):
     return await delete_medicine(
