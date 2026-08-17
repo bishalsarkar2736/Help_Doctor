@@ -2,13 +2,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.medicine import Medicine
+from app.models.prescription import PrescriptionItem
 from app.schemas.medicine_schema import (
     MedicineCreate,
     MedicineUpdate,
 )
 from app.core.cache import delete_cache
 from app.services.generic_service import resolve_or_create_generic
-from app.try_except.exceptions import NotFoundError
+from app.try_except.exceptions import BadRequestError, NotFoundError
 
 
 async def create_medicine(
@@ -128,6 +129,35 @@ async def delete_medicine(
         db,
         medicine_id,
     )
+
+    # A PRESCRIBED MEDICINE IS NOT DELETABLE.
+    #
+    # prescription_items.medicine_id is ON DELETE SET NULL, so deleting the row
+    # used to succeed quietly. Nothing clinical was lost — medicine_name is a
+    # NOT NULL column on the item and is what the PDF and the API render — but
+    # the route from that brand name to its active substance was: allergy
+    # checking reaches the substance through Medicine -> Generic and
+    # MedicineAlias -> Medicine -> Generic, and the name-matching fallback for
+    # rows with no id queries the same catalogue. Deleting the row closes the id
+    # path, the name path and the aliases (ON DELETE CASCADE) at once, leaving
+    # the substance present in `generics` but unreachable. The next prescriber to
+    # type that brand gets no substance resolved and therefore no allergy
+    # conflict raised.
+    #
+    # Editing is the remedy and is already safe: update_medicine keeps the row,
+    # so every link survives. An unreferenced medicine stays deletable, which is
+    # how a genuine duplicate or typo is still removed.
+    prescribed = await db.scalar(
+        select(PrescriptionItem.id)
+        .where(PrescriptionItem.medicine_id == medicine_id)
+        .limit(1)
+    )
+
+    if prescribed is not None:
+        raise BadRequestError(
+            "This medicine has already been prescribed and cannot be deleted. "
+            "Update the entry to correct it instead."
+        )
 
     cache_key = (
         f"medicine:{medicine.name.lower()}"
