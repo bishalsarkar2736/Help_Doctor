@@ -424,7 +424,7 @@ services:
     image: redis:7
     container_name: helpdoctor_redis
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -441,8 +441,8 @@ services:
     image: mailhog/mailhog:latest
     container_name: helpdoctor_mailhog
     ports:
-      - "1025:1025"   # SMTP
-      - "8025:8025"   # web UI
+      - "127.0.0.1:1025:1025"   # SMTP
+      - "127.0.0.1:8025:8025"   # web UI
     restart: unless-stopped
     logging: *default-logging
 
@@ -460,8 +460,8 @@ services:
     image: jaegertracing/all-in-one:1.76.0
     container_name: helpdoctor_jaeger
     ports:
-      - "16686:16686"
-      - "4318:4318"
+      - "127.0.0.1:16686:16686"
+      - "127.0.0.1:4318:4318"
     restart: unless-stopped
     logging: *default-logging
 
@@ -591,7 +591,7 @@ services:
     image: grafana/grafana@sha256:5dad0df181cb644a14e13617b913b261a54f7d4fd4510721dba420929f35bea2
     container_name: helpdoctor_grafana
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     restart: unless-stopped
     logging: *default-logging
 
