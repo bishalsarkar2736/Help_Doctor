@@ -73,6 +73,66 @@ fi
 
 echo "[$(date -u)] Backup complete (${actual_bytes} bytes)"
 
+# Report success to Prometheus, AFTER the size guard above.
+#
+# Placement is the whole point: pushing before that check would publish a fresh
+# timestamp for a dump that was then deleted as too small, and the alert would
+# stay silent while backups were failing. Nothing below this line may push
+# either — a rotation failure must not look like a successful backup.
+#
+# Written with bash's /dev/tcp because this runs in the postgres image, which
+# ships no curl, wget, nc or python. Adding one would mean a custom image for
+# the backup service; a redirection that bash already has costs nothing.
+#
+# NEVER fatal. `set -e` is on and a backup that ran is a backup that ran: a
+# pushgateway that is down, renamed or removed must not turn a good dump into a
+# failure. It degrades to a log line, and BackupMetricMissing catches the case
+# where that keeps happening.
+push_success_metric() {
+    local host="${PUSHGATEWAY_HOST:-}"
+    local port="${PUSHGATEWAY_PORT:-9091}"
+
+    [ -n "$host" ] || return 0
+
+    local now
+    now="$(date -u +%s)"
+
+    # Built with a literal trailing newline rather than $(printf ...\n): command
+    # substitution strips trailing newlines, and the Prometheus text format
+    # requires the body to end with one. Without it the pushgateway answers
+    # 400 "text format parsing error ... unexpected end of input stream" —
+    # which cost a debugging round the first time.
+    local body
+    body="# TYPE helpdoctor_backup_last_success_timestamp gauge
+helpdoctor_backup_last_success_timestamp ${now}
+"
+
+    exec 3<>"/dev/tcp/${host}/${port}" || return 1
+
+    printf 'POST /metrics/job/db_backup/database/%s HTTP/1.1\r\n' "$POSTGRES_DB" >&3
+    printf 'Host: %s:%s\r\n' "$host" "$port" >&3
+    printf 'Content-Type: text/plain\r\n' >&3
+    printf 'Content-Length: %s\r\n' "${#body}" >&3
+    printf 'Connection: close\r\n\r\n' >&3
+    printf '%s' "$body" >&3
+
+    local status
+    read -r _ status _ <&3
+    exec 3<&-
+    exec 3>&-
+
+    case "$status" in
+        200|202) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+if push_success_metric; then
+    echo "[$(date -u)] Pushed backup success timestamp"
+else
+    echo "[$(date -u)] WARNING: could not push backup metric (backup itself is fine)" >&2
+fi
+
 # Rotate: delete dumps older than the retention window.
 deleted="$(find "$BACKUP_DIR" -name "${POSTGRES_DB}_*.sql.gz" -type f -mtime "+${RETENTION_DAYS}" -print -delete | wc -l)"
 echo "[$(date -u)] Rotation removed ${deleted} backup(s) older than ${RETENTION_DAYS} days"

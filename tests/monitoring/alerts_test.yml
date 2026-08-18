@@ -393,3 +393,92 @@ tests:
                 down, or the network to the monitor is broken -- and no other
                 alert in this file can tell you, because they all depend on the
                 system that stopped.
+
+  # -------------------------------------------------------------------------
+  # BACKUPS
+  #
+  # The gap these cover is the one that actually happened: backups stopped and
+  # nothing said so for 13 days. Each case pins one half of that -- a stale
+  # timestamp, and no timestamp at all.
+  # -------------------------------------------------------------------------
+
+  # A backup that completed 3 hours ago, against a 2h threshold.
+  #
+  # The series is written as a CONSTANT epoch while `time()` advances, which is
+  # what a stopped backup loop looks like: the last push stays where it was and
+  # the gap widens on its own.
+  - interval: 1m
+    name: a backup loop that has stopped must be reported
+    input_series:
+      - series: 'helpdoctor_backup_last_success_timestamp{job="db_backup",database="helpdoctor_db"}'
+        values: "0x300"
+    alert_rule_test:
+      - eval_time: 3h
+        alertname: BackupStale
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              job: db_backup
+              database: helpdoctor_db
+            exp_annotations:
+              summary: "No verified database backup in over 2 hours"
+              description: >-
+                The backup loop has not completed a size-checked dump within two
+                hourly windows. Check `docker logs helpdoctor_db_backup`: the
+                container may be dead rather than failing, which produces no log
+                output at all.
+
+  # One missed run is not a page. At 90 minutes the rule must stay quiet, or it
+  # trains people to ignore it -- the failure the top of alerts.yml warns about.
+  - interval: 1m
+    name: a single missed hourly run must not page
+    input_series:
+      - series: 'helpdoctor_backup_last_success_timestamp{job="db_backup",database="helpdoctor_db"}'
+        values: "0x300"
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: BackupStale
+        exp_alerts: []
+
+  # The absent arm. No series at all -- a pushgateway that lost its store, a
+  # removed scrape job, or a backup that has never once succeeded.
+  #
+  # BackupStale CANNOT fire here: `time() - <empty vector>` is an empty vector.
+  # This test is the proof that the hole is covered, and it asserts BOTH: that
+  # BackupMetricMissing fires and that BackupStale does not.
+  - interval: 1m
+    name: a missing backup metric must fire its own alert
+    input_series:
+      - series: 'up{job="pushgateway"}'
+        values: "1x300"
+    alert_rule_test:
+      - eval_time: 1h
+        alertname: BackupMetricMissing
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: "Backup success metric is absent entirely"
+              description: >-
+                Prometheus has no backup timestamp series at all. Either no backup
+                has ever succeeded since the pushgateway last started, the push is
+                failing, or the scrape job is gone. BackupStale cannot fire in this
+                state, so this rule is the only one that will tell you.
+      - eval_time: 1h
+        alertname: BackupStale
+        exp_alerts: []
+
+  # A healthy loop: the timestamp advances with real time, so the difference
+  # never reaches the threshold and neither rule fires.
+  - interval: 1m
+    name: a healthy hourly backup loop stays quiet
+    input_series:
+      - series: 'helpdoctor_backup_last_success_timestamp{job="db_backup",database="helpdoctor_db"}'
+        values: "0+60x300"
+    alert_rule_test:
+      - eval_time: 3h
+        alertname: BackupStale
+        exp_alerts: []
+      - eval_time: 3h
+        alertname: BackupMetricMissing
+        exp_alerts: []

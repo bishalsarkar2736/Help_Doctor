@@ -484,6 +484,57 @@ groups:
   # a permanently-firing page trains people to ignore the ones that matter, which
   # is the failure the top of this file warns about.
   # ---------------------------------------------------------------------------
+  # BACKUPS
+  #
+  # Written after both backup loops were found dead: the main stack's for 13
+  # days, staging's failing authentication hourly for a week. Neither produced
+  # any signal at all. The entrypoint is
+  # `while true; do /backup_db.sh || echo "backup failed"; sleep ...` -- a
+  # failure prints a line nobody reads, and a KILLED container prints nothing
+  # whatsoever. The recovery point silently aged to two weeks.
+  #
+  # The metric is pushed by scripts/backup_db.sh only after the dump has passed
+  # its size guard, so a fresh timestamp means a dump that verifiably exists,
+  # not merely a pg_dump that was started.
+  # ---------------------------------------------------------------------------
+  - name: backups
+    rules:
+      - alert: BackupStale
+        # 2h against an hourly schedule: one missed run is noise (a slow dump, a
+        # restart), two in a row is a pattern. Tighter than that pages for
+        # nothing; looser and a day can disappear before anyone is told.
+        expr: time() - helpdoctor_backup_last_success_timestamp > 7200
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "No verified database backup in over 2 hours"
+          description: >-
+            The backup loop has not completed a size-checked dump within two
+            hourly windows. Check `docker logs helpdoctor_db_backup`: the
+            container may be dead rather than failing, which produces no log
+            output at all.
+
+      - alert: BackupMetricMissing
+        # The companion arm, for the same reason NoTrafficReceived and
+        # AlertmanagerDown carry one: BackupStale subtracts from a series that
+        # may not exist, and `time() - <empty vector>` is an empty vector, which
+        # never fires. Deleting the backup service, renaming the job or losing
+        # the pushgateway store would therefore silence the very rule that
+        # reports backups missing.
+        expr: absent(helpdoctor_backup_last_success_timestamp)
+        for: 30m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Backup success metric is absent entirely"
+          description: >-
+            Prometheus has no backup timestamp series at all. Either no backup
+            has ever succeeded since the pushgateway last started, the push is
+            failing, or the scrape job is gone. BackupStale cannot fire in this
+            state, so this rule is the only one that will tell you.
+
+  # ---------------------------------------------------------------------------
   - name: watchdog
     rules:
       - alert: Watchdog

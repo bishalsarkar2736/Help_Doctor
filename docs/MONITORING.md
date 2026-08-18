@@ -62,7 +62,7 @@ curl -s localhost:9093/metrics | grep '^alertmanager_notifications_failed_total'
 
 ## The alert rules
 
-24 rules in 9 groups, in [`alerts.yml`](../alerts.yml). Every rule should be
+26 rules in 10 groups, in [`alerts.yml`](../alerts.yml). Every rule should be
 something a human would act on; alerts that fire on noise train people to ignore
 the ones that matter.
 
@@ -135,6 +135,18 @@ the ones that matter.
 > but they cannot page through a path that is down. That is what the `watchdog`
 > group below is for.
 
+**backups** — the recovery point
+
+| alert | severity | why |
+|---|---|---|
+| `BackupStale` | critical | no size-checked dump for over 2h. Written after both backup loops were found dead — the main stack's for 13 days — while the recovery point silently aged to two weeks |
+| `BackupMetricMissing` | critical | no timestamp series at all. `BackupStale` subtracts from a series that may not exist, and `time() - <empty vector>` never fires, so this is the only rule that speaks when the metric itself disappears |
+
+The timestamp is **pushed**, not scraped: `db_backup` is a bash loop in a
+postgres image with no metrics endpoint. `scripts/backup_db.sh` pushes to the
+`pushgateway` only after the dump passes its size guard, so a fresh timestamp
+means a dump that verifiably exists rather than a `pg_dump` that was started.
+
 **watchdog** — the dead-man's switch
 
 | alert | severity | why |
@@ -160,6 +172,7 @@ endpoint and has its own scrape job.
 | `outbox_worker` | `outbox_worker:9103` | `outbox_worker_heartbeat`, `outbox_events_processed_total`, `outbox_*` |
 | `alertmanager` | `alertmanager:9093` | `alertmanager_notifications_*`, `alertmanager_config_last_reload_successful` |
 | `prometheus` | `localhost:9090` | Prometheus's own `up`, `process_*` and `prometheus_notifications_*` |
+| `pushgateway` | `pushgateway:9091` | `helpdoctor_backup_last_success_timestamp`, pushed by the backup job. `honor_labels: true`, or Prometheus would overwrite the pushed `job` label and collapse every pushed series into one identity |
 
 Two consequences of the per-process model that still bite:
 

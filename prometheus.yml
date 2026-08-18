@@ -46,6 +46,16 @@ scrape_configs:
     # gitignored -- so putting it here would break the check on every fresh
     # clone. scripts/check_production_env.py verifies the production wiring.
 
+  # The backup job's success timestamp, pushed by scripts/backup_db.sh.
+  #
+  # honor_labels: true is REQUIRED. Without it Prometheus overwrites the pushed
+  # `job` label with "pushgateway", so every pushed series collapses into one
+  # identity and the grouping the script sets is silently discarded.
+  - job_name: "pushgateway"
+    honor_labels: true
+    static_configs:
+      - targets: ["pushgateway:9091"]
+
   # The celery worker exports on its own port from the prefork parent. Without
   # this job, background jobs fail silently — nothing scraped them at all.
   - job_name: "celery"

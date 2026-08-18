@@ -61,6 +61,20 @@ scrape_configs:
     # the two and fails the deploy if they differ.
     bearer_token_file: /etc/prometheus/secrets/metrics_token
 
+  # The backup job's success timestamp, pushed by scripts/backup_db.sh.
+  #
+  # No bearer_token_file, unlike the fastapi job: the pushgateway is internal to
+  # the compose network, publishes no host port, and has no METRICS_TOKEN gate of
+  # its own to satisfy.
+  #
+  # honor_labels: true is REQUIRED. Without it Prometheus overwrites the pushed
+  # `job` label with "pushgateway", so every pushed series collapses into one
+  # identity and the grouping the script sets is silently discarded.
+  - job_name: "pushgateway"
+    honor_labels: true
+    static_configs:
+      - targets: ["pushgateway:9091"]
+
   - job_name: "celery"
     static_configs:
       - targets: ["celery_worker:9100"]

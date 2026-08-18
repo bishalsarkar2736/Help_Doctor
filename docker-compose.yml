@@ -291,6 +291,10 @@ services:
       BACKUP_DIR: /backups
       RETENTION_DAYS: "7"
       BACKUP_INTERVAL_SECONDS: "3600"
+      # Unset disables the push entirely (see backup_db.sh), which is what keeps
+      # the script usable from cron outside compose.
+      PUSHGATEWAY_HOST: pushgateway
+      PUSHGATEWAY_PORT: "9091"
     depends_on:
       postgres:
         condition: service_healthy
@@ -540,6 +544,32 @@ services:
     restart: unless-stopped
     logging: *default-logging
 
+  # Receives the backup job's success timestamp. db_backup is a bash loop in a
+  # postgres image with no metrics endpoint of its own and nothing scrapeable to
+  # point a job at, so the one number that matters — when a dump last verifiably
+  # succeeded — has to be pushed rather than pulled.
+  #
+  # PERSISTENCE IS NOT OPTIONAL HERE. Without --persistence.file the store is
+  # in memory, so a pushgateway restart drops the series, and
+  # `time() - helpdoctor_backup_last_success_timestamp` over an ABSENT series
+  # evaluates to an empty vector — which does not fire. The alert would go quiet
+  # exactly when it had lost its input, reproducing the silent 13-day gap it
+  # exists to prevent. The BackupMetricMissing rule covers the same hole from
+  # the other side.
+  #
+  # No host port: only Prometheus and db_backup reach it, both over the compose
+  # network. Publishing it would expose an unauthenticated write endpoint.
+  pushgateway:
+    image: prom/pushgateway:v1.11.1
+    container_name: helpdoctor_pushgateway
+    command:
+      - "--persistence.file=/data/pushgateway.store"
+      - "--persistence.interval=1m"
+    volumes:
+      - pushgateway_data:/data
+    restart: unless-stopped
+    logging: *default-logging
+
   grafana:
     # PINNED BY DIGEST, and deliberately not by tag.
     #
@@ -568,6 +598,7 @@ services:
 
 volumes:
   postgres_data:
+  pushgateway_data:
   alertmanager_data:
   prometheus_data:
   minio_data:
