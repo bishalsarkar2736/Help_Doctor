@@ -592,12 +592,26 @@ services:
     container_name: helpdoctor_grafana
     ports:
       - "127.0.0.1:3000:3000"
+    environment:
+      # Set here rather than through the Grafana UI. Until this existed the
+      # image default applied, and the container has no persistence at all --
+      # no named volume and no VOLUME in the image -- so grafana.db lived in
+      # the writable layer and a --force-recreate destroyed it along with any
+      # password set through the UI. An env-var credential is re-applied on
+      # every start, so it survives exactly the event that wiped the other kind.
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+    volumes:
+      # The other half of the same problem: without this, dashboards, users and
+      # saved queries are lost on every recreate.
+      - grafana_data:/var/lib/grafana
     restart: unless-stopped
     logging: *default-logging
 
 
 volumes:
   postgres_data:
+  grafana_data:
   pushgateway_data:
   alertmanager_data:
   prometheus_data:
