@@ -113,7 +113,10 @@ def create_app() -> FastAPI:
         title=settings.APP_NAME,
         debug=settings.DEBUG,
         lifespan=lifespan,
-        version="1.0.0"
+        version="1.0.0",
+        docs_url="/docs" if settings.ENV != "production" else None,
+        redoc_url="/redoc" if settings.ENV != "production" else None,
+        openapi_url="/openapi.json" if settings.ENV != "production" else None,
     )
 
     # /media and /uploads are served by app/api/routes/files.py, through the
