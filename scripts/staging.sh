@@ -48,10 +48,11 @@ generate_env() {
 
     echo "==> generating $ENV_FILE with fresh secrets"
 
-    local pg jwt minio_secret
+    local pg jwt minio_secret redis_pw
     pg=$(python3 -c "import secrets,string;a=string.ascii_letters+string.digits;print(''.join(secrets.choice(a) for _ in range(28)))")
     jwt=$(python3 -c "import secrets;print(secrets.token_urlsafe(48))")
     minio_secret=$(python3 -c "import secrets,string;a=string.ascii_letters+string.digits;print(''.join(secrets.choice(a) for _ in range(28)))")
+    redis_pw=$(python3 -c "import secrets;print(secrets.token_hex(28))")
 
     # Start from the committed example, exactly as a new deployer would, then
     # point it at the staging service names. Anything missing from
@@ -64,15 +65,16 @@ generate_env() {
         -e "s|^POSTGRES_USER=.*|POSTGRES_USER=helpdoctor_user|" \
         -e "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=$pg|" \
         -e "s|^JWT_SECRET_KEY=.*|JWT_SECRET_KEY=$jwt|" \
-        -e "s|^REDIS_URL=.*|REDIS_URL=redis://redis:6379/0|" \
+        -e "s|^REDIS_URL=.*|REDIS_URL=redis://:$redis_pw@redis:6379/0|" \
         -e "s|^REDIS_HOST=.*|REDIS_HOST=redis|" \
-        -e "s|^RATE_LIMIT_STORAGE_URI=.*|RATE_LIMIT_STORAGE_URI=redis://redis:6379/1|" \
+        -e "s|^RATE_LIMIT_STORAGE_URI=.*|RATE_LIMIT_STORAGE_URI=redis://:$redis_pw@redis:6379/1|" \
         -e "s|^MAIL_HOST=.*|MAIL_HOST=mailhog|" \
         -e "s|^MAIL_PORT=.*|MAIL_PORT=1025|" \
         -e "s|^STORAGE_BACKEND=.*|STORAGE_BACKEND=s3|" \
         -e "s|^S3_ENDPOINT_URL=.*|S3_ENDPOINT_URL=http://minio:9000|" \
         -e "s|^S3_ACCESS_KEY=.*|S3_ACCESS_KEY=staging|" \
         -e "s|^S3_SECRET_KEY=.*|S3_SECRET_KEY=$minio_secret|" \
+        -e "s|^REDIS_PASSWORD=.*|REDIS_PASSWORD=$redis_pw|" \
         .env.example > "$ENV_FILE"
 
     # Compose interpolates ${POSTGRES_*} and ${S3_*} for the postgres and minio
