@@ -94,6 +94,14 @@ services:
   # `--profile full` remains possible without colliding.
   db_backup:
     container_name: staging_db_backup
+    # The only other service in the base file with an env_file, and it was
+    # missed when the rest got this override. The result was not a silent
+    # cross-stack read — POSTGRES_HOST resolves network-locally, so it reached
+    # staging's postgres — but it carried PRODUCTION's password, so every run
+    # failed authentication and staging has never held a single dump. It failed
+    # closed and hourly, which is the good version of this bug; the file's own
+    # warning above describes the bad version.
+    env_file: !override [.env.staging]
 
   files_backup:
     container_name: staging_files_backup
