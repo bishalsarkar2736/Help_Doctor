@@ -218,6 +218,32 @@ class Settings(BaseSettings):
         le=65535,
     )
 
+    # --- Compose interpolation only. NOT read by the application. ------------
+    #
+    # Both are declared solely so that `extra="forbid"` accepts them when
+    # Settings loads .env, and both exist because docker-compose.yml
+    # interpolates them:
+    #
+    #   redis:   command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}"]
+    #   grafana: GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+    #
+    # The application reaches Redis through REDIS_URL, which already carries the
+    # credential, and never talks to Grafana at all. Nothing should read these.
+    #
+    # Why they must be declared rather than removed from .env: compose reads
+    # ${VAR} from the project's .env and nowhere else, while Settings loads that
+    # same file as a dotenv — and a dotenv key that matches no field is an error
+    # under extra="forbid". Adding them here is what lets one file serve both
+    # consumers without weakening that guard, which exists to catch a typo'd
+    # setting that would otherwise be silently ignored.
+    #
+    # Discovered when the host-run test suite began failing with
+    # "Extra inputs are not permitted" while every container stayed healthy:
+    # .dockerignore excludes .env from the image, so containers read real
+    # environment variables, which pydantic filters by field name.
+    REDIS_PASSWORD: str | None = None
+    GRAFANA_ADMIN_PASSWORD: str | None = None
+
     # Elasticsearch
     ELASTIC_HOST: AnyUrl = "http://localhost:9200"
 
