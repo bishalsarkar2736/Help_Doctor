@@ -109,6 +109,27 @@ docker build -t helpdoctor-web:<version> \
 
 ### 4.2 Configuration & secrets
 
+Start from the production template, not `.env.example`. §3 tells you to
+`cp .env.example .env` for Docker Compose, and that file is a DEVELOPMENT
+config: `ENV=development`, `STORAGE_BACKEND=local`, and an `ALLOWED_HOSTS`
+containing `testserver`. Deploying from it produces a stack the gate below
+rejects on three separate counts.
+
+```bash
+cp .env.production.example .env.production
+# fill in every __REPLACE_*__ value
+python scripts/check_production_env.py .env.production
+```
+
+The template carries the production-side values already — `ENV=production`,
+`STORAGE_BACKEND=s3`, `MFA_REQUIRED_ROLES=super_admin,admin`, the offsite backup
+keys — so filling it in is a matter of supplying secrets rather than also
+remembering which defaults to invert. Every secret is a `__REPLACE_*__` marker,
+and the gate refuses any that survives, so a half-filled file cannot deploy.
+
+`.env.production` itself is gitignored. `.env.production.example` is committed
+and contains no secrets.
+
 - Inject env vars from your platform's **secret manager** — do not ship a `.env`
   into the image. The image contains no secrets.
 - Set the production values from the
