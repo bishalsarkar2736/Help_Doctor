@@ -30,6 +30,46 @@ jobs:
         run: ruff format --check .
         continue-on-error: true
 
+  # Dependency advisories against the PINNED requirements.txt, so this answers
+  # "does anything we ship have a known CVE" rather than "is anything newer
+  # available". Pinning without scanning is the trap: versions stay
+  # reproducible, and reproducibly vulnerable, until someone looks.
+  #
+  # pip-audit is installed here rather than added to requirements.txt — the
+  # scanner is not a runtime dependency and has no business in the image.
+  #
+  # No continue-on-error: a new advisory against anything we depend on should
+  # fail the build. That is the entire point of the job.
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install pip-audit
+        run: pip install pip-audit==2.10.1
+
+      # PYSEC-2026-1325 (ecdsa) is ignored deliberately and is the ONLY
+      # accepted advisory:
+      #
+      #   * There is no fixed version. The python-ecdsa project considers side
+      #     channel attacks out of scope, so this will never clear on its own.
+      #   * It is transitive — pulled in by python-jose, imported by nothing in
+      #     app/.
+      #   * It is a Minerva timing attack on ECDSA *signing* over P-256. This
+      #     application signs JWTs with HS256 (HMAC), so no ECDSA signing path
+      #     is reachable. Signature verification is unaffected either way.
+      #
+      # Anything else must be FIXED, not added to this list. If a new advisory
+      # appears here, upgrade the package; only add an ignore after establishing
+      # that the vulnerable code path cannot be reached, and record why.
+      - name: Audit dependencies
+        run: pip-audit -r requirements.txt --ignore-vuln PYSEC-2026-1325
+
   test:
     runs-on: ubuntu-latest
 
