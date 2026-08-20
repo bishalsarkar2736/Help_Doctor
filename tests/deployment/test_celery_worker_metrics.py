@@ -290,6 +290,15 @@ def test_the_non_root_user_can_write_to_the_tmpfs():
     the real mount rather than inferred from the mode bits."""
     image = yaml.load(COMPOSE.read_text(), Loader=_Loader)["services"]["api"]["image"]
 
+    # `docker run` pulls when the image is absent, so its failure text is a
+    # registry error, not "No such image" — the reason this guard used to miss.
+    # Ask about the image directly instead; inspect never touches the network.
+    if subprocess.run(
+        ["docker", "image", "inspect", image],
+        capture_output=True, text=True,
+    ).returncode != 0:
+        pytest.skip("application image is not built locally")
+
     probe = subprocess.run(
         [
             "docker", "run", "--rm",
@@ -301,9 +310,6 @@ def test_the_non_root_user_can_write_to_the_tmpfs():
         ],
         capture_output=True, text=True, timeout=180,
     )
-
-    if probe.returncode != 0 and "No such image" in probe.stderr:
-        pytest.skip("application image is not built locally")
 
     assert "WRITABLE" in probe.stdout, (
         f"the non-root user cannot write the metrics dir: "
