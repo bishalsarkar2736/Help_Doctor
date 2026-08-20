@@ -40,6 +40,7 @@ jobs:
           POSTGRES_USER: helpdoctor
           POSTGRES_PASSWORD: ci_ephemeral_not_a_secret
           POSTGRES_DB: hd_test
+          TEST_POSTGRES_DB: hd_test
         ports:
           - 5432:5432
         options: >-
@@ -72,6 +73,7 @@ jobs:
       POSTGRES_HOST: localhost
       POSTGRES_PORT: "5432"
       POSTGRES_DB: hd_test
+      TEST_POSTGRES_DB: hd_test
       POSTGRES_USER: helpdoctor
       POSTGRES_PASSWORD: ci_ephemeral_not_a_secret
       REDIS_URL: redis://localhost:6379/0
