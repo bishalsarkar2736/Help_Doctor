@@ -13,6 +13,7 @@ from app.schemas.clinic_hours_schema import (
 from app.schemas.clinic_schema import (
     ClinicUpdate,
     ClinicCreate,
+    ClinicSubdomainUpdate,
     AdminClinicAssign,
 )
 from app.try_except.exceptions import (
@@ -46,6 +47,78 @@ async def get_clinic_by_id(
     return result.scalar_one_or_none()
 
 
+# Which unique index a duplicate hit, and what to tell the caller.
+#
+# Every IntegrityError here used to be reported as "Clinic with this name
+# already exists". With a second unique index on the table that answer is
+# sometimes simply wrong: a caller who reused a subdomain was told to change
+# the name, which does not fix anything.
+#
+# asyncpg reports the INDEX name in constraint_name for a unique-index
+# violation, so the two are distinguishable.
+_DUPLICATE_MESSAGES = {
+    "uq_clinic_name_lower": "Clinic with this name already exists",
+    "uq_clinic_subdomain_lower": "Clinic with this subdomain already exists",
+}
+
+
+def _violated_constraint(error: IntegrityError) -> str | None:
+    """The constraint/index name the database reported, if it gave one."""
+    # SQLAlchemy wraps the driver error, which in turn wraps asyncpg's.
+    candidate = error.orig
+
+    for _ in range(3):
+        name = getattr(candidate, "constraint_name", None)
+
+        if name:
+            return name
+
+        candidate = getattr(candidate, "__cause__", None)
+
+        if candidate is None:
+            break
+
+    return None
+
+
+async def _subdomain_taken(
+    db: AsyncSession,
+    subdomain: str,
+    exclude_clinic_id: int | None = None,
+) -> bool:
+    """Whether another clinic already holds this subdomain, case-insensitively.
+
+    `exclude_clinic_id` keeps a clinic from colliding with itself: re-sending
+    the subdomain a clinic already has is a no-op, not a duplicate.
+    """
+    query = select(Clinic).where(
+        func.lower(Clinic.subdomain) == subdomain.lower()
+    )
+
+    if exclude_clinic_id is not None:
+        query = query.where(Clinic.id != exclude_clinic_id)
+
+    existing = await db.execute(query)
+
+    return existing.scalar_one_or_none() is not None
+
+
+def _duplicate_error(error: IntegrityError) -> BadRequestError:
+    """Translate a known duplicate into a 400, or re-raise.
+
+    Anything that is not one of this table's unique indexes — a check
+    constraint, a NOT NULL, a foreign key — is a bug rather than bad user
+    input, and must not be flattened into a 400 that tells the caller to change
+    their name. Those propagate.
+    """
+    message = _DUPLICATE_MESSAGES.get(_violated_constraint(error) or "")
+
+    if message is None:
+        raise error
+
+    return BadRequestError(message)
+
+
 async def create_clinic(
     db: AsyncSession,
     payload: ClinicCreate,
@@ -66,8 +139,20 @@ async def create_clinic(
     if existing.scalar_one_or_none() is not None:
         raise BadRequestError("Clinic with this name already exists")
 
+    # Already stripped, lowercased and format-checked by ClinicCreate; None
+    # when the clinic has no hostname yet, which is the normal case.
+    subdomain = payload.subdomain
+
+    # The same courtesy pre-check the name gets: a clear message instead of a
+    # constraint error. It is NOT the guarantee — two concurrent requests can
+    # both pass this — and uq_clinic_subdomain_lower below is what actually
+    # holds. Comparing with LOWER() so it agrees with that index.
+    if subdomain is not None and await _subdomain_taken(db, subdomain):
+        raise BadRequestError("Clinic with this subdomain already exists")
+
     clinic = Clinic(
         name=name,
+        subdomain=subdomain,
         address=payload.address,
         phone=payload.phone,
         email=payload.email,
@@ -79,11 +164,9 @@ async def create_clinic(
 
     try:
         await db.flush()
-    
-    except IntegrityError:
-        raise BadRequestError(
-            "Clinic with this name already exists"
-        )
+
+    except IntegrityError as error:
+        raise _duplicate_error(error)
     
     await db.refresh(clinic)
 
@@ -184,6 +267,60 @@ async def soft_delete_clinic(
 
     await db.flush()
     await db.refresh(clinic)
+    return clinic
+
+
+async def set_clinic_subdomain(
+    db: AsyncSession,
+    clinic_id: int,
+    payload: ClinicSubdomainUpdate,
+) -> Clinic:
+    """Assign, change or clear a clinic's subdomain.
+
+    Separate from update_clinic for the reason the opening-hours endpoints are
+    separate (admin_clinic.py): that schema assigns every field it carries, so
+    a client omitting the subdomain would delete it. Here the field is required
+    by ClinicSubdomainUpdate, so omitting it is a 422 and clearing it is an
+    explicit `null` — the distinction this function depends on.
+
+    CLEARING IS ALLOWED, deliberately. A subdomain is a public identity and
+    the codebase treats those cautiously — clinics are soft-deleted, users are
+    never hard-deleted — but a mistyped hostname has to be correctable, and
+    this endpoint is already restricted to the platform operator who can
+    suspend or archive the whole clinic.
+
+    What it does NOT do is protect a released subdomain from being taken by
+    another clinic. Reassigning one means URLs issued for the old tenant would
+    reach the new one, which is a cross-tenant confusion rather than merely a
+    broken link. Nothing routes on this column yet, so that hazard is not live;
+    a retired-subdomains table is the fix when it becomes so.
+    """
+    clinic = await get_clinic_by_id(db, clinic_id)
+
+    if clinic is None:
+        raise NotFoundError("Clinic not found")
+
+    # Already stripped, lowercased, format-checked and screened against the
+    # reserved list by ClinicSubdomainUpdate.
+    subdomain = payload.subdomain
+
+    # Courtesy pre-check, as in create_clinic. uq_clinic_subdomain_lower below
+    # is the guarantee; this only produces a better message.
+    if subdomain is not None and await _subdomain_taken(
+        db, subdomain, exclude_clinic_id=clinic.id
+    ):
+        raise BadRequestError("Clinic with this subdomain already exists")
+
+    clinic.subdomain = subdomain
+
+    try:
+        await db.flush()
+
+    except IntegrityError as error:
+        raise _duplicate_error(error)
+
+    await db.refresh(clinic)
+
     return clinic
 
 

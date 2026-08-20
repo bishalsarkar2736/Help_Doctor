@@ -20,6 +20,7 @@ from app.schemas.clinic_schema import (
     ClinicResponse,
     ClinicUpdate,
     ClinicCreate,
+    ClinicSubdomainUpdate,
     AdminClinicAssign,
 )
 
@@ -43,6 +44,7 @@ from app.services.clinic_service import (
     suspend_clinic,
     activate_clinic,
     soft_delete_clinic,
+    set_clinic_subdomain,
     list_clinics,
 )
 from app.try_except.exceptions import NotFoundError
@@ -229,6 +231,41 @@ async def delete_clinic_endpoint(
 ):
     # Soft delete / archive — data is retained.
     return await soft_delete_clinic(db=db, clinic_id=clinic_id)
+
+
+# ---------------------------------------------------------------------------
+# Subdomain
+#
+# SUPER_ADMIN, not ADMIN. A subdomain is platform-plane state, not clinic
+# settings: it is unique across every tenant, it has to exist in DNS and on a
+# certificate the clinic does not control, and the reserved list protects this
+# deployment's own hostnames. Letting each clinic admin choose their own would
+# hand a tenant the ability to claim any free label on the platform's domain.
+#
+# require_roles matches the role exactly, so SUPER_ADMIN is not a superset of
+# ADMIN here — this endpoint is closed to clinic admins, as create/suspend/
+# delete already are.
+#
+# PUT rather than POST: assigning a subdomain is idempotent, and re-sending the
+# same value is a no-op rather than a duplicate.
+# ---------------------------------------------------------------------------
+
+
+@router.put(
+    "/{clinic_id}/subdomain",
+    response_model=ClinicResponse,
+)
+async def set_clinic_subdomain_endpoint(
+    clinic_id: int,
+    payload: ClinicSubdomainUpdate,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_roles(UserRole.SUPER_ADMIN)),
+):
+    return await set_clinic_subdomain(
+        db=db,
+        clinic_id=clinic_id,
+        payload=payload,
+    )
 
 
 # ---------------------------------------------------------------------------
