@@ -3,6 +3,7 @@ from enum import Enum
 
 from sqlalchemy import (
     JSON,
+    CheckConstraint,
     DateTime,
     Index,
     Integer,
@@ -63,6 +64,22 @@ class Clinic(Base):
         nullable=False,
     )
 
+    # The tenant's DNS label — the "citycare" in citycare.example.com — used to
+    # identify which clinic a request is for when routing by hostname.
+    #
+    # Nullable, and nullable on purpose: a clinic with no subdomain is simply
+    # not reachable by hostname, which is every clinic today. Requiring one
+    # would mean no clinic could be created before its DNS was decided.
+    #
+    # 63 characters is the DNS limit for a single label, not a product choice.
+    # Stored already normalised (stripped, lowercased) — see
+    # app/domain/clinics/subdomain.py for the rule and why each part of it
+    # exists. Nothing routes on this column yet.
+    subdomain: Mapped[str | None] = mapped_column(
+        String(63),
+        nullable=True,
+    )
+
     # Declared after the column it indexes, so it can reference it directly.
     #
     # Clinic names are unique case-insensitively: "City Clinic" and "city
@@ -76,6 +93,36 @@ class Clinic(Base):
             "uq_clinic_name_lower",
             func.lower(name),
             unique=True,
+        ),
+        # Subdomains are unique case-insensitively for the same reason names
+        # are, but with a harder consequence: DNS does not distinguish case, so
+        # two rows differing only in case would be two tenants claiming one
+        # host. Written as a functional index rather than unique=True because
+        # lower() cannot be expressed on the column — the same reason as above.
+        #
+        # NULLs are not compared by a Postgres unique index, so any number of
+        # clinics may have no subdomain.
+        Index(
+            "uq_clinic_subdomain_lower",
+            func.lower(subdomain),
+            unique=True,
+        ),
+        # The format rule, restated in the database.
+        #
+        # app/domain/clinics/subdomain.py is the only writer today, so this is
+        # redundant with it — deliberately. This value becomes a public
+        # hostname, and a malformed one cannot be fixed by editing it later
+        # once it has been handed out. A constraint here holds for a direct
+        # SQL fix, a data import and a future code path that forgets to call
+        # the validator.
+        #
+        # Reserved names are NOT enforced here: that list is a product
+        # decision that will change, and changing it would mean a migration
+        # plus a constraint that existing rows might already violate.
+        CheckConstraint(
+            "subdomain IS NULL OR subdomain ~ "
+            "'^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'",
+            name="ck_clinics_subdomain_format",
         ),
     )
 
