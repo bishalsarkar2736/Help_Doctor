@@ -26,6 +26,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 
 from app.config import get_settings
+from app.domain.clinics.subdomain import subdomain_from_host
 
 
 # The one path the allowlist does not apply to.
@@ -52,6 +53,42 @@ from app.config import get_settings
 METRICS_PATH = "/metrics"
 
 
+def _host_is_served(host: str, settings) -> bool:
+    """Whether this deployment answers on `host`.
+
+    Two rules, in this order, and the second is deliberately narrow.
+
+    LITERAL: equality against allowed_hosts_list, exactly as before. Every host
+    that worked before this function existed still takes this path.
+
+    WILDCARD: for each configured `*.base`, the host is accepted only if it is
+    `<label>.base` where `<label>` is a subdomain this platform would have
+    issued. That test is subdomain_from_host, the SAME function the tenant
+    resolver uses — so the allowlist cannot drift from what routing accepts,
+    and all of its refusals are inherited for free:
+
+      - exactly one label, so `a.b.example.com` is refused
+      - RFC 1123 format, so `-bad.example.com` is refused
+      - the reserved list, so `api.example.com` and `www.example.com` are
+        refused even though they fit the pattern
+      - the apex itself returns None, so `example.com` is NOT covered by
+        `*.example.com` and needs its own literal entry
+
+    A suffix test alone would not do: `evil-example.com` and
+    `example.com.evil.com` both end in something that looks like the base, and
+    subdomain_from_host rejects each because it requires the separating dot and
+    the exact remainder.
+    """
+    if host in settings.allowed_hosts_list:
+        return True
+
+    for base in settings.allowed_host_suffixes:
+        if subdomain_from_host(host, base) is not None:
+            return True
+
+    return False
+
+
 class TrustedHostMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next):
@@ -72,7 +109,7 @@ class TrustedHostMiddleware(BaseHTTPMiddleware):
         # the same client-supplied value, so honouring it would add a second
         # spoofable channel that reaches the same decision.
 
-        if host and host not in settings.allowed_hosts_list:
+        if host and not _host_is_served(host, settings):
             return JSONResponse(
                 status_code=400,
                 content={

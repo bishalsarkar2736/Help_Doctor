@@ -445,6 +445,31 @@ class Settings(BaseSettings):
     # it is still the default.
     ALLOWED_HOSTS: str = "localhost,127.0.0.1,testserver"
 
+    # The domain that clinic subdomains hang off: "helpdoctor.com" makes
+    # citycare.helpdoctor.com resolve to the clinic whose subdomain is
+    # "citycare".
+    #
+    # UNSET DISABLES HOST-BASED TENANT RESOLUTION ENTIRELY, which is the
+    # default and the current state of every deployment. Without an apex to
+    # measure against there is no way to tell a tenant label from the first
+    # label of an unrelated domain, and treating any Host that way would make
+    # a client-supplied header into a tenant identifier.
+    #
+    # Setting this does NOT make those hosts reachable: ALLOWED_HOSTS is a
+    # separate, exact-match allowlist that still has to name them.
+    CLINIC_BASE_DOMAIN: str | None = None
+
+    # Addresses or CIDR blocks whose X-Forwarded-For this deployment believes.
+    #
+    # EMPTY BY DEFAULT, AND EMPTY MEANS TRUST NOTHING. The header is
+    # client-supplied: the API is reachable directly on :8000 today, so an
+    # untrusted caller who could set it would choose their own rate-limit
+    # bucket and evade every per-IP limit by varying it.
+    #
+    # In production this names the reverse proxy only — the compose network it
+    # dials from, e.g. "172.18.0.0/16", never "0.0.0.0/0" and never "*".
+    TRUSTED_PROXY_IPS: str = ""
+
     METRICS_TOKEN: str | None = None
 
     # OpenTelemetry OTLP/HTTP traces endpoint (the collector to export spans to).
@@ -489,14 +514,42 @@ class Settings(BaseSettings):
     DEV_ONLY_HOSTS: ClassVar[tuple[str, ...]] = ("testserver",)
 
     @property
-    def allowed_hosts_list(self) -> list[str]:
-        configured = [
+    def _allowed_host_entries(self) -> list[str]:
+        return [
             host.strip().lower()
             for host in self.ALLOWED_HOSTS.split(",")
             if host.strip()
         ]
 
+    @property
+    def allowed_hosts_list(self) -> list[str]:
+        """The LITERAL hostnames, compared by equality.
+
+        Wildcard entries are deliberately excluded: "*.example.com" is not a
+        hostname any request can carry, so leaving it here would put a value in
+        the allowlist that can never match and invite a reader to assume the
+        comparison globs. They are served by allowed_host_suffixes instead.
+        """
+        configured = [
+            host for host in self._allowed_host_entries
+            if not host.startswith("*.")
+        ]
+
         return list(dict.fromkeys([*configured, *self.LOOPBACK_HOSTS]))
+
+    @property
+    def allowed_host_suffixes(self) -> list[str]:
+        """Base domains from `*.base` entries, without the leading `*.`.
+
+        A separate list because the two are checked differently and must not be
+        confused: these are matched by suffix and only ever for ONE additional
+        label, while allowed_hosts_list is matched by equality. The validator
+        guarantees each entry here is a single well-formed `*.base`.
+        """
+        return list(dict.fromkeys(
+            host[2:] for host in self._allowed_host_entries
+            if host.startswith("*.")
+        ))
 
     @property
     def allowed_origins_list(self) -> list[str]:
@@ -538,6 +591,82 @@ class Settings(BaseSettings):
         return value
 
 
+    @property
+    def trusted_proxy_networks(self) -> tuple:
+        """TRUSTED_PROXY_IPS as networks. Empty tuple when unset."""
+        import ipaddress
+
+        networks = []
+
+        for entry in self.TRUSTED_PROXY_IPS.split(","):
+            entry = entry.strip()
+
+            if not entry:
+                continue
+
+            # strict=False so a host address ("172.18.0.5") is accepted as a
+            # /32 rather than rejected for having bits set.
+            networks.append(ipaddress.ip_network(entry, strict=False))
+
+        return tuple(networks)
+
+    @field_validator("TRUSTED_PROXY_IPS")
+    @classmethod
+    def validate_trusted_proxy_ips(cls, value: str) -> str:
+        """Refuse at startup rather than silently trusting nothing.
+
+        A typo here fails open in the sense that matters: the entry never
+        matches, every request looks direct, and the per-IP limits quietly
+        collapse onto the proxy's address. Better to not start.
+        """
+        import ipaddress
+
+        for entry in value.split(","):
+            entry = entry.strip()
+
+            if not entry:
+                continue
+
+            if entry == "*":
+                raise ValueError(
+                    "TRUSTED_PROXY_IPS must name the proxy, not '*'. Trusting "
+                    "every source makes X-Forwarded-For client-controlled and "
+                    "per-IP rate limits trivially evadable."
+                )
+
+            try:
+                ipaddress.ip_network(entry, strict=False)
+
+            except ValueError as exc:
+                raise ValueError(
+                    f"TRUSTED_PROXY_IPS entry {entry!r} is not an IP address "
+                    f"or CIDR block: {exc}"
+                ) from exc
+
+        return value
+
+    @staticmethod
+    def _is_supported_wildcard(host: str) -> bool:
+        """Whether `host` is the one wildcard form this deployment implements.
+
+        Exactly `*.<base>`: one leading star, one dot after it, no further star
+        anywhere, and a base that is itself a plausible domain rather than a
+        bare label — `*.com` would delegate an entire TLD.
+        """
+        if not host.startswith("*."):
+            return False
+
+        base = host[2:]
+
+        if "*" in base or not base:
+            return False
+
+        labels = base.split(".")
+
+        # At least two labels, none empty: "*.example.com" yes, "*.localhost"
+        # and "*." and "*..com" no.
+        return len(labels) >= 2 and all(labels)
+
     @field_validator("ALLOWED_HOSTS")
     @classmethod
     def validate_allowed_hosts(
@@ -577,7 +706,20 @@ class Settings(BaseSettings):
         #
         # Any entry CONTAINING "*" is refused for the same reason: "*.example.com"
         # is not matched as a pattern either, so it silently covers nothing.
-        patterned = sorted(host for host in hosts if "*" in host)
+        # A SINGLE leading "*." is the one wildcard shape allowed, and only
+        # because TrustedHostMiddleware implements it explicitly: it matches
+        # exactly one additional label under that base, and that label must
+        # itself be a subdomain this platform would have issued (format and
+        # reserved-name rules, see app/domain/clinics/subdomain.py).
+        #
+        # Everything else containing "*" is still refused. "foo.*.example.com"
+        # and "*.*.example.com" are not matched as patterns anywhere, so they
+        # would silently cover nothing; a bare "*" reads like it disables the
+        # check while actually closing it.
+        patterned = sorted(
+            host for host in hosts
+            if "*" in host and not cls._is_supported_wildcard(host)
+        )
 
         if patterned:
             raise ValueError(

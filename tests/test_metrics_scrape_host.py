@@ -182,8 +182,13 @@ def test_the_middleware_still_checks_every_other_request():
         if isinstance(node, ast.AsyncFunctionDef) and node.name == "dispatch"
     )
 
-    # The allowlist comparison survives.
-    assert "allowed_hosts_list" in ast.dump(dispatch)
+    # The allowlist comparison survives. It moved out of dispatch into
+    # _host_is_served when wildcard support was added, so the guard follows it:
+    # dispatch must still CALL the check, and the check must still consult the
+    # allowlist. Asserting both keeps this a test that the exemption is a narrow
+    # early return rather than a disabled check.
+    assert "_host_is_served" in ast.dump(dispatch)
+    assert "allowed_hosts_list" in source
     assert "InvalidHost" in source
 
 

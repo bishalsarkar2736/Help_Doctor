@@ -108,14 +108,39 @@ def test_production_refuses_loopback_only():
 
 @pytest.mark.parametrize(
     "value",
-    ["*", "*.placeholder.test", "app.placeholder.test,*", "**"],
+    [
+        "*",
+        "app.placeholder.test,*",
+        "**",
+        "**.placeholder.test",
+        "foo.*.placeholder.test",
+        "*.*.placeholder.test",
+        "*.placeholder",          # single-label base would delegate a whole TLD
+    ],
 )
 def test_production_refuses_wildcards(value):
-    """Not a hole -- a trap. The Host header is compared by equality, so a
-    wildcard matches nothing and rejects every real request: an outage produced
-    by a line that reads like it disabled the check."""
+    """Not a hole -- a trap. These are not matched as patterns anywhere, so a
+    wildcard in any of these positions matches nothing and rejects every real
+    request: an outage produced by a line that reads like it disabled the check.
+
+    `*.<base>` is no longer in this list. It IS matched, by an explicit rule in
+    TrustedHostMiddleware that admits exactly one additional label and validates
+    it as a tenant subdomain -- see tests/test_trusted_host_wildcard.py. A bare
+    `*` remains refused for the original reason.
+    """
     with pytest.raises(ValueError, match="literal hostnames, not patterns"):
         _build(ENV="production", ALLOWED_HOSTS=value)
+
+
+def test_production_accepts_a_single_leading_wildcard():
+    """The one supported form, added for tenant subdomains."""
+    settings = _build(
+        ENV="production",
+        ALLOWED_HOSTS="placeholder.test,*.placeholder.test",
+    )
+
+    assert settings.allowed_host_suffixes == ["placeholder.test"]
+    assert "*.placeholder.test" not in settings.allowed_hosts_list
 
 
 def test_the_wildcard_message_explains_the_consequence():

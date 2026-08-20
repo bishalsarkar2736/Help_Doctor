@@ -115,3 +115,60 @@ def validate_subdomain(value: str | None) -> str | None:
         )
 
     return normalized
+
+
+def subdomain_from_host(host: str | None, base_domain: str | None) -> str | None:
+    """The tenant label in `citycare.helpdoctor.com`, or None.
+
+    None means "this Host names no tenant" — the apex, an unrelated domain, a
+    nested label, an IP literal, a reserved name, anything malformed, or simply
+    a deployment with no base domain configured. It is never an error here:
+    the caller falls through to its other candidates and produces the same
+    not-found it would have produced before, rather than a new failure mode.
+
+    Everything about the Host header is client-supplied, so this function
+    refuses by default and accepts only the one shape it recognises: exactly
+    one label, under exactly the configured apex, that would itself be a valid
+    subdomain.
+    """
+    if not base_domain or not host:
+        return None
+
+    # The port is not part of the identity, matching TrustedHostMiddleware.
+    candidate = host.strip().lower()
+
+    # An IPv6 literal arrives bracketed ("[::1]:8000") and its colons are not
+    # a port separator. No tenant is ever named by an address, so refuse the
+    # whole shape rather than try to parse it.
+    if "[" in candidate or "]" in candidate:
+        return None
+
+    candidate = candidate.split(":")[0].strip()
+
+    if not candidate:
+        return None
+
+    apex = base_domain.strip().lower().strip(".")
+
+    # The apex itself is the platform, not a tenant.
+    if candidate == apex:
+        return None
+
+    suffix = f".{apex}"
+
+    if not candidate.endswith(suffix):
+        return None
+
+    label = candidate[: -len(suffix)]
+
+    # Exactly one label. "a.b.helpdoctor.com" is not tenant "a": accepting it
+    # would make one tenant's name a prefix of arbitrarily many hosts.
+    if "." in label:
+        return None
+
+    # An IPv4 literal cannot end in the apex, so anything reaching here is a
+    # name — but it still has to be a name this platform would have issued.
+    try:
+        return validate_subdomain(label)
+    except InvalidSubdomain:
+        return None

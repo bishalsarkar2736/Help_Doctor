@@ -30,6 +30,16 @@ pwd_context = CryptContext(
 
 oauth2_schema = OAuth2PasswordBearer(tokenUrl="auth/login")
 
+# The same scheme, but tolerant of an absent Authorization header.
+#
+# auto_error=False is the whole difference: the scheme above raises 401 when
+# no credentials arrive, which is right for a protected route and wrong for a
+# public one that merely wants to KNOW whether a caller is signed in.
+oauth2_schema_optional = OAuth2PasswordBearer(
+    tokenUrl="auth/login",
+    auto_error=False,
+)
+
 
 # =========================
 # PASSWORD HANDLING
@@ -145,6 +155,53 @@ async def get_current_user(
     clinic_id_ctx.set(user.clinic_id)
 
     return user
+
+async def get_current_user_optional(
+    token: str | None = Depends(oauth2_schema_optional),
+    db: AsyncSession = Depends(get_db),
+) -> User | None:
+    """The signed-in user, or None — never a 401.
+
+    For endpoints that serve anonymous callers but behave differently when
+    someone is signed in. The only current caller is require_clinic, which
+    needs to know whether a Host-named tenant agrees with the caller's own.
+
+    THIS GRANTS NOTHING. Every failure — no header, bad signature, expired,
+    unknown user, deactivated user — returns None, which is exactly the
+    anonymous case the caller already handles. It must never be used in place
+    of get_current_user to protect a route: an attacker who supplies no token
+    reaches the same result as one who supplies a broken one, and that is the
+    intended behaviour here rather than an oversight.
+    """
+    if not token:
+        return None
+
+    payload = decode_access_token(token)
+
+    if payload is None:
+        return None
+
+    user_id = payload.get("sub")
+
+    if not user_id:
+        return None
+
+    try:
+        user = await db.get(User, int(user_id), options=[lazyload("*")])
+
+    except (TypeError, ValueError):
+        return None
+
+    if user is None or not user.is_active:
+        return None
+
+    # Same logging context the required dependency sets, so a request that
+    # happens to be authenticated is attributable either way.
+    user_id_ctx.set(user.id)
+    clinic_id_ctx.set(user.clinic_id)
+
+    return user
+
 
 # =========================
 # WEBSOCKET TOKEN DECODE

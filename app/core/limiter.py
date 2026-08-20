@@ -1,7 +1,7 @@
 from slowapi import Limiter
-from slowapi.util import get_remote_address
 
 from app.config import get_settings
+from app.utils.request_ip import client_ip_from
 
 settings = get_settings()
 
@@ -9,8 +9,18 @@ settings = get_settings()
 # backend (e.g. async+redis://) for distributed limits across replicas.
 # swallow_errors=True fails OPEN if the storage backend is unreachable, so a
 # Redis outage never turns rate limiting into a hard 500.
+# key_func is client_ip_from, NOT slowapi's get_remote_address.
+#
+# get_remote_address returns request.client.host, which behind a reverse proxy
+# is the proxy — so every anonymous caller shared one bucket and a per-IP limit
+# throttled the whole internet together while stopping no individual. That was
+# already true for traffic arriving through the frontend's /api proxy.
+#
+# client_ip_from reads X-Forwarded-For only when the peer is a configured
+# trusted proxy, so this does not become a header anyone can set to mint
+# themselves a fresh budget.
 limiter = Limiter(
-    key_func=get_remote_address,
+    key_func=client_ip_from,
     storage_uri=settings.RATE_LIMIT_STORAGE_URI or "memory://",
     swallow_errors=True,
 )
@@ -49,6 +59,6 @@ def authenticated_key(request) -> str:
         if payload and payload.get("sub"):
             return f"user:{payload['sub']}"
 
-    return get_remote_address(request)
+    return client_ip_from(request)
 
 
