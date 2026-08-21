@@ -229,6 +229,7 @@ different code** and nothing at runtime notices a mismatch:
 - [ ] `CLINIC_BASE_DOMAIN` set to the same base as any `*.base` in `ALLOWED_HOSTS` (or left empty for a single-hostname deployment)
 - [ ] `TRUSTED_PROXY_IPS` names the reverse proxy's network — empty behind a proxy collapses every per-IP rate limit onto one bucket
 - [ ] `METRICS_TOKEN` set to a random secret, **and** the same value written to `secrets/metrics_token`, **and** deployed with `PROMETHEUS_CONFIG=./prometheus.production.yml` — setting only the first locks Prometheus out and every API alert silently loses its data
+- [ ] `GRAFANA_ADMIN_PASSWORD` set to its own random secret — unset, compose substitutes an empty string and Grafana's dashboards cannot be signed into; reusing another secret is refused by the gate
 - [ ] `BASE_URL` and all `*_CALLBACK_URL`s point to your real HTTPS domain
 - [ ] Payment gateways pointed at **production** (not sandbox) URLs & credentials
 - [ ] `MAIL_*` uses a real transactional-email credential

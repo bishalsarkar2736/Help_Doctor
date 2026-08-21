@@ -644,6 +644,20 @@ def check(env: dict[str, str]) -> None:
     else:
         ok("METRICS_TOKEN set")
 
+    # Compose resolves ${GRAFANA_ADMIN_PASSWORD} to an empty string when it is
+    # unset — with a warning nobody reads during a deploy — and Grafana comes up
+    # with no usable admin credential. The stack looks healthy and the dashboards
+    # are unreachable, which is discovered when someone needs them during an
+    # incident. It cannot be recovered through the UI either: the container has a
+    # persistent volume but re-applies this variable on every start.
+    if not env.get("GRAFANA_ADMIN_PASSWORD"):
+        fail(
+            "GRAFANA_ADMIN_PASSWORD is unset — Grafana starts with an empty "
+            "admin credential and its dashboards cannot be signed into"
+        )
+    else:
+        ok("GRAFANA_ADMIN_PASSWORD set")
+
     # Without a dedicated key it is derived from JWT_SECRET_KEY, so rotating
     # the JWT secret would make every stored MFA secret undecryptable.
     if not env.get("MFA_SECRET_ENCRYPTION_KEYS"):
@@ -682,7 +696,15 @@ def check(env: dict[str, str]) -> None:
 
     # Weak or duplicated secrets.
     seen: dict[str, str] = {}
-    for key in ("JWT_SECRET_KEY", "POSTGRES_PASSWORD", "S3_SECRET_KEY"):
+    for key in (
+        "JWT_SECRET_KEY",
+        "POSTGRES_PASSWORD",
+        "S3_SECRET_KEY",
+        # Reused here is not a lesser problem for being a monitoring password:
+        # Grafana's admin can read every dashboard and datasource, and the value
+        # is passed through compose rather than a mounted secret.
+        "GRAFANA_ADMIN_PASSWORD",
+    ):
         value = env.get(key, "")
         if not value:
             continue

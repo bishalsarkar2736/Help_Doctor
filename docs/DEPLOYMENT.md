@@ -40,12 +40,19 @@ Key points:
 
 ---
 
-## 3. Docker Compose
+## 3. Docker Compose (development)
 
 ```bash
 cp .env.example .env      # fill in real values first
 docker compose up --build
 ```
+
+> **This is the development stack, not a deployment.** It publishes the API on
+> `0.0.0.0:8000` and the SPA on `0.0.0.0:5173`, runs MailHog and Jaeger, and
+> takes credentials from `.env`. Running it on a production host serves the
+> application over plain HTTP with development passwords. The production
+> invocation is [§4.6](#46-running-the-production-stack) and is a different
+> command — not this one with different values.
 
 Services defined in [`docker-compose.yml`](../docker-compose.yml):
 
@@ -166,8 +173,10 @@ printf '%s' "$METRICS_TOKEN" > secrets/metrics_token
 #        chown 65534 secrets/metrics_token && chmod 600 secrets/metrics_token
 chmod 644 secrets/metrics_token
 
-# 3. select the config that reads it
-PROMETHEUS_CONFIG=./prometheus.production.yml docker compose up -d
+# 3. select the config that reads it — this variable chooses which prometheus
+#    config is mounted; it is NOT by itself a production deployment. Pass it
+#    alongside the full production invocation in §4.6.
+PROMETHEUS_CONFIG=./prometheus.production.yml
 ```
 
 Verify before deploying — this fails with a non-zero exit if any of the three
@@ -196,7 +205,9 @@ Alertmanager reads its SMTP password and Slack webhook from the same mounted
 one trap, and it is the same one the metrics token has:
 
 ```bash
-ALERTMANAGER_CONFIG=./alertmanager.production.yml docker compose up -d
+# As with PROMETHEUS_CONFIG, this selects a config file. It is not a deployment
+# command on its own — see §4.6 for the invocation both belong to.
+ALERTMANAGER_CONFIG=./alertmanager.production.yml
 
 printf '%s' 'your-smtp-password'     > secrets/smtp_password
 printf '%s' 'https://hooks.slack...' > secrets/slack_webhook
@@ -338,6 +349,49 @@ that origin to the API's `ALLOWED_ORIGINS`.
 
 ---
 
+### 4.6 Running the production stack
+
+Production is a **different invocation**, not `docker compose up --build` with
+other values. Four things have to be present, and omitting any one of them
+produces a stack that starts successfully and is wrong:
+
+```bash
+PROMETHEUS_CONFIG=./prometheus.production.yml \
+ALERTMANAGER_CONFIG=./alertmanager.production.yml \
+docker compose \
+  -p helpdoctor_production \
+  -f docker-compose.yml \
+  -f docker-compose.production.yml \
+  --env-file .env.production \
+  up -d
+```
+
+| Part | Why it is not optional |
+|---|---|
+| `-f docker-compose.production.yml` | Unpublishes `api:8000` and `web:5173`, and gates MailHog and Jaeger out. Without it the API is on the public internet in cleartext beside the TLS one, and a mail sink with an unauthenticated web UI is running. |
+| `--env-file .env.production` | Compose interpolates `${VAR}` from `.env` unless told otherwise. Without it `postgres`, `minio`, `minio_init`, `files_backup`, `redis` and `grafana` take **development** credentials — and MinIO does so silently, because `docker-compose.yml` carries a working default for it. |
+| `PROMETHEUS_CONFIG` | Selects the config that sends the bearer token. Without it the `fastapi` target stays DOWN and every alert built on API metrics has no data behind it. |
+| `ALERTMANAGER_CONFIG` | Selects the config that reads the SMTP password and Slack webhook from `./secrets`. |
+
+`-p helpdoctor_production` names the compose project. It is not required for
+correctness, but it keeps the volumes and network distinct from any other stack
+on the host.
+
+Verify what will actually run **before** starting it — `config` resolves the
+same merge `up` will use:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.production.yml \
+  --env-file .env.production config | grep -E '0\.0\.0\.0:(8000|5173)'
+```
+
+Two published ports on `0.0.0.0` mean the overlay was not loaded. The expected
+output is nothing.
+
+Offsite backups are gated behind a profile and are **not** started by the
+command above. Add `--profile offsite` once `OFFSITE_*` is filled in; until
+then the database and every backup of it live on one machine.
+
 ## 5. Production checklist
 
 **Done in this codebase**
@@ -358,7 +412,9 @@ that origin to the API's `ALLOWED_ORIGINS`.
 
 - [ ] TLS termination / reverse proxy (§4.4)
 - [ ] Deploy pipeline for your chosen host (image build/push + release)
-- [ ] Rotate all dev secrets before go-live (JWT, DB, VAPID, mail)
+- [ ] Deploy with the full §4.6 invocation — the overlay and `--env-file` are
+      not optional, and omitting either starts a wrong stack that looks healthy
+- [ ] Rotate all dev secrets before go-live (JWT, DB, VAPID, mail, Grafana)
 - [ ] Move uploads to shared storage before scaling the API past one replica (§4.5)
 - [ ] Verify a backup **restore** actually works (OPERATIONS.md)
 - [ ] Check the [connection budget](CONFIGURATION.md#connection-budget) against
