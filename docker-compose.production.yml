@@ -1,0 +1,117 @@
+# Production overlay. Layered ON TOP of docker-compose.yml, never instead of it:
+#
+#   docker compose -p helpdoctor_production \
+#       -f docker-compose.yml -f docker-compose.production.yml ...
+#
+# Small on purpose. The base file is 27 KB of service definitions, healthchecks
+# and hard-won comments; duplicating it here would mean two files to keep in
+# step and one of them silently wrong. This file carries only the differences
+# production requires.
+#
+# WHY `!override` APPEARS ON EVERY FIELD BELOW
+# --------------------------------------------
+# Compose MERGES list-valued fields across files rather than replacing them.
+# Both consequences were found the hard way in docker-compose.staging.yml and
+# are reproduced here because they are worse in production:
+#
+#   ports:     a plain `ports: []` APPENDS nothing and leaves the base entry in
+#              place. Measured against this stack: `ports: []` on api still
+#              resolved to 0.0.0.0:8000, while `ports: !override []` resolved to
+#              no published ports at all. Without the tag this file would read
+#              as if it closed the API to the internet while leaving it open.
+#
+#   env_file:  appending .env.production to .env.docker means every key present
+#              in the development file but ABSENT from the production one keeps
+#              its DEVELOPMENT value. That is how a staging run once reached the
+#              production database — .env.docker defines DATABASE_URL, the
+#              staging file did not, and alembic prefers DATABASE_URL over the
+#              app settings. `!override` gives production a clean, complete
+#              environment of its own.
+#
+# NOT HERE YET, deliberately:
+#   - Caddy and TLS: the next step, once this overlay validates.
+#   - offsite_backup: still gated behind its `offsite` profile in the base file.
+#     Enabling it is a backup concern, and this milestone is TLS/infrastructure.
+#   - container_name overrides: the base file's fixed names are global rather
+#     than scoped by compose project, but production runs on its own host, so
+#     there is no collision to solve. Adding them speculatively would be a
+#     difference that has to be reasoned about at every future deploy.
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # Application services
+  #
+  # All six read the backend environment, and all six must read the PRODUCTION
+  # one exclusively. db_backup is included because it is easy to miss: it is the
+  # only non-app service with an env_file, and the staging overlay missed it —
+  # the result was hourly backup runs carrying the wrong password, so that
+  # environment has never held a single dump. It failed closed and loudly, which
+  # is the good version of that bug; the bad version is a stack that comes up
+  # and reads the wrong database.
+  # ---------------------------------------------------------------------------
+
+  migrate:
+    env_file: !override
+      - .env.production
+
+  api:
+    env_file: !override
+      - .env.production
+    # No published host port. The API is reached only through the reverse proxy,
+    # which dials `api:8000` over the compose network — publishing it on the
+    # host would put an unauthenticated-at-the-edge HTTP service on the public
+    # internet alongside the TLS one, and docker's published ports bypass the
+    # host firewall's INPUT chain, so ufw would not cover it.
+    ports: !override []
+
+  celery_worker:
+    env_file: !override
+      - .env.production
+
+  celery_beat:
+    env_file: !override
+      - .env.production
+
+  outbox_worker:
+    env_file: !override
+      - .env.production
+
+  db_backup:
+    env_file: !override
+      - .env.production
+
+  # ---------------------------------------------------------------------------
+  # Frontend
+  # ---------------------------------------------------------------------------
+
+  web:
+    # Same reasoning as api. Caddy will terminate TLS and proxy to `web:80` over
+    # the compose network; nothing needs the SPA published on the host, and 5173
+    # on 0.0.0.0 would serve the whole application over plain HTTP beside it.
+    ports: !override []
+
+  # ---------------------------------------------------------------------------
+  # Development-only services
+  #
+  # A compose overlay CANNOT delete a service, so these are gated instead: a
+  # service carrying a profile is started only when that profile is explicitly
+  # requested with `--profile`. Nothing in the production workflow requests
+  # `development-only`, so neither service is created, and both disappear from
+  # `docker compose config --services`.
+  #
+  # This is the mechanism the base file already uses for offsite_backup rather
+  # than a new invention, and it is declarative: the exclusion lives in the file
+  # instead of depending on whoever runs `up` remembering to name services.
+  #
+  # MailHog is a mail SINK that accepts anything and shows it in an
+  # unauthenticated web UI; production sends through a real SMTP provider.
+  # Jaeger's all-in-one image is unauthenticated and its traces carry request
+  # metadata from a system holding clinical data.
+  # ---------------------------------------------------------------------------
+
+  mailhog:
+    profiles: ["development-only"]
+
+  jaeger:
+    profiles: ["development-only"]

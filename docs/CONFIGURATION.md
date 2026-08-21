@@ -21,7 +21,9 @@ Copy [`.env.example`](../.env.example) to `.env` as a starting point.
 | `APP_NAME`  | no       | `HelpDoctor`  | Shown in health responses and OpenAPI title. |
 | `ENV`       | no       | `development` | One of `development`, `staging`, `production`. Gates prod-only behavior. |
 | `DEBUG`     | no       | `false`       | Enables SQL echo + FastAPI debug. **Must be `false` in production.** |
-| `ALLOWED_HOSTS` | **in production** | `localhost,127.0.0.1,testserver` | Comma-separated hostnames this deployment answers on. The app **refuses to start** when `ENV=production` and this is still the default, empty, loopback-only, or contains a wildcard. Literal hostnames only — the `Host` header is compared by equality, so `*` and `*.example.com` match nothing and reject everything. Ports are ignored. `localhost` and `127.0.0.1` are always accepted and need not be listed. |
+| `ALLOWED_HOSTS` | **in production** | `localhost,127.0.0.1,testserver` | Comma-separated hostnames this deployment answers on. The app **refuses to start** when `ENV=production` and this is still the default, empty, or loopback-only. Literal hostnames are compared by equality; **one wildcard form is supported**, `*.example.com`, which matches exactly one additional label (see below). A bare `*` is still refused, as are `**.example.com`, `foo.*.example.com` and any other position. Ports are ignored. `localhost` and `127.0.0.1` are always accepted and need not be listed. |
+| `CLINIC_BASE_DOMAIN` | no | *(empty)* | The domain tenant subdomains hang off, so `citycare.example.com` resolves to the clinic whose `subdomain` is `citycare`. Bare hostname — no scheme, port or leading dot. **Empty disables host-based tenant resolution entirely**, which is the correct setting for a single-hostname deployment. Must equal the base of any `*.base` in `ALLOWED_HOSTS`. |
+| `TRUSTED_PROXY_IPS` | no | *(empty)* | Addresses or CIDR blocks whose `X-Forwarded-For` is believed, comma-separated. **Empty means trust nothing**, so the client address is the immediate peer. Behind a reverse proxy that makes every anonymous caller share one rate-limit bucket, so name the proxy's network (e.g. `172.18.0.0/16`). `*` and `0.0.0.0/0` are refused: trusting every source makes the header client-controlled and per-IP limits evadable. |
 
 ## PostgreSQL
 
@@ -188,6 +190,35 @@ never stored — only gateway references. See [docs/SECURITY.md](SECURITY.md).
 
 ---
 
+## Wildcard hosts and tenant subdomains
+
+`ALLOWED_HOSTS` accepts one wildcard form, `*.example.com`, for deployments that
+serve a subdomain per clinic. It is matched explicitly rather than globbed, and
+deliberately narrowly:
+
+- **exactly one label** — `clinic-a.example.com` matches, `a.b.example.com` does not
+- **the label must be a valid subdomain** — RFC 1123 format, no leading or
+  trailing hyphen, and not one of the reserved names (`api`, `www`, `grafana`,
+  `mail`, …), so a host this platform uses for itself cannot be claimed
+- **the apex is not covered** — `example.com` needs its own literal entry
+- **lookalikes are refused** — `evil-example.com` and `example.com.evil.com` both
+  end in something resembling the base and neither is accepted
+
+The same rule decides which hosts the allowlist admits and which clinic the
+tenant resolver returns (`app/domain/clinics/subdomain.py`), so the two cannot
+disagree about what a tenant hostname is.
+
+`ALLOWED_HOSTS` and `CLINIC_BASE_DOMAIN` are **separate settings read by
+different code** and nothing at runtime notices a mismatch:
+
+| Configuration | Result |
+|---|---|
+| `*.example.com` + `CLINIC_BASE_DOMAIN=example.com` | tenant routing works |
+| `*.example.com`, `CLINIC_BASE_DOMAIN` empty | hosts pass the allowlist, resolve to no clinic → **404** |
+| `CLINIC_BASE_DOMAIN` set, no wildcard | tenant hosts rejected at the door → **400** |
+
+`scripts/check_production_env.py` refuses a mismatch before deploy.
+
 ## Production `.env` checklist
 
 - [ ] `ENV=production`, `DEBUG=false`
@@ -195,6 +226,8 @@ never stored — only gateway references. See [docs/SECURITY.md](SECURITY.md).
 - [ ] `POSTGRES_PASSWORD` rotated from any value that ever lived in git/dev
 - [ ] `ALLOWED_HOSTS` set to your real hostname(s), comma-separated (the app refuses to start otherwise — see Application above)
 - [ ] `ALLOWED_ORIGINS` set to your real frontend origin(s), comma-separated
+- [ ] `CLINIC_BASE_DOMAIN` set to the same base as any `*.base` in `ALLOWED_HOSTS` (or left empty for a single-hostname deployment)
+- [ ] `TRUSTED_PROXY_IPS` names the reverse proxy's network — empty behind a proxy collapses every per-IP rate limit onto one bucket
 - [ ] `METRICS_TOKEN` set to a random secret, **and** the same value written to `secrets/metrics_token`, **and** deployed with `PROMETHEUS_CONFIG=./prometheus.production.yml` — setting only the first locks Prometheus out and every API alert silently loses its data
 - [ ] `BASE_URL` and all `*_CALLBACK_URL`s point to your real HTTPS domain
 - [ ] Payment gateways pointed at **production** (not sandbox) URLs & credentials

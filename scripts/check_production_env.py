@@ -24,6 +24,22 @@ import yaml
 
 REPO = Path(__file__).resolve().parent.parent
 
+# The subdomain rule is REUSED, not restated. app/domain/clinics/subdomain.py is
+# what the tenant resolver and the Host allowlist both consult, and a second
+# copy here would be a third opinion that drifts from them silently — the whole
+# point of this check is that the pieces agree.
+#
+# Safe to import from a deploy gate: that module depends on `re` and nothing
+# else, so this pulls in no application dependencies and needs no installed
+# environment. sys.path is extended because the script's own directory, not the
+# repo root, is sys.path[0] when it runs as `python scripts/...`.
+sys.path.insert(0, str(REPO))
+
+from app.domain.clinics.subdomain import (  # noqa: E402
+    InvalidSubdomain,
+    validate_subdomain,
+)
+
 # Both monitoring containers run as nobody. Measured:
 #   docker run --rm --entrypoint id prom/prometheus   -> uid=65534(nobody)
 #   docker run --rm --entrypoint id prom/alertmanager -> uid=65534(nobody)
@@ -248,6 +264,154 @@ def check_allowed_hosts(env: dict[str, str]) -> None:
     ok(f"ALLOWED_HOSTS names {len(hosts - loopback)} routable hostname(s)")
 
 
+def _wildcard_base(env: dict[str, str]) -> str | None:
+    """The base of a `*.base` entry in ALLOWED_HOSTS, if there is one."""
+    raw = env.get("ALLOWED_HOSTS", "")
+
+    for host in raw.split(","):
+        host = host.strip().lower()
+
+        if host.startswith("*."):
+            return host[2:]
+
+    return None
+
+
+def check_clinic_base_domain(env: dict[str, str]) -> None:
+    """The apex tenant subdomains hang off, and its agreement with ALLOWED_HOSTS.
+
+    Two settings, read by different code, with nothing at runtime to notice they
+    disagree: TrustedHostMiddleware decides what may arrive from ALLOWED_HOSTS,
+    the tenant resolver decides what it means from CLINIC_BASE_DOMAIN. Configure
+    one without the other and the failure is silent and confusing — a wildcard
+    with no base domain 404s every tenant host, a base domain with no wildcard
+    400s every tenant host, and neither says why.
+
+    Empty is allowed and means single-tenant: one hostname, no host-based tenant
+    resolution. Only the MISMATCH is refused.
+    """
+    value = env.get("CLINIC_BASE_DOMAIN", "").strip()
+    wildcard = _wildcard_base(env)
+
+    if not value:
+        if wildcard:
+            fail(
+                f"ALLOWED_HOSTS contains '*.{wildcard}' but CLINIC_BASE_DOMAIN "
+                "is empty — those hosts would pass the allowlist and then "
+                "resolve to no clinic, so every tenant request 404s"
+            )
+            return
+
+        ok("CLINIC_BASE_DOMAIN empty — single-tenant, host routing disabled")
+        return
+
+    if value.startswith("*.") or "*" in value:
+        fail(
+            f"CLINIC_BASE_DOMAIN is {value!r} — it names the base domain "
+            "itself, not a pattern. Write 'example.com', not '*.example.com'"
+        )
+        return
+
+    if "://" in value or "/" in value or ":" in value:
+        fail(
+            f"CLINIC_BASE_DOMAIN is {value!r} — a bare hostname is expected, "
+            "with no scheme, port or path"
+        )
+        return
+
+    labels = value.strip(".").split(".")
+
+    if len(labels) < 2 or not all(labels):
+        fail(
+            f"CLINIC_BASE_DOMAIN is {value!r} — a base domain needs at least "
+            "two labels, or a tenant subdomain would sit directly under a TLD"
+        )
+        return
+
+    # Each label held to the same rule a tenant label is, so a base domain
+    # cannot be something no certificate would ever cover.
+    for label in labels:
+        try:
+            validate_subdomain(label)
+
+        except InvalidSubdomain as exc:
+            fail(f"CLINIC_BASE_DOMAIN label {label!r} is not a valid DNS label: {exc}")
+            return
+
+    if wildcard is None:
+        ok(f"CLINIC_BASE_DOMAIN={value} (no wildcard in ALLOWED_HOSTS)")
+        return
+
+    if wildcard != value:
+        fail(
+            f"ALLOWED_HOSTS allows '*.{wildcard}' but CLINIC_BASE_DOMAIN is "
+            f"'{value}' — the allowlist and the tenant resolver would disagree "
+            "about which hosts are tenants, and nothing at runtime reports it"
+        )
+        return
+
+    ok(f"CLINIC_BASE_DOMAIN={value} matches the ALLOWED_HOSTS wildcard")
+
+
+def check_trusted_proxy_ips(env: dict[str, str]) -> None:
+    """The addresses whose X-Forwarded-For this deployment believes.
+
+    Empty behind a reverse proxy is not a safe default in production, it is a
+    broken one: every anonymous caller is attributed to the proxy, so a per-IP
+    rate limit becomes a per-DEPLOYMENT rate limit that throttles everyone
+    together while stopping no individual.
+
+    Too wide is worse. Trusting every source makes the header client-controlled,
+    and a caller can then mint a fresh rate-limit identity per request.
+    """
+    import ipaddress
+
+    raw = env.get("TRUSTED_PROXY_IPS", "").strip()
+
+    if not raw:
+        fail(
+            "TRUSTED_PROXY_IPS is empty — behind a reverse proxy every request "
+            "is attributed to the proxy's address, so per-IP rate limits apply "
+            "to the whole deployment at once. Name the proxy's network."
+        )
+        return
+
+    entries = [entry.strip() for entry in raw.split(",") if entry.strip()]
+
+    if not entries:
+        fail("TRUSTED_PROXY_IPS contains only separators")
+        return
+
+    for entry in entries:
+        if entry == "*":
+            fail(
+                "TRUSTED_PROXY_IPS is '*' — that trusts X-Forwarded-For from "
+                "any source, which makes it client-controlled and per-IP rate "
+                "limits trivially evadable. Name the proxy's network."
+            )
+            return
+
+        try:
+            network = ipaddress.ip_network(entry, strict=False)
+
+        except ValueError as exc:
+            fail(
+                f"TRUSTED_PROXY_IPS entry {entry!r} is not an IP address or "
+                f"CIDR block: {exc}"
+            )
+            return
+
+        # 0.0.0.0/0 and ::/0 are "*" spelled as a network.
+        if network.prefixlen == 0:
+            fail(
+                f"TRUSTED_PROXY_IPS entry {entry!r} covers every address — the "
+                "same hazard as '*'. Name the proxy's network."
+            )
+            return
+
+    ok(f"TRUSTED_PROXY_IPS names {len(entries)} trusted source(s)")
+
+
 def check_metrics_scrape_credential(env: dict[str, str]) -> None:
     """The other half of METRICS_TOKEN: whether Prometheus can actually send it.
 
@@ -433,6 +597,8 @@ def check(env: dict[str, str]) -> None:
 
     check_database_target(env)
     check_allowed_hosts(env)
+    check_clinic_base_domain(env)
+    check_trusted_proxy_ips(env)
     check_metrics_scrape_credential(env)
     check_alertmanager_secrets(env)
 
