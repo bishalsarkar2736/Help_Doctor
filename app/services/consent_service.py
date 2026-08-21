@@ -11,6 +11,7 @@ from app.models.user import User
 from app.models.user_consent import UserConsent
 from app.try_except.audit import log_audit_event
 from app.try_except.exceptions import BadRequestError
+from app.utils.request_ip import client_ip_from
 
 logger = logging.getLogger(__name__)
 
@@ -18,32 +19,41 @@ logger = logging.getLogger(__name__)
 # not a reason to refuse a signup, and the column is corroborating detail.
 _MAX_USER_AGENT = 400
 
+# Matches UserConsent.ip_address, String(45) — the widest an IPv6 address with
+# an embedded IPv4 suffix and a zone index can be.
+_MAX_IP_ADDRESS = 45
+
 
 def _client_ip(request: Request) -> str | None:
     """The address the acceptance actually came from.
 
-    request.client.host is the immediate peer, which behind the same-origin
-    proxy is nginx — recording 172.x.x.x for every consent makes the field
-    worthless as evidence.
+    request.client.host is the immediate peer, which behind a proxy is the
+    proxy — recording 172.x.x.x for every consent makes the field worthless as
+    evidence.
 
-    nginx sets X-Forwarded-For with `$proxy_add_x_forwarded_for`, which appends
-    the peer it observed to whatever the client sent. So the LAST entry is
-    nginx's own observation and is trustworthy; everything before it was
-    supplied by the client and can be forged. Taking the last entry rather than
-    the conventional first is deliberate for that reason — with one trusted
-    proxy in front, it is the real client.
+    Delegates to the shared resolver rather than reading X-Forwarded-For here.
+    This function used to take the LAST entry of the header, which is correct
+    with EXACTLY ONE trusted proxy appending via `$proxy_add_x_forwarded_for`
+    and wrong with any other number: its own docstring said so, and adding a TLS
+    terminator in front of nginx makes it two, at which point the last entry is
+    nginx's address and every consent record would name an internal host.
 
-    If another proxy is ever added in front of nginx, this needs revisiting:
-    the trustworthy entry moves by one hop per trusted proxy.
+    It also believed the header whoever connected, so a caller reaching the API
+    directly could put any address into a legal record. client_ip_from reads it
+    only when the peer is a configured trusted proxy and walks the chain from
+    the right past each one, so it is correct for any number of hops and
+    forgeable at none.
+
+    Returns None rather than the resolver's "unknown" sentinel: the column is
+    nullable, and NULL says "not recorded" where a literal string would read as
+    a value that was.
     """
-    forwarded = request.headers.get("x-forwarded-for")
+    ip = client_ip_from(request)
 
-    if forwarded:
-        parts = [p.strip() for p in forwarded.split(",") if p.strip()]
-        if parts:
-            return parts[-1][:45]
+    if not ip or ip == "unknown":
+        return None
 
-    return request.client.host if request.client else None
+    return ip[:_MAX_IP_ADDRESS]
 
 
 def validate_versions(accepted: dict[str, str]) -> None:
